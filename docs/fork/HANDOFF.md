@@ -5,7 +5,104 @@ newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), t
 [`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (Q51 answered, **Q52** FYI, **Q53 owed**), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
 
-## Exact next step (2026-10-17 ~01:30 EDT, live): Revolution rebrand → release Revolution 0.1; laptop work resumes
+## Exact next step (2026-10-18, laptop session): XPS signed off (`xps-1`, local); next: owner pushes, then S2
+
+**State:** `revolution-wip` at eef8b517, tag `xps-1` on it, **both unpushed** (owner approves pushes and tag pushes; ~45
+commits ahead of `origin/revolution-wip`). Build `~/Apps/filmcraft-builds/xps-1` (`latest`), launcher "Revolution".
+Every number is synthetic. Details: FORK-PLAN §7 2026-10-17 19:45 → 2026-10-18.
+**Done this session:** 8.6d two-GPU export (NVENC lane + VA-API lane, `hev1`; 63–69 s vs 80–103 s on the 4050 alone);
+NVENC → VA-API mid-export fallback; NVDEC-first stepped aside on bound threads (the bug that got the Claude app killed
+by systemd-oomd); monitor dropdowns / Scopes footer at 2×; D2 NVENC encodes from GPU memory (94 vs 151 s, byte-identical
+files); B3 NVDEC 13 slots at 6.2K (Performance playback 0.17 % dropped); §1a.105 (b) start without NVIDIA's Vulkan
+driver (no NVIDIA device file held on Power saving / Auto); **never crash on a lost window GPU** (restart + `--recover`,
+reproduced); llm test exit crash; `shared_picture` Linux-only (wasm); `va_interop` test on the decode GPU. D1 (H.264 /
+HDR exports on the GPU) moved to Phase 8 item 8 (owner).
+**Next:** owner OK → push `revolution-wip` + tag `xps-1`, publish per §1a.33; then S2 (§1a.104). Before more laptop
+sessions read the gotchas below.
+**Owner to do / decide:** (1) approve the push (+ tag); (2) measure the start-up D3 yourself: close System Monitor's GPU
+sensor (KDE ksystemstats runs `nvidia-smi dmon`, which keeps the RTX 4050 awake), start Revolution on Auto,
+`cat /sys/bus/pci/devices/0000:01:00.0/power/runtime_status` should read `suspended` within ~6 s; (3) **memory on the
+16 GB laptop:** 6.2K playback + a 4K export + the render cache's background parts exceed what is free (swapping; the Arc
+ran out of GPU memory; the 4050's two-GPU export ran at 2.7 fps in the app vs 19 fps in the bench): decide whether the
+render cache / auto proxies should back off on < 32 GB machines or under memory pressure; (4) FYI: after a real GPU
+hang the app abandons the device on a thread; quitting during that teardown could crash at exit (work saved first);
+(5) FYI: `revolution --version` still prints "filmcraft"; the old `filmcraft-fork.desktop` launcher points at
+`~/Apps/filmcraft-laptop` (left as is).
+**Gotchas (this session):** run heavy things in `systemd-run --user --scope -p MemoryMax=… -p MemorySwapMax=…` (an
+uncapped bench and an uncapped UI test suite each got the Claude app killed by oomd); give NVIDIA runs swap and ≥ 12 GB
+(a cap without swap starves NVIDIA's pinned memory and silently turns NVDEC sharing off); killed bench runs leave
+`/tmp/filmcraft-bench-xm5-*` (tmpfs, RAM): bench runs now use `TMPDIR` under `target/`; the full UI suite in one process
+needs > 14 GB: run it one module per process; always put a timeout on test runs (a GPU test hung 17 h); bench `--only`
+matches the short case name (`play-full`, not `xm5-play-full`); zsh doesn't split `set -- $var` (use `bash -c`).
+
+## Was: Exact next step (2026-10-17 18:40, laptop session): XPS §3 items 1–17 pass; 8.6c in; next 8.6d, then sign-off (`xps-1`)
+
+**State:** `revolution-wip` HEAD 036c48c7, **not pushed** (owner approves pushes). Every number is from synthetic clips.
+**Done since 17:10 (FORK-PLAN §7 17:40 → 18:35):** the `va_422_handoff` failure was a real bug (linear copy surfaces
+shared between copiers: a clip after another of the same size showed the previous clip's pictures), fixed with per-copier
+pools + regression test; item 13 mains half (back to Full ~7 s after plugging in); items 15 / 16 with the owner changing
+the panel to 150 % / 200 % on the Arc and the RTX 4050 (all good; cosmetic: Lumetri Scopes footer squeezes "Rec. 709" at
+2×); the "slow Performance export" was the bench not engaging 8.6c — with it xm5-export-4k on the 4050 is 73.4 s (was 449),
+graded 76.8 s (the Arc: 50.5 / 89.9 s).
+**Next, in order:** (1) **8.6d** two-GPU export (NVENC lane + VA-API lane; `export_lanes` only pairs VA-API nodes today;
+mid-stream NVENC → VA-API fallback belongs here too); (2) small leftovers: narrow-monitor dropdowns at 2×, the Lumetri Scopes
+footer at 2×, the frame cache's colour management still reads NVDEC pictures back to the CPU; (3) sign-off: `cargo xtask ci`
+(machine idle, `-j 6`), `va_422_handoff` (now 6 / 6), tag `xps-1`, build per §1a.9.
+**Owner decisions open:** H.264 Hardware encoding uses NVENC on Power saving (wakes the dGPU; no VA-API H.264 encoder);
+the ~20 s dGPU wake at every start (needs `VK_LOADER_DRIVERS_SELECT`, outside the rules). **Owner to do:** approve the
+push; delete the `xps-test-*` projects.
+
+## Was: Exact next step (2026-10-17 17:10, laptop session): 8.6c in; next the NVIDIA export bottleneck, 8.6d, then sign-off (`xps-1`)
+
+**Owner order (relayed 2026-10-17):** item 18 (8.6c **and** 8.6d) before tagging `xps-1`; then sign-off: `cargo xtask ci`,
+re-run `va_422_handoff`, tag, build. Leave for the owner only what needs a person, batched at the end; no questions meanwhile.
+**Since 07:35 (FORK-PLAN §7 08:00 and 17:00; all unpushed on `revolution-wip`, HEAD 197b7fff):** item 1 re-checked after the
+Auto change; items 15 / 16 solo parts (page bar and monitor timecodes fit at 2× UI scale; kscreen-doctor declined: OS
+display settings); **8.6c done**: NVDEC pictures stay on the NVIDIA GPU (Vulkan opaque-fd memory imported by CUDA;
+`nvdec::shared`, `interop::alloc_cuda_shared` / `import_cuda_shared`, `shared_picture`), Performance playback 92.6 → 0.6 %
+dropped (synthetic 6.2K). **Next, in order:** (1) the Performance export is still ~3 fps vs ~35 on the Arc, ~300 ms CPU a
+frame, not the decode transfer — find it (export trace counters don't print on this path; no `perf` installed: ask the
+owner to install `perf`, or instrument); (2) 8.6d two-GPU export (NVENC lane + VA-API lane; `export_lanes` only knows VA-API
+nodes); (3) the CPU paths (frame cache colour management) still read NVDEC pictures back; (4) sign-off. **Fixed 17:40:** the `va_422_handoff` failure was a real bug
+(linear copy surfaces shared between copiers; §7 17:40), now 6 / 6.
+**Owner end list:** plug-in half of item 13 (playback
+back to full within ~10 s); item 15/16 with the panel at 1.5× / 2× (kscreen-doctor or System Settings) on Auto and
+Performance, look for black / corrupt frames; delete the `xps-test-*` projects; approve pushes of `revolution-wip`.
+
+## Was: Exact next step (2026-10-17 07:35, laptop session): XPS §3 A–D done on the XPS 16; next 8.6c (now the priority), then `xps-1`
+
+**Where:** branch `revolution-wip` (merged with `hevc-vaapi` @ 757c622f at 6991cf99), commits up to dbfd7604, **not pushed**
+(owner approves pushes; the desktop session merges `revolution-wip` into `hevc-vaapi`). Every number is from synthetic
+clips (no real X-M5 footage). Details: FORK-PLAN §7 2026-10-17 02:40 → 07:30.
+
+**Results (XPS-SETUP §3):** 4 pass (P1–P7 GUIDs = nvEncodeAPI.h 12.1, pinned). 5 fixed (HEVC NVENC tests were Windows-only;
+16 green on the RTX 4050). 6 **fixed**: every NVENC H.265 export on Linux failed at frame 0 (planar GPU frames); Performance →
+NVENC, Power saving → VA-API on the Arc; P1/P4/P7 logged; Speed ≈ Balanced in real exports (pipeline-bound), Quality ~2×
+slower; Power saving no longer wakes the dGPU for an NVENC probe. 7 **enabled**: NVENC Main 10 / PQ / HLG on Linux (tags,
+HDR10 SEI, Y PSNR 49.7 dB vs source). 8 **fixed**: cancelling / failing an NVENC export segfaulted the app (drain before
+teardown); simulated loss → error naming NVENC; no mid-stream VA-API fallback (left for 8.6d). 9 pass + **crash fixed**
+(concurrent vaGetImage in iHD) + `FILMCRAFT_NO_VA_DECODE`; lazy NVDEC probe fires and decodes. 10 **fixed**: Intel → NVIDIA
+4:2:2 hand-off (Y210 as Rg16 pairs; NVIDIA has no 64-bit DMA-BUF formats). 11 pass (vainfo oracle test). 12 pass. 13 battery
+half pass (`perf.stats` `effectiveResolution`); **mains half owed** (plug in, check it returns within ~10 s). 14 pass (portal
+inhibit). 17: **Auto now picks the Intel iGPU on battery-powered Intel + NVIDIA computers** (0.3 % vs 86–93 % dropped,
+4K export 47–51 s vs 424–449 s, ~⅕ energy on battery). Also: Play waits for the Project Manager (owner); NVIDIA's VA-API
+node never opened (dGPU wake); refused VA-API nodes cached; bench `FILMCRAFT_GRAPHICS_DEVICE`; xm5 stand-ins bounded to
+6.6 GB (they OOM-killed a session). Items 15–16 (HiDPI 1.5× / 2×, NVIDIA Wayland suspend/resume) not run: need the owner.
+
+**Why 8.6c first:** on the RTX 4050 every Intel-decoded picture is read back through the CPU (NVIDIA imports no Intel
+tiled modifier; a linear two-plane NV12 copy hung NVIDIA's queue in vkWaitSemaphores, no Xid; the one-plane Y210 copy works),
+and NVDEC frames are read back too. Keeping NVDEC frames on the GPU (Vulkan ↔ CUDA) is what can make Performance worth it.
+**Owner decisions open:** H.264 "Hardware encoding" uses NVENC even on Power saving (no VA-API H.264 encoder); each start
+wakes the dGPU ~20 s (Vulkan ICD enumeration; fix needs `VK_LOADER_DRIVERS_SELECT` or raw Vulkan, both outside the rules).
+**Gotchas:** run ffmpeg 6.2K encodes alone (6.6 GB); `-j 6`; `--control` turns desktop integration off unless
+`FILMCRAFT_DESKTOP_INTEGRATION=1`; `export.quick {wait:true}` runs on the UI thread; zsh doesn't split `$var` (use bash);
+`pgrep -f` patterns match their own shell.
+
+## Was: Exact next step (2026-10-17, live): Revolution 0.1 RELEASED; next XPS on the laptop (`xps-1`), then S2
+
+**Done 2026-10-17 ~02:15:** everything in the paragraph below up to the launcher (see §7). Remaining: the laptop session works from `hevc-vaapi`; delete `.fork-paused` when the main runner should resume.
+
+### Was: Revolution rebrand → release Revolution 0.1
 
 **Owner, live (FORK-PLAN §1a.103):** the fork is now **Revolution** (asked first as Renaissance). Everything the user
 sees says Revolution; internals keep `filmcraft-*`. `tools/fork/rebrand.py` does the string part and is idempotent:
@@ -21,7 +118,7 @@ Work is on branch **`revolution-wip`** (pushed to origin so the laptop can clone
 "Revolution 0.1" on `fork` (publish-snapshot.sh, title changed) → release with tarball + SHA256SUMS + NOTES →
 delete `.fork-publish-hold` → local build + launcher "Revolution". The laptop (XPS 16) is set up by the owner and
 its own session works from `revolution-wip` / `hevc-vaapi` (XPS-SETUP §3); `.fork-paused` can go once 0.1 is out.
-**After `xps-1`: S2** (owner §1a.104), and S2 renames packages `.fcpackage` → `.revolution` (both open).
+**After `xps-1`: S2** (owner §1a.104), and S2 renames packages `.fcpackage` → `.revpkg` (both open).
 
 ## Was: Exact next step (2026-10-16 23:04 EDT): PAUSED for the laptop. On resume: XPS with the laptop (tag `xps-1`)
 

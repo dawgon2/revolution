@@ -172,17 +172,26 @@ pub fn register() -> Availability {
         // in front only when there is no VA-API of another GPU, or with FILMCRAFT_NVDEC_FIRST=1.
         // (Factories registered later are tried first.)
         #[cfg(target_pointer_width = "64")]
-        let nvdec = nvdec::cuvid::probe();
-        #[cfg(target_pointer_width = "64")]
         let nvdec_front = nvdec_in_front(native.is_ok() || pipe, std::env::var_os("FILMCRAFT_NVDEC_FIRST").is_some_and(|v| v == "1"));
+        // Behind VA-API, CUDA is first loaded when a clip reaches NVDEC (XPS item 3): `cuInit`
+        // keeps the NVIDIA GPU out of runtime D3 for the rest of the run, so probing it here
+        // would keep a laptop's sleeping dGPU awake (and hold the start for ~2.5 s while it wakes).
         #[cfg(target_pointer_width = "64")]
-        if !nvdec_front && let Ok(driver) = &nvdec {
+        let nvdec = if nvdec_front { nvdec::cuvid::probe() } else { Err("not probed".to_string()) };
+        #[cfg(target_pointer_width = "64")]
+        if !nvdec_front && nvidia_gpu_present() {
             static NVDEC_BEHIND: std::sync::Once = std::sync::Once::new();
-            NVDEC_BEHIND.call_once(|| log::info!("NVDEC ({driver}) decodes what VA-API declines"));
-            filmcraft_codecs::register_video_decoder(nvdec_factory);
+            NVDEC_BEHIND.call_once(|| log::info!("NVDEC decodes what VA-API declines (NVIDIA's driver is loaded when first needed)"));
+            filmcraft_codecs::register_video_decoder(nvdec_lazy_factory);
         }
         let mut available = if native.is_ok() || pipe {
             filmcraft_codecs::register_video_decoder(vaapi_factory);
+            // in front of VA-API while the window draws on the NVIDIA GPU (fork 8.6c): NVDEC's
+            // pictures stay on that GPU, where Intel's must be read back; declines otherwise
+            #[cfg(target_pointer_width = "64")]
+            if !nvdec_front && nvidia_gpu_present() {
+                filmcraft_codecs::register_video_decoder(nvdec_for_nvidia_window);
+            }
             filmcraft_codecs::hw::set_hw_backend("VA-API");
             // 4:2:2 HEVC on a display with Main 4:2:2 10 (fork 6.1b): the clip badges ask this,
             // without waiting for the display search, which starts now in the background
@@ -196,7 +205,7 @@ pub fn register() -> Availability {
         // declines still reaches VA-API (a second GPU) and then the software decoders
         #[cfg(target_pointer_width = "64")]
         match nvdec {
-            Ok(_) if !nvdec_front => {}
+            _ if !nvdec_front => {}
             Ok(driver) => {
                 static NVDEC: std::sync::Once = std::sync::Once::new();
                 NVDEC.call_once(|| log::info!("hardware decoding through NVDEC: {driver}"));
@@ -372,7 +381,7 @@ pub fn vaapi_chain(codec: filmcraft_codecs::hw::NalCodec) -> &'static [VaStep] {
 #[cfg(target_os = "linux")]
 pub fn vaapi_factory(entry: &filmcraft_isobmff::SampleEntry) -> Option<filmcraft_codecs::Result<Box<dyn filmcraft_codecs::VideoDecoder>>> {
     type Hw = std::result::Result<Box<dyn filmcraft_codecs::VideoDecoder>, String>;
-    if !filmcraft_codecs::hw::hardware_decoding() {
+    if !filmcraft_codecs::hw::hardware_decoding() || va_decode_off(std::env::var_os("FILMCRAFT_NO_VA_DECODE").as_deref()) {
         return None;
     }
     let info = filmcraft_codecs::hw::NalStreamInfo::from_entry(entry)?.ok()?;
@@ -447,6 +456,101 @@ pub fn nvdec_factory(entry: &filmcraft_isobmff::SampleEntry) -> Option<filmcraft
     }
 }
 
+/// Fork XPS item 9: `FILMCRAFT_NO_VA_DECODE=1` (any value but empty or `0`) makes VA-API decline
+/// every clip, so what it would decode goes to NVDEC behind it (lazily probed) or the software
+/// decoders; the decode twin of `FILMCRAFT_NO_VA_ENCODE`, for checking that path on a laptop
+/// whose Intel engine decodes everything NVIDIA's does.
+fn va_decode_off(var: Option<&std::ffi::OsStr>) -> bool {
+    var.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Fork XPS item 3: [`nvdec_factory`] behind another GPU's VA-API, with NVIDIA's driver probed
+/// the first time a clip gets here (once per run; a failed probe declines every clip after it).
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+fn nvdec_lazy_factory(entry: &filmcraft_isobmff::SampleEntry) -> Option<filmcraft_codecs::Result<Box<dyn filmcraft_codecs::VideoDecoder>>> {
+    static PROBED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !filmcraft_codecs::hw::hardware_decoding() {
+        return None;
+    }
+    let ready = *PROBED.get_or_init(|| match std::panic::catch_unwind(nvdec::cuvid::probe) {
+        Ok(Ok(driver)) => {
+            log::info!("hardware decoding through NVDEC for what VA-API declines: {driver}");
+            true
+        }
+        Ok(Err(why)) => {
+            log::info!("no NVDEC hardware decoding: {why}");
+            false
+        }
+        Err(_) => {
+            log::warn!("the NVDEC probe panicked; NVDEC stays off for this run");
+            false
+        }
+    });
+    if ready { nvdec_factory(entry) } else { None }
+}
+
+/// Fork 8.6c / XPS item 18: [`nvdec_lazy_factory`] in front of VA-API, taking a clip only while
+/// the compositor draws on an NVIDIA GPU that shares memory with CUDA
+/// ([`filmcraft_gpu::interop::cuda_target`]): there NVDEC's pictures are copied on the GPU,
+/// while Intel's would be read back through the CPU (the XPS 16 dropped 92 % of 6.2K pictures
+/// that way). What NVDEC declines (4:2:2) still reaches VA-API. Not on a thread bound to a render
+/// node of its own ([`filmcraft_codecs::hw::set_thread_decode_node`]: a two-GPU export's Intel
+/// lane, fork 8.6d): its pictures are drawn on that GPU, which can't take NVIDIA's.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+fn nvdec_for_nvidia_window(entry: &filmcraft_isobmff::SampleEntry) -> Option<filmcraft_codecs::Result<Box<dyn filmcraft_codecs::VideoDecoder>>> {
+    if !nvdec_shares_here(filmcraft_gpu::interop::cuda_target().is_some(), filmcraft_codecs::hw::decode_node().is_some()) {
+        return None;
+    }
+    nvdec_lazy_factory(entry)
+}
+
+/// Whether NVDEC goes in front for a clip: a CUDA target is registered, the thread has no render
+/// node of its own, and `FILMCRAFT_NO_NVDEC_SHARE` is unset.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+fn nvdec_shares_here(cuda_target: bool, thread_node: bool) -> bool {
+    cuda_target && !thread_node && !std::env::var_os("FILMCRAFT_NO_NVDEC_SHARE").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Whether a DRM device of NVIDIA's (PCI vendor 0x10de) is present, read from sysfs: unlike
+/// loading CUDA, this does not wake a GPU in runtime D3.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+fn nvidia_gpu_present() -> bool {
+    nvidia_in_drm_dir(std::path::Path::new("/sys/class/drm"))
+}
+
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+fn nvidia_in_drm_dir(dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().take(64).any(|e| std::fs::read_to_string(e.path().join("device/vendor")).is_ok_and(|v| v.trim().eq_ignore_ascii_case("0x10de")))
+}
+
+#[cfg(test)]
+mod va_decode_off_tests {
+    /// Fork 8.6d: a two-GPU export's Intel lane (thread bound to Intel's node) decoded on NVDEC
+    /// while the window's device was NVIDIA's; the Intel renderer then read every 6.2K picture
+    /// back (~1 GB a second of RAM on the XPS 16, the session was killed by systemd-oomd).
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    #[test]
+    fn nvdec_steps_aside_for_a_thread_bound_to_another_gpu() {
+        assert!(super::nvdec_shares_here(true, false), "the NVIDIA window's own threads");
+        assert!(!super::nvdec_shares_here(true, true), "a lane bound to the Intel node");
+        assert!(!super::nvdec_shares_here(false, false), "no CUDA target");
+    }
+
+    /// XPS 9: the override's values.
+    #[test]
+    fn no_va_decode_values() {
+        use std::ffi::OsStr;
+        assert!(!super::va_decode_off(None));
+        assert!(!super::va_decode_off(Some(OsStr::new(""))));
+        assert!(!super::va_decode_off(Some(OsStr::new("0"))));
+        assert!(super::va_decode_off(Some(OsStr::new("1"))));
+        assert!(super::va_decode_off(Some(OsStr::new("yes"))));
+    }
+}
+
 #[cfg(test)]
 mod chain_tests {
     use super::{VaStep, vaapi_chain};
@@ -472,5 +576,26 @@ mod xps_tests {
         assert!(!super::nvdec_in_front(true, false));
         assert!(super::nvdec_in_front(false, false));
         assert!(super::nvdec_in_front(true, true));
+    }
+
+    /// XPS item 3: NVIDIA is found from sysfs vendor ids (this laptop's layout: card0 NVIDIA,
+    /// card1 Intel), never by loading CUDA; missing or odd files are just "no".
+    #[test]
+    fn nvidia_gpu_is_found_from_sysfs_without_cuda() {
+        let root = std::env::temp_dir().join(format!("fc-drm-{}", std::process::id()));
+        let card = |name: &str, vendor: &[u8]| {
+            let d = root.join(name).join("device");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("vendor"), vendor).unwrap();
+        };
+        assert!(!super::nvidia_in_drm_dir(&root), "missing folder");
+        card("card1", b"0x8086\n");
+        std::fs::create_dir_all(root.join("version")).unwrap();
+        assert!(!super::nvidia_in_drm_dir(&root), "Intel only");
+        card("card2", b"\xff\xfe junk");
+        assert!(!super::nvidia_in_drm_dir(&root), "unreadable vendor");
+        card("card0", b"0x10DE\n");
+        assert!(super::nvidia_in_drm_dir(&root), "XPS 16 layout");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -12,10 +12,24 @@ use eframe::wgpu;
 use filmcraft_codecs::VideoDecoder;
 use filmcraft_frame::{PixelData, VideoFrame};
 
+/// A device on the GPU VA-API decodes on (a hybrid laptop's high-performance GPU, NVIDIA, imports
+/// none of Intel's tiled pictures: XPS 16), else the high-performance one.
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
-    let opts = wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() };
-    let adapter = pollster::block_on(instance.request_adapter(&opts)).ok()?;
+    let decode_gpu = filmcraft_platform::va::Display::get().ok().and_then(|d| filmcraft_platform::pci_ids(&d.node));
+    let on_decode_gpu = decode_gpu.and_then(|(vendor, device)| {
+        pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN)).into_iter().find(|a| {
+            let i = a.get_info();
+            (i.vendor, i.device) == (vendor, device)
+        })
+    });
+    let adapter = match on_decode_gpu {
+        Some(a) => a,
+        None => {
+            let opts = wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() };
+            pollster::block_on(instance.request_adapter(&opts)).ok()?
+        }
+    };
     let desc = wgpu::DeviceDescriptor { required_features: adapter.features() & filmcraft_gpu::wanted_features(), ..Default::default() };
     match filmcraft_gpu::interop::create_device(&adapter, &desc)? {
         Ok(d) => Some(d),

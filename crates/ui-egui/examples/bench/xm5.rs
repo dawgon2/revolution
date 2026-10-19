@@ -110,12 +110,32 @@ pub fn clip(name: &str) -> Option<PathBuf> {
     eprintln!("generating {} (6.2K x265: this takes a while)", path.display());
     let rate = format!("{}/{}", spec.rate.0, spec.rate.1);
     let src = spec.src.replace("{S}", "6240x4160").replace("{R}", &rate);
-    let x265 = format!("keyint={k}:min-keyint={k}:bitrate=200000:vbv-maxrate=200000:vbv-bufsize=400000:log-level=error", k = spec.keyint);
+    // two frame threads, a short lookahead, a two-frame input queue and no `-shortest` (its sync
+    // queue holds raw frames; `-t` already ends every stream) keep ffmpeg near 6.6 GB at
+    // 6.2K 4:2:2; its defaults grew past 10 GB and the OOM killer took the session on a 16 GB laptop
+    let x265 = format!(
+        "keyint={k}:min-keyint={k}:bitrate=200000:vbv-maxrate=200000:vbv-bufsize=400000:log-level=error:frame-threads=2:rc-lookahead=5:lookahead-slices=0",
+        k = spec.keyint
+    );
     let tmp = dir.join(format!(".{name}.{}.tmp.mov", std::process::id()));
     let ok = Command::new(ff)
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i", &src, "-f", "lavfi", "-i", "sine=f=440:r=48000,aformat=channel_layouts=stereo"])
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-thread_queue_size",
+            "2",
+            "-f",
+            "lavfi",
+            "-i",
+            &src,
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=440:r=48000,aformat=channel_layouts=stereo",
+        ])
         .args(["-t", &spec.secs.to_string(), "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", spec.pix_fmt, "-profile:v", spec.profile])
-        .args(["-x265-params", &x265, "-color_range", "tv", "-tag:v", "hvc1", "-c:a", "pcm_s24le", "-shortest"])
+        .args(["-x265-params", &x265, "-color_range", "tv", "-tag:v", "hvc1", "-c:a", "pcm_s24le"])
         .arg(&tmp)
         .status()
         .is_ok_and(|s| s.success());

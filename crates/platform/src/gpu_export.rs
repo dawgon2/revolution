@@ -174,6 +174,52 @@ impl GpuExport {
     }
 }
 
+impl GpuExport {
+    /// Fork 8.6d D2: composite `plan` and copy it, converted to NV12 / P010, into one of NVENC's
+    /// input buffers on this GPU (memory shared with CUDA). None: the frame is read back instead.
+    #[cfg(target_pointer_width = "64")]
+    fn render_into_nvenc(
+        &self,
+        plan: &FramePlan,
+        kr: f32,
+        kb: f32,
+        ten_bit: bool,
+        high_quality: bool,
+        t: &crate::nvenc::gpu_input::NvencTarget,
+    ) -> Option<Arc<dyn filmcraft_export::GpuPicture>> {
+        if t.ten_bit != ten_bit || std::env::var_os("FILMCRAFT_NO_ZERO_COPY").is_some() {
+            return None;
+        }
+        let clock = filmcraft_export::trace::start();
+        let mut slot = self.compositor()?;
+        filmcraft_export::trace::add(filmcraft_export::trace::GPU_LOCK, clock);
+        let clock = filmcraft_export::trace::start();
+        let c = slot.as_mut()?.as_mut()?;
+        let buffer = t.buffer_on(c.device()).ok()?;
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.set_high_quality(high_quality);
+            let (_, size) = c.composite(plan);
+            if size != t.size {
+                return None;
+            }
+            c.write_yuv420_into_buffer(buffer.memory.buffer(), t.pitch, kr, kb, ten_bit)
+        }));
+        filmcraft_export::trace::add(filmcraft_export::trace::GPU_RECORD, clock);
+        match out {
+            Ok(Some(sub)) if !self.broken.load(Ordering::Relaxed) => {
+                Some(Arc::new(crate::nvenc::gpu_input::NvencPicture::new(buffer, sub, t, self.broken.clone())))
+            }
+            Ok(_) => None,
+            Err(_) => {
+                log::error!("export compositor panicked; rendering export frames on the CPU from now on");
+                self.broken.store(true, Ordering::Relaxed);
+                *slot = Some(None);
+                None
+            }
+        }
+    }
+}
+
 impl filmcraft_export::GpuFrames for GpuExport {
     fn yuv420(&self, plan: &FramePlan, kr: f32, kb: f32, ten_bit: bool, high_quality: bool) -> Option<Vec<u8>> {
         self.read_back(plan, kr, kb, ten_bit, high_quality, false)
@@ -192,6 +238,10 @@ impl filmcraft_export::GpuFrames for GpuExport {
         high_quality: bool,
         target: &(dyn std::any::Any + Send + Sync),
     ) -> Option<Arc<dyn filmcraft_export::GpuPicture>> {
+        #[cfg(target_pointer_width = "64")]
+        if let Some(t) = target.downcast_ref::<crate::nvenc::gpu_input::NvencTarget>() {
+            return self.render_into_nvenc(plan, kr, kb, ten_bit, high_quality, t);
+        }
         let t = target.downcast_ref::<crate::va_enc::EncodeTarget>()?;
         if t.ten_bit != ten_bit || t.chroma_422 || self.no_targets.load(Ordering::Relaxed) || std::env::var_os("FILMCRAFT_NO_ZERO_COPY").is_some() {
             return None;

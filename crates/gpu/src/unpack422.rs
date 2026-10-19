@@ -3,7 +3,10 @@
 //!
 //! Intel's media engine decodes HEVC 4:2:2 and hands each picture over as a linear DMA-BUF of
 //! packed `Y210` (per two pixels `Y0 Cb Y1 Cr`, 16-bit MSB-aligned samples), which the importer
-//! ([`crate::interop`]) shows as one `Rgba16Unorm` texture of half the width. A compute pass reads
+//! ([`crate::interop`]) shows as one `Rgba16Unorm` texture of half the width, or, on a GPU that
+//! takes no 64-bit texel format from a DMA-BUF (NVIDIA's driver lists no modifiers for them: the
+//! XPS 16's RTX 4050), as one `Rg16Unorm` texture of the full (even) width, the same bytes as
+//! (`Y0 Cb`) (`Y1 Cr`) texel pairs. A compute pass reads
 //! it once and writes the planes every other 10-bit picture uses into VRAM: luma (`R16Unorm`,
 //! full size) and interleaved Cb/Cr (`Rg16Unorm`, half width, full height), through two staging
 //! buffers copied into the textures (no render targets: 16-bit UNORM rendering needs adapter-
@@ -12,7 +15,7 @@
 //! loads of 16-bit codes are exact (`code / 65535`, rounded back to `code`).
 
 const SHADER: &str = r"
-struct U { cw: u32, h: u32, luma_words: u32, chroma_words: u32 }
+struct U { cw: u32, h: u32, luma_words: u32, chroma_words: u32, pairs: u32, p0: u32, p1: u32, p2: u32 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read_write> luma: array<u32>;
@@ -29,7 +32,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= u.cw || id.y >= u.h) {
         return;
     }
-    let t = textureLoad(src, vec2<i32>(i32(id.x), i32(id.y)), 0);
+    var t: vec4<f32>;
+    if (u.pairs != 0u) {
+        // `Rg16Unorm` view: the pair's (Y0 Cb) and (Y1 Cr) are two texels
+        let a = textureLoad(src, vec2<i32>(i32(id.x * 2u), i32(id.y)), 0);
+        let b = textureLoad(src, vec2<i32>(i32(id.x * 2u + 1u), i32(id.y)), 0);
+        t = vec4<f32>(a.r, a.g, b.r, b.g);
+    } else {
+        t = textureLoad(src, vec2<i32>(i32(id.x), i32(id.y)), 0);
+    }
     luma[id.y * u.luma_words + id.x] = code(t.r) | (code(t.b) << 16u);
     chroma[id.y * u.chroma_words + id.x] = code(t.g) | (code(t.a) << 16u);
 }
@@ -106,7 +117,7 @@ impl Unpack422 {
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("unpack 4:2:2"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -114,13 +125,19 @@ impl Unpack422 {
     }
 
     /// Unpack the `w`×`h` picture at the top-left of `packed` (an `Rgba16Unorm` view at least
-    /// ⌈w/2⌉ × h texels) into new VRAM planes, submitted on `queue`. None for an empty picture,
+    /// ⌈w/2⌉ × h texels, or an `Rg16Unorm` view at least 2⌈w/2⌉ × h) into new VRAM planes, submitted on `queue`. None for an empty picture,
     /// one beyond the device's limits (texture size, storage buffer size), or a smaller source.
     pub fn run(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, packed: &wgpu::TextureView, (w, h): (u32, u32)) -> Option<Unpacked> {
         let limits = device.limits();
         let src = packed.texture().size();
         let cw = w.div_ceil(2);
-        if w == 0 || h == 0 || w > limits.max_texture_dimension_2d || h > limits.max_texture_dimension_2d || src.width < cw || src.height < h {
+        let pairs = match packed.texture().format() {
+            wgpu::TextureFormat::Rgba16Unorm => false,
+            wgpu::TextureFormat::Rg16Unorm => true,
+            _ => return None,
+        };
+        let src_pairs = if pairs { src.width / 2 } else { src.width };
+        if w == 0 || h == 0 || w > limits.max_texture_dimension_2d || h > limits.max_texture_dimension_2d || src_pairs < cw || src.height < h {
             return None;
         }
         let row = |bytes: u32| bytes.checked_next_multiple_of(ROW_ALIGN);
@@ -142,7 +159,7 @@ impl Unpack422 {
             self.staging = Some((buffer(sizes.0), buffer(sizes.1), sizes));
         }
         let (luma_buf, chroma_buf, _) = self.staging.as_ref()?;
-        let words: [u32; 4] = [cw, h, luma_row / 4, chroma_row / 4];
+        let words: [u32; 8] = [cw, h, luma_row / 4, chroma_row / 4, u32::from(pairs), 0, 0, 0];
         let bytes: Vec<u8> = words.iter().flat_map(|v| v.to_le_bytes()).collect();
         queue.write_buffer(&self.uniforms, 0, &bytes);
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -235,6 +252,17 @@ mod tests {
     /// Cb/Cr samples the CPU read-back takes from the same memory.
     #[test]
     fn unpacks_exactly_as_the_cpu_read_back() {
+        unpacks_exactly(wgpu::TextureFormat::Rgba16Unorm);
+    }
+
+    /// XPS 10: the same memory viewed as `Rg16Unorm` texel pairs (how NVIDIA's driver takes
+    /// Intel's linear copy: it lists no DMA-BUF modifiers for 64-bit formats) unpacks the same.
+    #[test]
+    fn unpacks_texel_pairs_exactly_as_the_cpu_read_back() {
+        unpacks_exactly(wgpu::TextureFormat::Rg16Unorm);
+    }
+
+    fn unpacks_exactly(format: wgpu::TextureFormat) {
         let Some((device, queue)) = device() else {
             eprintln!("SKIPPED: no GPU");
             return;
@@ -255,11 +283,11 @@ mod tests {
         }
         let src = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
-            size: wgpu::Extent3d { width: pw, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: if format == wgpu::TextureFormat::Rg16Unorm { pw * 2 } else { pw }, height: h, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -289,5 +317,29 @@ mod tests {
         assert!(unpack.run(&device, &queue, &view, (0, h)).is_none());
         assert!(unpack.run(&device, &queue, &view, (pw * 2 + 1, h)).is_none());
         assert!(unpack.run(&device, &queue, &view, (w, h + 1)).is_none());
+    }
+
+    /// A view of any other format is refused (read back instead), never misread.
+    #[test]
+    fn other_formats_are_refused() {
+        let Some((device, queue)) = device() else {
+            eprintln!("SKIPPED: no GPU");
+            return;
+        };
+        let Some(mut unpack) = Unpack422::new(&device) else {
+            eprintln!("SKIPPED: no 16-bit normalized textures");
+            return;
+        };
+        let src = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: 8, height: 2, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R16Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        assert!(unpack.run(&device, &queue, &src.create_view(&Default::default()), (4, 2)).is_none());
     }
 }

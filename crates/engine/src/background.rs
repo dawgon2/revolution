@@ -112,7 +112,7 @@ pub struct Activity {
 }
 
 /// Timing of the worker.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct WorkerConfig {
     /// How long the worker keeps waiting after the activity clears.
     pub resume_delay: Duration,
@@ -120,13 +120,50 @@ pub struct WorkerConfig {
     pub scrub_window: Duration,
     /// Hardware-decode pace inside a step ([`filmcraft_media::cancel::with_pace`]).
     pub pace: Option<Duration>,
+    /// The machine's memory (total, available bytes) before each step; the worker waits while it
+    /// is low ([`memory_low`]). None: never checked (tests, platforms without the number).
+    pub memory: Option<fn() -> Option<(u64, u64)>>,
+}
+
+/// Free memory under which the worker waits (owner, fork XPS sign-off: on the 16 GB XPS 16 the
+/// render cache's 6.2K parts and proxies ran next to playback and an export until the machine
+/// swapped and the Arc GPU ran out of memory): less than 3 GB available, or less than a quarter
+/// of the machine's memory (4 GB on 16 GB). Smaller machines back off sooner.
+pub fn memory_low(total: u64, available: u64) -> bool {
+    available < (3u64 << 30).max(total / 4)
+}
+
+/// How long the worker waits before it looks at the memory again.
+const MEMORY_RECHECK: Duration = Duration::from_secs(2);
+
+/// `MemTotal` and `MemAvailable` of `/proc/meminfo`, in bytes.
+#[cfg(target_os = "linux")]
+fn meminfo() -> Option<(u64, u64)> {
+    parse_meminfo(&std::fs::read_to_string("/proc/meminfo").ok()?)
+}
+
+fn parse_meminfo(s: &str) -> Option<(u64, u64)> {
+    let field = |name: &str| -> Option<u64> {
+        let line = s.lines().find(|l| l.starts_with(name))?;
+        let kb: u64 = line.get(name.len()..)?.trim().trim_end_matches("kB").trim().parse().ok()?;
+        kb.checked_mul(1024)
+    };
+    Some((field("MemTotal:")?, field("MemAvailable:")?))
 }
 
 impl Default for WorkerConfig {
     fn default() -> Self {
         // pace: at most 250 pictures/s submitted by the worker's own thread (6.2K decodes at
         // ~45-60 fps, so it only spreads the bursts of small sources). Provisional (fork 6.2).
-        Self { resume_delay: Duration::from_millis(500), scrub_window: Duration::from_millis(300), pace: Some(Duration::from_millis(4)) }
+        Self {
+            resume_delay: Duration::from_millis(500),
+            scrub_window: Duration::from_millis(300),
+            pace: Some(Duration::from_millis(4)),
+            #[cfg(target_os = "linux")]
+            memory: Some(meminfo),
+            #[cfg(not(target_os = "linux"))]
+            memory: None,
+        }
     }
 }
 
@@ -177,6 +214,8 @@ pub enum WorkerState {
     Waiting,
     /// The activity cleared; resuming after the resume delay.
     Resuming,
+    /// Waiting for free memory ([`memory_low`]).
+    LowMemory,
 }
 
 /// A snapshot for status displays and commands.
@@ -245,6 +284,8 @@ struct State {
     next_seq: u64,
     started: bool,
     shutdown: bool,
+    /// The last memory check found it low (the worker waits).
+    low_memory: bool,
 }
 
 impl State {
@@ -526,6 +567,7 @@ impl BackgroundWorker {
                 Hold::Indefinite => WorkerState::Waiting,
                 Hold::Until(_) if st.scrubbing(now, &cfg) => WorkerState::Waiting,
                 Hold::Until(_) => WorkerState::Resuming,
+                Hold::No if st.low_memory => WorkerState::LowMemory,
                 Hold::No => WorkerState::Working,
             }
         };
@@ -659,6 +701,16 @@ fn run(shared: Arc<Shared>) {
             }
             Hold::No => {}
         }
+        // free memory first: a step would add a decoder and an encoder of the source's size
+        let low = cfg.memory.and_then(|f| f()).is_some_and(|(total, available)| memory_low(total, available));
+        if low != st.low_memory {
+            st.low_memory = low;
+            shared.changed.notify_all();
+        }
+        if low && st.pick().is_some() {
+            st = shared.wake.wait_timeout(st, MEMORY_RECHECK).unwrap_or_else(PoisonError::into_inner).0;
+            continue;
+        }
         let Some(i) = st.pick() else {
             st = shared.wake.wait(st).unwrap_or_else(PoisonError::into_inner);
             continue;
@@ -767,5 +819,16 @@ mod tests {
         shared.lock().entries.clear();
         assert!(w.wait_idle(Duration::from_millis(10)));
         assert_eq!(w.status().state, WorkerState::Idle);
+    }
+}
+
+#[cfg(test)]
+mod meminfo_tests {
+    #[test]
+    fn meminfo_parses_and_refuses_junk() {
+        let m = "MemTotal:       16179140 kB\nMemFree:  100 kB\nMemAvailable:    4000000 kB\n";
+        assert_eq!(super::parse_meminfo(m), Some((16_179_140 * 1024, 4_000_000 * 1024)));
+        assert_eq!(super::parse_meminfo("MemTotal: lots kB\nMemAvailable: 1 kB"), None);
+        assert_eq!(super::parse_meminfo(""), None);
     }
 }

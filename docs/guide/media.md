@@ -56,7 +56,8 @@ and **Save a Copy…** (`file.saveCopy`: the copy is written, you keep working i
 Revolution also keeps a journal of unsaved changes and auto-saves on a timer (Settings ▸ Auto
 Save; `file.autoSaveNow` saves one at once). If Revolution or the computer stops before you saved,
 the next launch offers **Recover Unsaved Changes…** (`file.recover`), or throw them away with
-`file.discardRecovery`.
+`file.discardRecovery`. If the graphics card stops (for example out of memory), Revolution
+restarts by itself and recovers them at once.
 
 ## Offline media and relinking
 

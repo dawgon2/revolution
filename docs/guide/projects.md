@@ -10,7 +10,8 @@
 
 The **Project Manager** is a full-window screen that shows your projects as picture tiles. You
 pick one to work on, or make a new one, instead of starting in an empty project. In the Resolve
-workflow it is the first thing you see when Revolution starts.
+workflow it is the first thing you see when Revolution starts. While it is open nothing plays:
+opening it stops playback, and Play waits until you close it.
 
 If you know Resolve: this is its Project Manager, with the same layout (projects as tiles, New
 Project as the first tile, Open / Close at the bottom right). Differences are listed at the end

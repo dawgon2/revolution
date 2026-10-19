@@ -62,6 +62,8 @@ Proxies are made by a background worker that steps aside whenever you are workin
 
 - While you **play**, **scrub** or **export**, it finishes the few frames in hand and waits.
 - It starts again half a second after you stop.
+- It also waits while the computer is short of memory (under 3 GB free, or a quarter of its
+  memory), so on a 16 GB computer it backs off sooner; the render cache does the same.
 - It makes one proxy at a time, 4:2:2 clips first.
 
 So making proxies never makes playback drop frames; it only takes longer when you keep playing.

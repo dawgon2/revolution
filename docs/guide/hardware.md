@@ -152,9 +152,10 @@ are for troubleshooting; normally leave them unset.
 |---|---|
 | `FILMCRAFT_VAAPI_DEVICE=/dev/dri/renderD129` | which graphics device decodes (here renderD129 is the AMD card, renderD128 the Intel) |
 | `FILMCRAFT_VAAPI_ENCODE_DEVICE=/dev/dri/renderD128` | encode H.265 exports on another device's video engine (e.g. the Intel), so decoding and encoding don't share one |
-| `FILMCRAFT_VAAPI_ANY_DRIVER=1` | use a VA-API driver Revolution hasn't checked (the old Intel i965 driver, nvidia-vaapi-driver). Revolution uses only AMD's Mesa driver and Intel's iHD driver by default, because it decodes on several threads at once and only those two are known to handle that; with any other driver it decodes in software and says so in the log. Turning this on may crash with those drivers |
+| `FILMCRAFT_VAAPI_ANY_DRIVER=1` | use a VA-API driver Revolution hasn't checked (the old Intel i965 driver, nvidia-vaapi-driver). Revolution uses only AMD's Mesa driver and Intel's iHD driver by default, because it decodes on several threads at once and only those two are known to handle that; with any other driver it decodes in software and says so in the log. **[Fork]** NVIDIA's GPU is not even opened for VA-API without it, so a sleeping NVIDIA GPU stays asleep. Turning this on may crash with those drivers |
 | `FILMCRAFT_NVDEC_FIRST=1` | **[Fork]** on a computer with an NVIDIA GPU next to another one (a laptop's Intel iGPU), decode on NVIDIA's NVDEC first; by default VA-API on the other GPU decodes first and NVDEC takes what it declines |
 | `FILMCRAFT_NO_VA_ENCODE=1` | don't use the in-process hardware encoder; export through the system ffmpeg instead |
+| `FILMCRAFT_NO_VA_DECODE=1` | **[Fork]** don't decode through VA-API: clips go to NVIDIA's NVDEC when there is one, else to Revolution's own software decoders |
 | `FILMCRAFT_NO_ZERO_COPY=1` | export copies frames back to main memory instead of rendering into the encoder |
 | `FILMCRAFT_NO_GPU_IMPORT=1` | playback copies decoded frames instead of handing them to the compositor in graphics memory |
 | `FILMCRAFT_FFMPEG=/path/to/ffmpeg` | which ffmpeg program the fallback paths run (HEVC decode and H.265 export; H.264 never uses ffmpeg) |

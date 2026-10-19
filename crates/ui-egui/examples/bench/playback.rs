@@ -143,9 +143,11 @@ impl Display {
         let mut name = String::new();
         let gpu = if gpu {
             let instance = eframe::wgpu::Instance::default();
-            // as eframe picks it for the app window: the high-performance (discrete) adapter
+            // as the app picks it for its window (`adapter_pick`, FILMCRAFT_GRAPHICS_DEVICE in the
+            // bench), else the high-performance (discrete) adapter
             let opts = eframe::wgpu::RequestAdapterOptions { power_preference: eframe::wgpu::PowerPreference::HighPerformance, ..Default::default() };
-            let adapter = pollster::block_on(instance.request_adapter(&opts)).ok();
+            let adapter = filmcraft_gpu::adapter_pick::choose(&instance, eframe::wgpu::Backends::PRIMARY)
+                .or_else(|| pollster::block_on(instance.request_adapter(&opts)).ok());
             if let Some(a) = &adapter {
                 name = a.get_info().name;
             }
@@ -157,6 +159,10 @@ impl Display {
                     if std::env::var_os("FILMCRAFT_NO_GPU_IMPORT").is_none()
                         && let Some(Ok(d)) = filmcraft_gpu::interop::create_device(&a, &desc)
                     {
+                        // as the app: NVDEC's pictures stay on an NVIDIA GPU (fork 8.6c)
+                        if a.get_info().vendor == 0x10de {
+                            filmcraft_gpu::interop::set_cuda_target(Some(d.0.clone()));
+                        }
                         return Some(d);
                     }
                     pollster::block_on(a.request_device(&desc)).ok()
@@ -229,6 +235,8 @@ impl Display {
 #[derive(Default)]
 pub struct PlayReport {
     pub label: String,
+    /// NVDEC pictures in GPU memory read back to the CPU meanwhile (fork 8.6c: CPU paths only).
+    pub shared_read_backs: u64,
     pub seconds: f64,
     pub shown: u64,
     pub dropped: u64,
@@ -318,6 +326,7 @@ impl Bench {
         let mut meter = PlaybackMeter::default();
         meter.start(speed);
         self.server.take_records();
+        let shared0 = shared_read_backs();
         let gop0 = filmcraft_codecs::gop_stats();
         let (p0, ui0, up0) = (process_cpu_time().unwrap_or_default(), display.ui_cpu, display.uploaded);
         display.present.clear();
@@ -397,6 +406,7 @@ impl Bench {
             }
         }
         let mut rep = PlayReport {
+            shared_read_backs: shared_read_backs().saturating_sub(shared0),
             label: label.to_string(),
             seconds: wall,
             shown: meter.shown,
@@ -675,11 +685,27 @@ pub fn print_row(r: &PlayReport, fps: f64) {
     );
 }
 
+/// NVDEC pictures the decoder read back instead of keeping on the GPU, and why (cumulative).
+fn nvdec_read_backs() -> (u64, Option<String>) {
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    return filmcraft_platform::nvdec::picture_read_backs();
+    #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+    (0, None)
+}
+
+/// NVDEC pictures read back from GPU memory so far (fork 8.6c; 0 off Linux).
+fn shared_read_backs() -> u64 {
+    #[cfg(target_os = "linux")]
+    return filmcraft_gpu::shared_picture::downloads();
+    #[cfg(not(target_os = "linux"))]
+    0
+}
+
 pub fn to_json(r: &PlayReport, scenario: &str, res: &str, path: &str) -> Value {
     let frames = (r.shown + r.dropped).max(1) as f64;
     json!({
         "scenario": scenario, "res": res, "path": path, "play": r.label, "wall_s": r.seconds,
-        "shown": r.shown, "dropped": r.dropped, "on_time": r.on_time, "due": r.due,
+        "shown": r.shown, "dropped": r.dropped, "on_time": r.on_time, "due": r.due, "shared_read_backs": r.shared_read_backs, "backends": filmcraft_codecs::hw::backend_stats(), "nvdec_read_backs": nvdec_read_backs(),
         "latency_ms": {"p50": pct(&r.latency, 0.5), "p95": pct(&r.latency, 0.95), "p99": pct(&r.latency, 0.99), "max": pct(&r.latency, 1.0)},
         "service_ms": {"p50": pct(&r.service, 0.5), "p95": pct(&r.service, 0.95)},
         "slack_ms": {"p5": pct(&r.slack, 0.05), "p50": pct(&r.slack, 0.5)},

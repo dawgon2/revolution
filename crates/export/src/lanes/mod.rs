@@ -38,6 +38,13 @@ pub trait LaneDevices: Send + Sync {
         let _ = node;
         self.bind_thread(None);
     }
+    /// Whether `node`'s GPU may decode for an export the primary GPU renders and encodes alone
+    /// ([`lane::start`]'s decode-only plan). Fork 8.6d: not where the primary is an NVIDIA GPU next
+    /// to `node`'s Intel one (NVIDIA imports none of Intel's tiled 4:2:0 pictures).
+    fn decodes_for_primary(&self, node: &str) -> bool {
+        let _ = node;
+        true
+    }
     /// Whether `node`'s GPU decodes HEVC 4:2:2 (the lane 4:2:2-source chunks prefer).
     fn decodes_422(&self, node: Option<&str>) -> bool;
     /// The encoders of lanes on `nodes` for this export; `None` when they can't take it.

@@ -189,11 +189,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     if show_picture {
         ui.painter().rect_filled(pic, 0.0, t.monitor_bg);
         let playing = if which == Which::Program { app.playback.playing } else { app.source_playback.clock.playing };
-        let mut res = mv.effective_res(playing);
         // Settings ▸ Playback ▸ Lower playback resolution on battery (fork XPS d)
-        if playing && app.session.prefs.playback.battery_preview && filmcraft_engine::power::on_battery() {
-            res = res.lower();
-        }
+        let battery_preview = app.session.prefs.playback.battery_preview;
+        let res = mv.res_now(playing, battery_preview, battery_preview && filmcraft_engine::power::on_battery());
         // frame pixels per screen pixel along the axis that needs the most of them
         let screen_scale = (pic.width() * ppp / frame_size.0.max(1) as f32).max(pic.height() * ppp / frame_size.1.max(1) as f32).min(1.0);
         let scale = quantize_scale(res.scale().min(screen_scale.max(1.0 / 32.0)));
@@ -383,7 +381,15 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     }
     app.auto.add(&format!("{prefix}.timecode"), tc_rect, &tc);
     let dur_tc = format_time(mark_out.map(|o| o + rate.frame_duration()).unwrap_or(duration) - range_start, rate, drop_frame, TimeDisplay::Timecode, 48000);
-    ui.painter().text(pos2(row1.max.x, row1.center().y), Align2::RIGHT_CENTER, &dur_tc, Tokens::timecode(), t.text_dim);
+    // only where it clears the current time (a narrow monitor, or the UI at 2×: XPS item 15);
+    // the current time wins the room
+    let tc_w = ui.painter().layout_no_wrap(tc.clone(), Tokens::timecode(), t.timecode).size().x;
+    let dur = ui.painter().layout_no_wrap(dur_tc.clone(), Tokens::timecode(), t.text_dim);
+    let dur_rect = Rect::from_min_size(pos2(row1.max.x - dur.size().x, row1.center().y - dur.size().y / 2.0), dur.size());
+    if dur_rect.min.x >= row1.min.x + tc_w + 4.0 {
+        ui.painter().galley(dur_rect.min, dur, t.text_dim);
+        app.auto.add(&format!("{prefix}.duration"), dur_rect, &dur_tc);
+    }
     // At compact widths, timecodes and view settings need separate rows.
     let settings_y = row1.min.y + if stacked_controls { 26.0 } else { 0.0 };
     let zoom_x = if stacked_controls && which == Which::Source && !separate_source_drag {
@@ -393,7 +399,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     } else {
         row1.min.x + 116.0
     };
-    let zr = Rect::from_min_size(pos2(zoom_x, settings_y), vec2(70.0, 24.0));
+    // narrower than the zoom / resolution / wrench group (a small window, the UI at 2×: XPS item
+    // 15): narrower dropdowns, centred, never outside the monitor
+    let squeeze = squeezed_controls(row1.min.x, row1.width());
+    let zoom_x = squeeze.map_or(zoom_x, |q| q.zoom_x);
+    let zr = Rect::from_min_size(pos2(zoom_x, settings_y), vec2(squeeze.map_or(70.0, |q| q.zoom_w), 24.0));
     let zoom_label = match mv.zoom {
         None => tl!("Fit").to_string(),
         Some(z) => format!("{}%", (z * 100.0).round() as i32),
@@ -409,7 +419,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     } else {
         row1.max.x - 196.0
     };
-    let rr = Rect::from_min_size(pos2(resolution_x, settings_y), vec2(62.0, 24.0));
+    let resolution_x = squeeze.map_or(resolution_x, |q| zr.max.x + q.gap);
+    let rr = Rect::from_min_size(pos2(resolution_x, settings_y), vec2(squeeze.map_or(62.0, |q| q.res_w), 24.0));
     if which == Which::Source && rr.min.x > zr.max.x + 12.0 {
         crate::panels::source_drag::controls(app, ui, Rect::from_min_max(pos2(zr.max.x + 6.0, settings_y), pos2(rr.min.x - 6.0, settings_y + 24.0)));
     }
@@ -425,7 +436,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
             }
         }
     });
-    let wr = Rect::from_min_size(pos2(rr.max.x + 6.0, settings_y + 1.0), vec2(22.0, 22.0));
+    let wr = Rect::from_min_size(pos2(rr.max.x + squeeze.map_or(6.0, |q| q.gap), settings_y + 1.0), vec2(22.0, 22.0));
     let wresp = ui.interact(wr, egui::Id::new((prefix, "wrench")), Sense::click());
     icons::paint(ui.painter(), wr.shrink(4.0), Icon::Wrench, if wresp.hovered() { t.tab_text_active } else { t.icon });
     app.auto.add(&format!("{prefix}.settings"), wr, "Settings");
@@ -1113,6 +1124,32 @@ fn source_nav(app: &mut FilmcraftApp, cmd: &str) {
         _ => rate.tick_of(rate.frame_at(cur).saturating_add(1)),
     };
     let _ = app.session.execute("source.setPlayhead", json!({"time": t.0}));
+}
+
+/// The zoom / resolution / wrench group's natural width: 70 + 6 + 62 + 6 + 22 points.
+const CONTROL_GROUP_W: f32 = 166.0;
+
+/// Where the zoom and resolution dropdowns go in a controls row narrower than their group.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Squeezed {
+    zoom_x: f32,
+    zoom_w: f32,
+    res_w: f32,
+    gap: f32,
+}
+
+/// `None` when the row (from `x`, `width` points wide) holds the group as it is; otherwise the
+/// dropdowns share what the wrench leaves (70 : 62) with smaller gaps, filling the row (which
+/// sits centred in the monitor).
+fn squeezed_controls(x: f32, width: f32) -> Option<Squeezed> {
+    if width.is_nan() || width >= CONTROL_GROUP_W {
+        return None;
+    }
+    let width = width.max(0.0);
+    let gap = 3.0;
+    let room = (width - 22.0 - 2.0 * gap).max(0.0);
+    let zoom_w = room * 70.0 / 132.0;
+    Some(Squeezed { zoom_x: x, zoom_w, res_w: room - zoom_w, gap })
 }
 
 #[cfg(test)]

@@ -340,3 +340,56 @@ fn workflow_round_trip_keeps_unsaved_layouts_and_modes_land_on_pages() {
     assert_eq!(d.harness.state().ui.mode, Mode::Edit);
     assert!(d.has("pageToolbar.MediaBrowser"), "the Media page's toolbar");
 }
+
+/// XPS item 15: on a narrow window (the 16" panel at 2×: 960 × 600 points, and smaller) the page
+/// buttons shrink into the room between the app's name and the coach's buttons instead of
+/// sliding under them; every page stays clickable.
+#[test]
+fn page_bar_fits_a_narrow_window_without_overlaps() {
+    for width in [960.0f32, 800.0] {
+        let mut d = Driver::demo(Workflow::Resolve);
+        d.harness.set_size(egui::vec2(width, 600.0));
+        d.frames(6);
+        let overlap = |a: [f64; 4], b: [f64; 4]| a[0] < b[0] + b[2] - 0.5 && b[0] < a[0] + a[2] - 0.5 && a[1] < b[1] + b[3] - 0.5 && b[1] < a[1] + a[3] - 0.5;
+        let pages: Vec<String> = d.ids("page.").into_iter().filter(|i| i.matches('.').count() == 1).collect();
+        assert!(pages.len() >= 5, "{pages:?}");
+        let mut others: Vec<[f64; 4]> = Vec::new();
+        for id in ["pageBar.app", "assistant.open", "coach.ask.open", "coach.lessons.open", "pageBar.home"] {
+            if d.has(id) {
+                others.push(d.rect(id));
+            }
+        }
+        assert!(others.len() >= 4, "the name, the coach's buttons and Home are on screen");
+        for id in &pages {
+            let r = d.rect(id);
+            for o in &others {
+                assert!(!overlap(r, *o), "{width}: {id} {r:?} overlaps {o:?}");
+            }
+        }
+        d.click("page.deliver");
+        assert!(
+            d.workspace().to_lowercase().contains("deliver") || d.workspace().to_lowercase().contains("export"),
+            "{width}: Deliver opens: {}",
+            d.workspace()
+        );
+    }
+}
+
+/// XPS item 15: a narrow Program monitor (a small window, or the UI at 2×) never draws its
+/// duration over the current timecode: it shows where it clears it, else it is left out.
+#[test]
+fn monitor_duration_never_covers_the_timecode() {
+    for (width, height, must_show) in [(1920.0f32, 1080.0f32, true), (800.0, 490.0, false)] {
+        let mut d = Driver::demo(Workflow::Resolve);
+        d.harness.set_size(egui::vec2(width, height));
+        d.frames(6);
+        assert!(d.has("program.timecode"), "{width}: the current time is always shown");
+        if d.has("program.duration") {
+            let (tc, dur) = (d.rect("program.timecode"), d.rect("program.duration"));
+            // (the timecode's element is its 110-point edit box; the text itself is narrower)
+            assert!(dur[0] >= tc[0] + 60.0, "{width}: duration {dur:?} over the timecode {tc:?}");
+        } else {
+            assert!(!must_show, "{width}: room for the duration, yet it is missing");
+        }
+    }
+}

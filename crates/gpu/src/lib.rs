@@ -49,6 +49,8 @@ pub mod interop;
 pub mod lut;
 pub mod mask;
 pub mod scopes;
+#[cfg(target_os = "linux")]
+pub mod shared_picture;
 mod transition;
 #[cfg(target_os = "linux")]
 pub mod unpack422;
@@ -140,10 +142,17 @@ pub struct GpuCompositor {
     /// Imports hardware-decoded pictures in place (Linux, a device from `interop::create_device`).
     #[cfg(target_os = "linux")]
     importer: Option<interop::Importer>,
+    /// NVDEC's shared memory made for another device on this GPU, imported here (fork 8.6c: the
+    /// export renderer), by allocation, until the allocation is freed.
+    #[cfg(target_os = "linux")]
+    shared_imports: HashMap<u64, (wgpu::Buffer, std::sync::Weak<()>)>,
     /// Splits imported packed 4:2:2 pictures into VRAM planes (made on first use; inner None:
     /// the device cannot, they are read back).
     #[cfg(target_os = "linux")]
     unpack422: Option<Option<unpack422::Unpack422>>,
+    /// The NV12 / P010 plane textures [`GpuCompositor::write_yuv420_into_buffer`] renders before
+    /// copying them into an encoder's buffer: luma, chroma, size, 10-bit.
+    nv_planes: Option<(wgpu::Texture, wgpu::Texture, (u32, u32), bool)>,
     /// GPU pictures drawn in place / read back to memory first (stats).
     pub gpu_frames_in_place: u64,
     pub gpu_frames_read_back: u64,
@@ -601,7 +610,10 @@ impl GpuCompositor {
             #[cfg(target_os = "linux")]
             importer: interop::Importer::new(device),
             #[cfg(target_os = "linux")]
+            shared_imports: HashMap::new(),
+            #[cfg(target_os = "linux")]
             unpack422: None,
+            nv_planes: None,
             gpu_frames_in_place: 0,
             gpu_frames_read_back: 0,
         }
@@ -688,6 +700,9 @@ impl GpuCompositor {
                     None
                 } else if s.format() == filmcraft_frame::GpuFormat::Y210 {
                     self.import_422(s, (w, h))
+                } else if let Some(planes) = self.copy_shared(s, (w, h)) {
+                    // NVDEC's picture in memory shared with CUDA on this GPU (fork 8.6c)
+                    Some(planes)
                 } else {
                     self.importer.as_mut().and_then(|i| i.import(s.as_ref()).map(|(a, b)| (a.clone(), b.clone())))
                 };
@@ -879,6 +894,79 @@ impl GpuCompositor {
             }
         }
         key
+    }
+
+    /// A picture NVDEC copied into memory shared with CUDA on this same GPU (fork 8.6c /
+    /// XPS item 18: [`shared_picture::SharedPicture`]): its planes copied into new textures on
+    /// the GPU, no CPU in the way. None (the other paths take it): another kind of surface,
+    /// another device, a layout wgpu can't copy as it lies, or 10 bits without 16-bit textures.
+    #[cfg(target_os = "linux")]
+    fn copy_shared(&mut self, s: &Arc<dyn filmcraft_frame::GpuSurface>, (w, h): (u32, u32)) -> Option<(wgpu::TextureView, wgpu::TextureView)> {
+        let sp = s.as_any()?.downcast_ref::<shared_picture::SharedPicture>()?;
+        let ten = sp.format == filmcraft_frame::GpuFormat::P010;
+        if !sp.copyable() || (ten && !self.unorm16) {
+            return None;
+        }
+        // made for this device, or another device of the same GPU (the window's, when this is the
+        // export renderer): its memory imported here once per allocation
+        let buffer = if interop::same_device(&sp.device, &self.device) {
+            sp.buffer.clone()
+        } else {
+            let m = sp.memory.as_ref()?;
+            self.shared_imports.retain(|_, (_, alive)| alive.strong_count() > 0);
+            match self.shared_imports.get(&m.key) {
+                Some((b, _)) => b.clone(),
+                None if self.shared_imports.len() < 64 => {
+                    let fd = m.fd.try_clone().ok()?;
+                    let b = match interop::import_cuda_shared(&self.device, fd, m.size, m.dedicated) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log::warn!("importing NVDEC's shared memory into this device failed ({e}); reading pictures back");
+                            return None;
+                        }
+                    };
+                    self.shared_imports.insert(m.key, (b.clone(), m.alive.clone()));
+                    b
+                }
+                None => return None,
+            }
+        };
+        // the visible picture (top-left of the coded one: NVDEC's 1920 × 1088 for 1080p)
+        if w == 0 || h == 0 || w > sp.coded.0 || h > sp.coded.1 {
+            return None;
+        }
+        let (fy, fc) =
+            if ten { (wgpu::TextureFormat::R16Unorm, wgpu::TextureFormat::Rg16Unorm) } else { (wgpu::TextureFormat::R8Unorm, wgpu::TextureFormat::Rg8Unorm) };
+        let plane = |label: &'static str, width: u32, height: u32, format| {
+            self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+        };
+        let max = self.device.limits().max_texture_dimension_2d;
+        if w > max || h > max {
+            return None;
+        }
+        let (luma, chroma) = (plane("NVDEC luma", w, h, fy), plane("NVDEC chroma", w.div_ceil(2), h.div_ceil(2), fc));
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("NVDEC planes") });
+        for (texture, offset, rows) in [(&luma, 0, h), (&chroma, sp.chroma_offset, h.div_ceil(2))] {
+            enc.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout { offset, bytes_per_row: Some(sp.pitch), rows_per_image: Some(rows) },
+                },
+                texture.as_image_copy(),
+                texture.size(),
+            );
+        }
+        self.queue.submit([enc.finish()]);
+        Some((luma.create_view(&Default::default()), chroma.create_view(&Default::default())))
     }
 
     /// A packed 4:2:2 GPU picture (Intel's linear copy, fork 6.1b) imported and unpacked once
@@ -1571,6 +1659,59 @@ impl GpuCompositor {
         sub
     }
 
+    /// The last composited picture converted as for [`read_yuv420`](Self::read_yuv420), as NV12
+    /// (P010 when `ten_bit`, 10 bits at the top of each 16), into `out` on this device: the luma
+    /// plane's rows `pitch` bytes apart from offset 0, the interleaved chroma right after it at
+    /// `pitch × height` (fork 8.6d D2: memory shared with CUDA that NVENC encodes in place, no
+    /// read-back). `pitch` must be a multiple of 256 and hold a row. Does not wait: the encoder
+    /// waits for the returned submission. None: no picture, a bad layout, or the device refused.
+    pub fn write_yuv420_into_buffer(&mut self, out: &wgpu::Buffer, pitch: u32, kr: f32, kb: f32, ten_bit: bool) -> Option<wgpu::SubmissionIndex> {
+        let (_, view, size) = self.accum.as_ref()?;
+        let (w, h) = *size;
+        if !nv_buffer_layout_ok((w, h), pitch, ten_bit, out.size()) {
+            return None;
+        }
+        use wgpu::TextureFormat as F;
+        let (fy, fc) = if ten_bit { (F::R16Unorm, F::Rg16Unorm) } else { (F::R8Unorm, F::Rg8Unorm) };
+        if self.nv_planes.as_ref().is_none_or(|p| p.2 != (w, h) || p.3 != ten_bit) {
+            let make = |label, (pw, ph), format| {
+                self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d { width: pw, height: ph, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                })
+            };
+            self.nv_planes = Some((make("nv-luma", (w, h), fy), make("nv-chroma", (w / 2, h / 2), fc), (w, h), ten_bit));
+        }
+        let (luma, chroma, _, _) = self.nv_planes.as_ref()?;
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let (lv, cv) = (luma.create_view(&Default::default()), chroma.create_view(&Default::default()));
+        let targets = yuv::YuvTargets { luma: &lv, chroma: &cv, size: (w, h) };
+        self.yuv.as_ref()?.run_into(&self.device, &self.queue, view, (w, h), kr, kb, ten_bit, &targets)?;
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("nv-into-buffer") });
+        for (texture, offset, rows) in [(luma, 0u64, h), (chroma, u64::from(pitch) * u64::from(h), h / 2)] {
+            enc.copy_texture_to_buffer(
+                texture.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: out,
+                    layout: wgpu::TexelCopyBufferLayout { offset, bytes_per_row: Some(pitch), rows_per_image: Some(rows) },
+                },
+                texture.size(),
+            );
+        }
+        let sub = self.queue.submit([enc.finish()]);
+        if let Some(e) = pollster::block_on(scope.pop()) {
+            log::warn!("writing an export frame into the encoder's buffer: {e}");
+            return None;
+        }
+        Some(sub)
+    }
+
     /// Block until `submission` has finished on the GPU (false: the device was lost).
     pub fn wait_for(device: &wgpu::Device, submission: wgpu::SubmissionIndex) -> bool {
         device.poll(wgpu::PollType::Wait { submission_index: Some(submission), timeout: None }).is_ok()
@@ -1889,3 +2030,17 @@ mod fx_tests;
 mod tests;
 #[cfg(test)]
 mod user_fx_tests;
+
+/// Whether an NV12 / P010 picture of `size` fits `bytes` at `pitch` (fork 8.6d D2): even sizes,
+/// a pitch that is a multiple of wgpu's 256-byte row alignment and holds a row, luma and chroma
+/// inside the buffer.
+pub fn nv_buffer_layout_ok((w, h): (u32, u32), pitch: u32, ten_bit: bool, bytes: u64) -> bool {
+    let row = u64::from(w) * if ten_bit { 2 } else { 1 };
+    w > 0
+        && h > 0
+        && w.is_multiple_of(2)
+        && h.is_multiple_of(2)
+        && pitch.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        && u64::from(pitch) >= row
+        && u64::from(pitch).checked_mul(u64::from(h) + u64::from(h / 2)).is_some_and(|need| need <= bytes)
+}

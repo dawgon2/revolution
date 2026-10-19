@@ -94,6 +94,13 @@ pub fn follow_workflow(app: &mut FilmcraftApp) {
     }
 }
 
+/// A page button's width with room to spare, the narrowest one, and the narrowest that still
+/// shows its label under the icon (narrower: the icon alone; the name stays in the tooltip-less
+/// automation label).
+const PAGE_W: f32 = 102.0;
+const MIN_PAGE_W: f32 = 36.0;
+const LABEL_PAGE_W: f32 = 64.0;
+
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let p = ui.painter_at(rect);
@@ -109,8 +116,13 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // the pages, centred: icon over label; the current one lit with an accent underline; moved
     // left on a narrow window so they stay clear of the coach's buttons (never over the name)
     let cur = current(app);
-    let w = 102.0;
-    let total = w * PAGES.len() as f32;
+    let n = PAGES.len() as f32;
+    // narrower when the room between the name and the coach's buttons is short (a small window,
+    // or the 16" laptop panel at 2×: XPS item 15), down to icons alone
+    let room = (pills - 12.0) - (name.max.x + 12.0);
+    let w = (room / n).clamp(MIN_PAGE_W, PAGE_W);
+    let labels = w >= LABEL_PAGE_W;
+    let total = w * n;
     let mut x = (rect.center().x - total / 2.0).min(pills - 12.0 - total).max(name.max.x + 12.0);
     let mut clicked = None;
     for (id, label, _, icon) in PAGES {
@@ -124,9 +136,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             p.rect_filled(r, 0.0, t.hover.gamma_multiply(0.6));
         }
         let ink = if sel || resp.hovered() { t.text } else { t.text_dim };
-        let ir = Rect::from_center_size(pos2(r.center().x, r.min.y + 15.0), vec2(16.0, 16.0));
+        let ir = Rect::from_center_size(pos2(r.center().x, if labels { r.min.y + 15.0 } else { r.center().y }), vec2(16.0, 16.0));
         icons::paint(&p, ir, icon, if sel { t.accent } else { ink });
-        p.text(pos2(r.center().x, r.min.y + 33.0), Align2::CENTER_CENTER, crate::i18n::t(label), Tokens::ui(11.5), ink);
+        if labels {
+            p.text(pos2(r.center().x, r.min.y + 33.0), Align2::CENTER_CENTER, crate::i18n::t(label), Tokens::ui(11.5), ink);
+        }
         app.auto.add(&format!("page.{id}"), r, label);
         if resp.clicked() {
             clicked = Some(id);

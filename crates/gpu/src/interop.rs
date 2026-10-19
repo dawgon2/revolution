@@ -339,7 +339,16 @@ impl Importer {
             return Err(format!("layer formats {:#x} / {:#x} are not packed Y210", d.layer_formats[0], d.layer_formats[1]));
         }
         let (w, h) = (d.width.max(1), d.height.max(1));
-        let packed = self.import_plane(d, 0, vk::Format::R16G16B16A16_UNORM, wgpu::TextureFormat::Rgba16Unorm, (w.div_ceil(2), h), usage, "decoded 4:2:2")?;
+        // NVIDIA's driver lists no DMA-BUF modifiers for 64-bit texel formats (XPS 16, RTX 4050):
+        // the same bytes then go in as `Rg16Unorm` (Y0 Cb) (Y1 Cr) texel pairs, which
+        // `unpack422` reads by the view's format
+        let packed = self
+            .import_plane(d, 0, vk::Format::R16G16B16A16_UNORM, wgpu::TextureFormat::Rgba16Unorm, (w.div_ceil(2), h), usage, "decoded 4:2:2")
+            .or_else(|wide| {
+                let pairs = w.div_ceil(2).saturating_mul(2);
+                self.import_plane(d, 0, vk::Format::R16G16_UNORM, wgpu::TextureFormat::Rg16Unorm, (pairs, h), usage, "decoded 4:2:2")
+                    .map_err(|narrow| format!("{wide}; as texel pairs: {narrow}"))
+            })?;
         let view = packed.create_view(&Default::default());
         Ok(Imported { alive: std::sync::Weak::new(), luma: view.clone(), chroma: view, last_used: 0, _textures: [packed.clone(), packed] })
     }
@@ -596,6 +605,225 @@ fn check_modifier(
         return Err("DMA-BUF memory is not importable for this image".into());
     }
     Ok(())
+}
+
+// ------------------------------------------------------- memory shared with CUDA (fork 8.6c)
+
+/// Device memory of a GPU shared with CUDA on the same GPU (fork 8.6c / XPS item 18): NVDEC copies
+/// each decoded picture into it on the GPU, and the compositor copies it into its plane textures
+/// on the GPU, so the picture never crosses to the CPU. (CUDA can't export its own memory as a
+/// DMA-BUF on consumer GPUs: the XPS 16's RTX 4050 reports no DMA-BUF support.)
+pub struct CudaShared {
+    /// The memory as an opaque fd, for CUDA's `cuImportExternalMemory` (which takes it over).
+    pub fd: std::os::fd::OwnedFd,
+    /// The same memory as a buffer of the device that made it (a copy source and destination).
+    pub buffer: wgpu::Buffer,
+    pub size: u64,
+    /// The memory is a dedicated allocation (CUDA's import must say so).
+    pub dedicated: bool,
+}
+
+/// [`CudaShared`] of `size` bytes in `device`'s own memory (VRAM on a discrete GPU). Needs the
+/// external-memory extension ([`create_device`]) and a driver that exports opaque fds.
+pub fn alloc_cuda_shared(device: &wgpu::Device, size: u64) -> Result<CudaShared, String> {
+    if size == 0 || size > MAX_ALLOC {
+        return Err(format!("CUDA-shared memory of {size} bytes"));
+    }
+    if !can_import(device) {
+        return Err("the device has no external-memory extensions".into());
+    }
+    // SAFETY: the hal device is used only within this call, while `device` is alive.
+    let hal = unsafe { device.as_hal::<Vulkan>() }.ok_or("not a Vulkan device")?;
+    let dev = hal.raw_device().clone();
+    let instance = hal.shared_instance().raw_instance().clone();
+    let pd = hal.raw_physical_device();
+    let opaque = vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD;
+    let usage = vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST;
+    let query = vk::PhysicalDeviceExternalBufferInfo::default().usage(usage).handle_type(opaque);
+    let mut ext_props = vk::ExternalBufferProperties::default();
+    // SAFETY: a live instance (Vulkan >= 1.1, checked by `create_device`) and physical device;
+    // valid in / out structs.
+    unsafe { instance.get_physical_device_external_buffer_properties(pd, &query, &mut ext_props) };
+    let features = ext_props.external_memory_properties.external_memory_features;
+    if !features.contains(vk::ExternalMemoryFeatureFlags::EXPORTABLE) {
+        return Err("the driver cannot export buffers as opaque fds".into());
+    }
+    let dedicated = features.contains(vk::ExternalMemoryFeatureFlags::DEDICATED_ONLY);
+    let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(opaque);
+    let info = vk::BufferCreateInfo::default().size(size).usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE).push_next(&mut external);
+    // SAFETY: a valid create info on a live device that enabled the external-memory extensions.
+    let buffer = unsafe { dev.create_buffer(&info, None) }.map_err(|e| format!("vkCreateBuffer: {e}"))?;
+    let destroy_buffer = || {
+        // SAFETY: the buffer was created above and is not in use; destroyed once, on a failure path.
+        unsafe { dev.destroy_buffer(buffer, None) }
+    };
+    // SAFETY: a valid buffer.
+    let req = unsafe { dev.get_buffer_memory_requirements(buffer) };
+    // SAFETY: a live instance and physical device.
+    let props = unsafe { instance.get_physical_device_memory_properties(pd) };
+    let types = props.memory_types.get(..(props.memory_type_count as usize).min(32)).unwrap_or(&[]);
+    let local = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+    let Some(type_index) = (0..types.len()).find(|&i| req.memory_type_bits & (1 << i) != 0 && types.get(i).is_some_and(|t| t.property_flags.contains(local)))
+    else {
+        destroy_buffer();
+        return Err("no device-local memory type can be exported".into());
+    };
+    let mut export = vk::ExportMemoryAllocateInfo::default().handle_types(opaque);
+    let mut dedicated_info = vk::MemoryDedicatedAllocateInfo::default().buffer(buffer);
+    let alloc_size = req.size.max(size);
+    let mut alloc = vk::MemoryAllocateInfo::default().allocation_size(alloc_size).memory_type_index(type_index as u32).push_next(&mut export);
+    if dedicated {
+        alloc = alloc.push_next(&mut dedicated_info);
+    }
+    // SAFETY: a valid allocation of an exportable memory type on a live device (dedicated to
+    // `buffer`, alive until the memory is freed, when the driver requires it).
+    let memory = match unsafe { dev.allocate_memory(&alloc, None) } {
+        Ok(m) => m,
+        Err(e) => {
+            destroy_buffer();
+            return Err(format!("vkAllocateMemory (exportable): {e}"));
+        }
+    };
+    let free_both = || {
+        // SAFETY: failure path: the buffer and memory were made above, unused; each freed once.
+        unsafe {
+            dev.destroy_buffer(buffer, None);
+            dev.free_memory(memory, None);
+        }
+    };
+    // SAFETY: binds the fresh buffer to the fresh allocation, which is large enough (`req`).
+    if let Err(e) = unsafe { dev.bind_buffer_memory(buffer, memory, 0) } {
+        free_both();
+        return Err(format!("vkBindBufferMemory: {e}"));
+    }
+    let fd_api = ash::khr::external_memory_fd::Device::new(&instance, &dev);
+    let get = vk::MemoryGetFdInfoKHR::default().memory(memory).handle_type(opaque);
+    // SAFETY: the memory was allocated above for export as an opaque fd; the new fd is ours.
+    let fd = match unsafe { fd_api.get_memory_fd(&get) } {
+        Ok(fd) if fd >= 0 => fd,
+        Ok(_) => {
+            free_both();
+            return Err("vkGetMemoryFdKHR returned no descriptor".into());
+        }
+        Err(e) => {
+            free_both();
+            return Err(format!("vkGetMemoryFdKHR: {e}"));
+        }
+    };
+    // SAFETY: a new descriptor returned to us by vkGetMemoryFdKHR, owned from here on.
+    let fd = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+    // SAFETY: `buffer` was made on this device with `usage` (COPY_SRC / COPY_DST in wgpu terms)
+    // and bound to `memory` (offset 0, `alloc_size` bytes); wgpu owns and frees both from here on
+    // (managed), and never maps them (device-local, not created mappable).
+    let hal_buffer = unsafe { wgpu::hal::vulkan::Buffer::from_raw_managed(buffer, memory, 0, alloc_size) };
+    let desc = wgpu::BufferDescriptor {
+        label: Some("CUDA-shared picture"),
+        size,
+        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    };
+    // SAFETY: the hal buffer was made from this device's raw device, respecting `desc`
+    // (size within the allocation, usage as created), bound and therefore initialised, not empty.
+    let buffer = unsafe { device.create_buffer_from_hal::<Vulkan>(hal_buffer, &desc) };
+    Ok(CudaShared { fd, buffer, size, dedicated })
+}
+
+/// The compositor's device CUDA copies decoded pictures for (fork 8.6c): set by the app when its
+/// window draws on an NVIDIA GPU with the external-memory extensions; NVDEC then hands
+/// [`crate::shared_picture::SharedPicture`]s over instead of reading pictures back.
+static CUDA_TARGET: std::sync::RwLock<Option<wgpu::Device>> = std::sync::RwLock::new(None);
+
+/// Register (Some) or clear (None) the device CUDA copies pictures for.
+pub fn set_cuda_target(device: Option<wgpu::Device>) {
+    *CUDA_TARGET.write().unwrap_or_else(std::sync::PoisonError::into_inner) = device.filter(can_import);
+}
+
+/// The device [`set_cuda_target`] registered.
+pub fn cuda_target() -> Option<wgpu::Device> {
+    CUDA_TARGET.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+/// Whether two wgpu devices are the same Vulkan device (by their raw handles).
+pub fn same_device(a: &wgpu::Device, b: &wgpu::Device) -> bool {
+    // SAFETY: the hal devices are only read for their handles within this call, while both live.
+    let raw = |d: &wgpu::Device| unsafe { d.as_hal::<Vulkan>() }.map(|h| ash::vk::Handle::as_raw(h.raw_device().handle()));
+    matches!((raw(a), raw(b)), (Some(x), Some(y)) if x == y)
+}
+
+/// The memory of a [`CudaShared`] allocation (an opaque fd from the device that made it)
+/// imported into another device on the same GPU as a buffer of `size` bytes (fork 8.6c: the
+/// export renderer's own device copying NVDEC's pictures made for the window's). `fd` is consumed.
+pub fn import_cuda_shared(device: &wgpu::Device, fd: std::os::fd::OwnedFd, size: u64, dedicated: bool) -> Result<wgpu::Buffer, String> {
+    if size == 0 || size > MAX_ALLOC {
+        return Err(format!("CUDA-shared memory of {size} bytes"));
+    }
+    if !can_import(device) {
+        return Err("the device has no external-memory extensions".into());
+    }
+    // SAFETY: the hal device is used only within this call, while `device` is alive.
+    let hal = unsafe { device.as_hal::<Vulkan>() }.ok_or("not a Vulkan device")?;
+    let dev = hal.raw_device().clone();
+    let instance = hal.shared_instance().raw_instance().clone();
+    let pd = hal.raw_physical_device();
+    let opaque = vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD;
+    let usage = vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST;
+    let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(opaque);
+    let info = vk::BufferCreateInfo::default().size(size).usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE).push_next(&mut external);
+    // SAFETY: a valid create info on a live device that enabled the external-memory extensions.
+    let buffer = unsafe { dev.create_buffer(&info, None) }.map_err(|e| format!("vkCreateBuffer: {e}"))?;
+    // SAFETY: a valid buffer.
+    let req = unsafe { dev.get_buffer_memory_requirements(buffer) };
+    // SAFETY: a live instance and physical device.
+    let props = unsafe { instance.get_physical_device_memory_properties(pd) };
+    let types = props.memory_types.get(..(props.memory_type_count as usize).min(32)).unwrap_or(&[]);
+    let local = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+    let Some(type_index) = (0..types.len()).find(|&i| req.memory_type_bits & (1 << i) != 0 && types.get(i).is_some_and(|t| t.property_flags.contains(local)))
+    else {
+        // SAFETY: the buffer was created above and never used; destroyed once.
+        unsafe { dev.destroy_buffer(buffer, None) };
+        return Err("no device-local memory type to import into".into());
+    };
+    let raw = fd.into_raw_fd();
+    let mut import = vk::ImportMemoryFdInfoKHR::default().handle_type(opaque).fd(raw);
+    let mut dedicated_info = vk::MemoryDedicatedAllocateInfo::default().buffer(buffer);
+    let alloc_size = req.size.max(size);
+    let mut alloc = vk::MemoryAllocateInfo::default().allocation_size(alloc_size).memory_type_index(type_index as u32).push_next(&mut import);
+    if dedicated {
+        alloc = alloc.push_next(&mut dedicated_info);
+    }
+    // SAFETY: imports the opaque fd (ownership passes to the driver on success) as memory for the
+    // fresh buffer (dedicated to it when the exporter's was).
+    let memory = match unsafe { dev.allocate_memory(&alloc, None) } {
+        Ok(m) => m,
+        Err(e) => {
+            // SAFETY: the import failed, so the fd is still ours: close it once; the buffer was
+            // never bound or used: destroyed once.
+            unsafe {
+                drop(<std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(raw));
+                dev.destroy_buffer(buffer, None);
+            }
+            return Err(format!("vkAllocateMemory (import): {e}"));
+        }
+    };
+    // SAFETY: binds the fresh buffer to the imported allocation, which is large enough (`req`).
+    if let Err(e) = unsafe { dev.bind_buffer_memory(buffer, memory, 0) } {
+        // SAFETY: failure path: both made above, unused; each freed once.
+        unsafe {
+            dev.destroy_buffer(buffer, None);
+            dev.free_memory(memory, None);
+        }
+        return Err(format!("vkBindBufferMemory: {e}"));
+    }
+    // SAFETY: made on this device, bound to `memory`; wgpu owns and frees both from here on.
+    let hal_buffer = unsafe { wgpu::hal::vulkan::Buffer::from_raw_managed(buffer, memory, 0, alloc_size) };
+    let desc = wgpu::BufferDescriptor {
+        label: Some("CUDA-shared picture (imported)"),
+        size,
+        usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    };
+    // SAFETY: the hal buffer was made from this device respecting `desc`, bound, not empty.
+    Ok(unsafe { device.create_buffer_from_hal::<Vulkan>(hal_buffer, &desc) })
 }
 
 #[cfg(test)]

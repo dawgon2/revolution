@@ -152,6 +152,11 @@ pub trait GpuSurface: Send + Sync + std::fmt::Debug {
     fn download(&self, width: u32, height: u32) -> Result<PixelData, String>;
     /// Bytes of GPU memory it occupies.
     fn gpu_bytes(&self) -> usize;
+    /// The surface as its own type, for a compositor that knows it (fork 8.6c: pictures in memory
+    /// shared with CUDA); None by default.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 #[derive(Clone, Debug)]

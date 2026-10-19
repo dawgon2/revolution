@@ -364,6 +364,12 @@ impl MonitorView {
     pub fn effective_res(&self, playing: bool) -> PlaybackRes {
         if !playing || (self.high_quality && self.paused_res.scale() > self.res.scale()) { self.paused_res } else { self.res }
     }
+    /// [`MonitorView::effective_res`] with Settings ▸ Playback ▸ Lower playback resolution on
+    /// battery (fork XPS d / item 13): one step lower while playing on battery with it ticked.
+    pub fn res_now(&self, playing: bool, battery_preview: bool, on_battery: bool) -> PlaybackRes {
+        let res = self.effective_res(playing);
+        if playing && battery_preview && on_battery { res.lower() } else { res }
+    }
     /// The display mode in effect (None = Multi-Camera).
     pub fn display_mode(&self) -> Option<DisplayMode> {
         (!self.multicam).then_some(self.display)

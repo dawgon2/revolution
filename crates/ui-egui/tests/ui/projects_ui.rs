@@ -167,6 +167,29 @@ fn home_screen_at_launch_in_resolve_not_in_premiere() {
     assert!(d.harness.state().session.active_sequence().is_some());
 }
 
+/// XPS 16 (owner): Play does nothing behind the Project Manager (it covers the monitors; the
+/// sound played from a screen the user couldn't see); once it is closed, Play plays.
+#[test]
+fn play_waits_for_the_project_manager_to_close() {
+    let (mut d, _) = Driver::launch("play-behind", Workflow::Resolve, |_| {});
+    let made = d.exec("file.newSequence", json!({"name": "S", "width": 64, "height": 36, "fps": 25}));
+    d.frames(2);
+    assert!(d.harness.state().session.active_sequence().is_some(), "a sequence to play: {made}");
+    if !d.open() {
+        d.ok("ui.menu.invoke", json!({"command": "projects.show"}));
+        d.frames(2);
+    }
+    assert!(d.open(), "the Project Manager is up");
+    let r = d.ok("ui.playback", json!({"action": "play"}));
+    assert_eq!(r["playing"], false, "nothing plays behind the Project Manager");
+    assert!(d.harness.state().ui.status.contains("Project Manager"), "{}", d.harness.state().ui.status);
+    d.click("projects.close");
+    assert!(!d.open(), "closed");
+    let r = d.ok("ui.playback", json!({"action": "play"}));
+    assert_eq!(r["playing"], true, "plays once it is closed");
+    d.ok("ui.playback", json!({"action": "stop"}));
+}
+
 #[test]
 fn new_project_flow_lands_on_the_edit_page() {
     let (mut d, _) = Driver::launch("new", Workflow::Resolve, |_| {});

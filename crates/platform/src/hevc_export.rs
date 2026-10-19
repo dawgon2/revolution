@@ -103,15 +103,19 @@ enum NvencPlace {
     Never,
 }
 
-/// Auto only (Hardware means VA-API, Software x265), and only where NVENC has an H.265 encoder
-/// (`nvenc`); `render_vendor`: the PCI vendor of the GPU exports render on.
+/// Auto only (Hardware means VA-API, Software x265); `render_vendor`: the PCI vendor of the GPU
+/// exports render on. Whether NVENC has an H.265 encoder (`nvenc`, which loads CUDA and wakes a
+/// sleeping NVIDIA GPU) is asked only to put it first; behind VA-API it is asked when VA-API has
+/// failed (XPS 16, Power saving: every H.265 export woke the RTX 4050 for a probe it didn't need).
 fn nvenc_place(choice: Choice, render_vendor: Option<u32>, nvenc: impl FnOnce() -> bool) -> NvencPlace {
-    if choice != Choice::Auto || !nvenc() {
+    if choice != Choice::Auto {
         NvencPlace::Never
-    } else if render_vendor == Some(VENDOR_NVIDIA) {
+    } else if render_vendor != Some(VENDOR_NVIDIA) {
+        NvencPlace::BeforeX265
+    } else if nvenc() {
         NvencPlace::First
     } else {
-        NvencPlace::BeforeX265
+        NvencPlace::Never
     }
 }
 
@@ -125,8 +129,22 @@ fn open_encoder(w: u32, h: u32, rate: FrameRate, s: &ExportSettings) -> Result<B
         let nvenc = || crate::nvenc::export::linux_hevc_encoder(w, h, rate, s).inspect_err(|why| log::info!("HEVC export: NVENC not used: {why}"));
         match place {
             NvencPlace::First => {
-                if let Ok(e) = nvenc() {
-                    log::info!("HEVC export: NVENC {w}x{h} (the export's GPU)");
+                // fork 8.6d: NVENC failing part-way hands the export to VA-API in process (its
+                // parameter sets in band), not an error
+                let settings = s.clone();
+                let then: crate::nvenc::fallback::MakeContinuation = Box::new(move || {
+                    let target = LaneTarget { node: None, stream: None, in_band: true };
+                    HevcEncoder::for_lane(w, h, rate, &settings, target).map(boxed)
+                });
+                // diagnostic: `FILMCRAFT_NVENC_NO_FALLBACK=1` ends the export when NVENC fails, as before 8.6d
+                let first = if std::env::var_os("FILMCRAFT_NVENC_NO_FALLBACK").is_some_and(|v| !v.is_empty() && v != "0") {
+                    nvenc()
+                } else {
+                    crate::nvenc::export::linux_hevc_encoder_with_fallback(w, h, rate, s, then)
+                        .inspect_err(|why| log::info!("HEVC export: NVENC not used: {why}"))
+                };
+                if let Ok(e) = first {
+                    log::info!("HEVC export: NVENC {w}x{h} (the export's GPU; VA-API carries on if it fails)");
                     return Ok(e);
                 }
             }
@@ -135,7 +153,9 @@ fn open_encoder(w: u32, h: u32, rate: FrameRate, s: &ExportSettings) -> Result<B
                 if let Ok(e) = hardware {
                     return Ok(boxed(e));
                 }
-                if let Ok(e) = nvenc() {
+                if crate::nvenc::hevc_available()
+                    && let Ok(e) = nvenc()
+                {
                     log::info!("HEVC export: NVENC {w}x{h}");
                     return Ok(e);
                 }
@@ -1155,8 +1175,9 @@ mod tests {
     fn nvenc_takes_its_place_among_the_hevc_encoders() {
         use super::{NvencPlace as P, nvenc_place};
         assert_eq!(nvenc_place(Choice::Auto, Some(0x10de), || true), P::First);
-        assert_eq!(nvenc_place(Choice::Auto, Some(0x8086), || true), P::BeforeX265);
-        assert_eq!(nvenc_place(Choice::Auto, None, || true), P::BeforeX265);
+        // behind VA-API the probe waits until VA-API has failed (it wakes a sleeping NVIDIA GPU)
+        assert_eq!(nvenc_place(Choice::Auto, Some(0x8086), || panic!("no probe on Power saving")), P::BeforeX265);
+        assert_eq!(nvenc_place(Choice::Auto, None, || panic!("no probe without a known GPU")), P::BeforeX265);
         assert_eq!(nvenc_place(Choice::Auto, Some(0x10de), || false), P::Never);
         for c in [Choice::Vaapi, Choice::X265] {
             assert_eq!(nvenc_place(c, Some(0x10de), || panic!("the probe isn't needed")), P::Never);

@@ -83,7 +83,7 @@ pub(crate) fn start(i: &DualInputs<'_>, sources: &dyn SourceProvider) -> std::re
     };
     let decode_only = scales.is_some();
     if s.video_format() != Format::Hevc || s.hevc_encoder == HevcEncoder::X265 {
-        return Err("two GPUs encode HEVC through VA-API only".into());
+        return Err("two GPUs encode HEVC with hardware encoders only".into());
     }
     if s.hevc_chroma_422 {
         return Err("4:2:2 is encoded by one GPU".into());
@@ -96,6 +96,11 @@ pub(crate) fn start(i: &DualInputs<'_>, sources: &dyn SourceProvider) -> std::re
     }
     let devices = lane_devices().ok_or("no second GPU support on this platform")?;
     let second = devices.second_node().ok_or("no second GPU with an HEVC encoder")?;
+    if decode_only && !devices.decodes_for_primary(&second) {
+        return Err(
+            "Export engines Auto: effects or a grade render on the primary GPU alone, and the second GPU can't decode for it here; All GPUs forces both".into(),
+        );
+    }
     match mem_available() {
         Some(m) if m >= MIN_MEM_AVAILABLE => {}
         Some(m) => return Err(format!("{} MB of memory available, two GPUs need {} MB", m >> 20, MIN_MEM_AVAILABLE >> 20)),

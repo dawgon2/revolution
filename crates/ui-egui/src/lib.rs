@@ -547,6 +547,15 @@ pub fn gpu_compositor_unsupported(adapter: &eframe::wgpu::Adapter) -> Option<Str
     None
 }
 
+static WINDOW_GPU_LOST: std::sync::OnceLock<Box<dyn Fn(&str) + Send + Sync>> = std::sync::OnceLock::new();
+
+/// What the app does when the window's GPU device is lost (once; later calls are ignored): the
+/// desktop app restarts itself and recovers the session from its journal, because egui-wgpu
+/// panics drawing on a lost device (fork XPS sign-off: the Arc ran out of memory mid-playback).
+pub fn set_window_gpu_lost_hook(hook: Box<dyn Fn(&str) + Send + Sync>) {
+    let _ = WINDOW_GPU_LOST.set(hook);
+}
+
 /// The wgpu setup for the app window: eframe's defaults plus the device features the GPU
 /// compositor uses when the adapter has them (16-bit normalized textures: 10-bit video uploads
 /// without a CPU conversion). On Linux with Vulkan, FilmCraft creates the device itself with
@@ -567,7 +576,8 @@ pub fn wgpu_configuration_on(graphics_device: &str) -> eframe::egui_wgpu::WgpuCo
         return c;
     }
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(n) = &mut c.wgpu_setup
-        && (graphics_device::preference(graphics_device) != filmcraft_gpu::adapter_pick::GpuPref::Auto || filmcraft_gpu::adapter_pick::driver_override())
+        && (graphics_device::preference(graphics_device) != filmcraft_gpu::adapter_pick::GpuPref::Auto
+            || filmcraft_gpu::adapter_pick::driver_override().is_set())
     {
         let pref = graphics_device.to_string();
         n.native_adapter_selector = Some(std::sync::Arc::new(move |adapters: &[eframe::wgpu::Adapter], surface: Option<&eframe::wgpu::Surface<'_>>| {
@@ -635,6 +645,11 @@ fn interop_setup(graphics_device: &str) -> Option<eframe::egui_wgpu::WgpuSetupEx
     match filmcraft_gpu::interop::create_device(&adapter, &device_descriptor(&adapter))? {
         Ok((device, queue)) => {
             log::info!("GPU: {} with DMA-BUF import (hardware-decoded frames drawn in place)", adapter.get_info().name);
+            // on an NVIDIA GPU, NVDEC's pictures stay on it (fork 8.6c): CUDA copies them into
+            // memory this device shares
+            if adapter.get_info().vendor == 0x10de {
+                filmcraft_gpu::interop::set_cuda_target(Some(device.clone()));
+            }
             Some(eframe::egui_wgpu::WgpuSetupExisting { instance, adapter, device, queue })
         }
         Err(e) => {
@@ -674,6 +689,11 @@ impl FilmcraftApp {
         rs.device.set_device_lost_callback(|reason, msg| {
             log::error!("GPU device lost ({reason:?}): {msg}");
             filmcraft_gpu::notify_device_lost();
+            // the window's renderer (egui-wgpu) can't draw on a lost device and panicked a moment
+            // later (XPS 16, the Arc out of memory): the app restarts first (`set_window_gpu_lost_hook`)
+            if let Some(hook) = WINDOW_GPU_LOST.get() {
+                hook(&format!("{reason:?}: {msg}"));
+            }
         });
         let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| filmcraft_gpu::GpuCompositor::new(&rs.device, &rs.queue)));
         match made {
@@ -1310,6 +1330,12 @@ impl FilmcraftApp {
     pub fn play(&mut self, speed: f64) {
         self.stop_source();
         if self.session.active_sequence().is_none() {
+            return;
+        }
+        // nothing plays behind the Project Manager (it covers the monitors; the sound would play
+        // from a screen the user can't see): opening it stops playback, and Play waits for it to close
+        if self.ui.home.open {
+            self.status(tl!("Close the Project Manager to play"));
             return;
         }
         // restart from the end → from the start (Settings ▸ Timeline ▸ "At playback end, return to

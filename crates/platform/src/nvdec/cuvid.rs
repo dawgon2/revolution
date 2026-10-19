@@ -114,6 +114,10 @@ struct State {
     pending: Vec<CUVIDPARSERDISPINFO>,
     ready: Vec<(i64, VideoFrame)>,
     error: Option<String>,
+    /// Pictures kept on the GPU (fork 8.6c): made on the first picture; Err: read back instead.
+    shared: Option<Result<super::shared::Pool, String>>,
+    /// The read-back reason was logged (once per decoder).
+    said_readback: bool,
 }
 impl State {
     fn sequence(&mut self, format: &CUVIDEOFORMAT) -> Result<i32, String> {
@@ -207,7 +211,16 @@ impl State {
         status(unsafe { (self.api.map)(self.decoder, info.picture_index, &mut address, &mut pitch, &mut proc) }, "cuvidMapVideoFrame64")?;
         self.mapped.set(Some(address));
         let mapped = Mapped { api: self.api, decoder: self.decoder, address, outstanding: &self.mapped, active: true };
-        let frame = self.readback(address, pitch);
+        let frame = match on_gpu(&mut self.shared, self.geometry, self.coded, address, pitch) {
+            Ok(f) => Ok(f),
+            Err(why) => {
+                super::note_read_back(&why);
+                if !std::mem::replace(&mut self.said_readback, true) {
+                    log::info!("NVDEC: pictures are read back to memory ({why})");
+                }
+                self.readback(address, pitch)
+            }
+        };
         mapped.unmap()?;
         let frame = frame?;
         self.ready.try_reserve(1).map_err(|e| format!("NVDEC output allocation failed: {e}"))?;
@@ -239,6 +252,36 @@ impl State {
         let luma = host.get(..luma_size).ok_or("NVDEC luma range is invalid")?;
         let chroma = host.get(luma_size..).ok_or("NVDEC chroma range is invalid")?;
         to_frame(&Biplanar { luma, chroma, stride: pitch as usize, rows: self.coded.1 as usize }, &self.geometry)
+    }
+}
+/// The mapped picture copied, on the GPU, into memory the compositor shares with CUDA (fork
+/// 8.6c, [`super::shared`]); Err: why not (it is read back instead).
+fn on_gpu(
+    shared: &mut Option<Result<super::shared::Pool, String>>,
+    geometry: Geometry,
+    coded: (u32, u32),
+    address: u64,
+    pitch: u32,
+) -> Result<VideoFrame, String> {
+    if address == 0 {
+        return Err("NVDEC returned a null mapped address".into());
+    }
+    let (cx, cy, ..) = geometry.crop;
+    if (cx, cy) != (0, 0) {
+        return Err("a conformance window off the top-left corner".into());
+    }
+    let (luma_size, total) = mapped_layout(coded, geometry.bits, pitch)?;
+    if shared.is_none() {
+        let pool = super::shared::Pool::new(total);
+        if pool.is_ok() {
+            log::info!("NVDEC: pictures stay on the GPU (memory shared with the compositor's Vulkan device)");
+        }
+        *shared = Some(pool);
+    }
+    match shared.as_mut() {
+        Some(Ok(pool)) => pool.picture(address, pitch, total, luma_size, coded, geometry),
+        Some(Err(e)) => Err(e.clone()),
+        None => Err("no shared pool".into()),
     }
 }
 fn mapped_layout(coded: (u32, u32), bits: u32, pitch: u32) -> Result<(usize, usize), String> {
@@ -387,6 +430,8 @@ impl Session {
             pending: Vec::new(),
             ready: Vec::new(),
             error: None,
+            shared: None,
+            said_readback: false,
         })))
         .ok_or("NVDEC state allocation is null")?;
         // From here on `Drop` frees the state, also when creating the parser fails.
@@ -651,6 +696,8 @@ mod tests {
             pending: Vec::new(),
             ready: Vec::new(),
             error: None,
+            shared: None,
+            said_readback: false,
         }
     }
     #[test]

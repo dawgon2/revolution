@@ -11,6 +11,8 @@
 #[allow(unsafe_code)]
 pub mod cuvid;
 pub mod ffi;
+#[allow(unsafe_code)]
+pub(crate) mod shared;
 
 #[cfg(test)]
 mod abi_tests;
@@ -120,4 +122,20 @@ impl VideoDecoder for NvDecoder {
     fn is_disposable(&self, sample: &[u8]) -> bool {
         self.info.is_disposable(sample)
     }
+}
+
+static READ_BACKS: std::sync::Mutex<(u64, Option<String>)> = std::sync::Mutex::new((0, None));
+
+/// A decoded picture went to memory instead of staying on the GPU (fork 8.6c), and why.
+pub(crate) fn note_read_back(why: &str) {
+    let mut g = READ_BACKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    g.0 = g.0.saturating_add(1);
+    if g.1.as_deref() != Some(why) {
+        g.1 = Some(why.to_string());
+    }
+}
+
+/// NVDEC pictures read back to memory so far and the last reason (`perf.stats`, the bench).
+pub fn picture_read_backs() -> (u64, Option<String>) {
+    READ_BACKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }

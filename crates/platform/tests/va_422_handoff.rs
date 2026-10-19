@@ -196,6 +196,30 @@ fn mp4_422(ff: &std::path::Path) -> Option<std::path::PathBuf> {
     fixture(ff, "hevc_422_10_wp.mp4", &args)
 }
 
+/// XPS 16: two streams of the same size handed off one after the other each read back as their
+/// own pictures. With linear copy surfaces shared between copiers, the second stream's copies
+/// (`intra_422` after `tu4_422`, iHD 26.3.5) were never written and read back as the first
+/// stream's pictures.
+#[test]
+fn consecutive_streams_of_one_size_are_each_handed_off_right() {
+    let _engine = engine();
+    if !has_422() {
+        return;
+    }
+    let dir = filmcraft_testkit::fixtures::fixtures_root().join("hevc");
+    let order = ["tu4_422", "intra_422", "tu4_422", "intra_nosao_nodbk_422"];
+    if order.iter().any(|n| !dir.join(format!("{n}.hevc")).exists()) {
+        eprintln!("SKIPPED: no 4:2:2 fixtures in {} (cargo xtask fixtures hevc)", dir.display());
+        return;
+    }
+    for name in order {
+        let reference = std::fs::read(dir.join(format!("{name}.yuv"))).expect("reference");
+        let frames = decode_annexb_with(&std::fs::read(dir.join(format!("{name}.hevc"))).expect("fixture"), true).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(frames.iter().all(|f| matches!(&f.data, PixelData::Gpu(s) if s.format() == GpuFormat::Y210)), "{name}: handed off");
+        assert!(planar_bytes(&frames) == reference, "{name}: the read-back differs from the reference (after another stream)");
+    }
+}
+
 /// Hand-off off (as with `FILMCRAFT_NO_GPU_IMPORT`), or failing at its first picture (a refused
 /// copy or export): the pictures are read back to memory, with the reference's samples.
 #[test]

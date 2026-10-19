@@ -83,6 +83,10 @@ pub struct Display {
     pub node: String,
     pub vendor: String,
     profiles: Vec<(sys::VAProfile, Vec<sys::VAEntrypoint>)>,
+    /// Held across each CPU copy between a surface and memory (vaGetImage / vaPutImage and the
+    /// image around it): Intel's iHD segfaults in libigdgmm's CPU copy when two threads read the
+    /// same tiled surface at once (the XPS 16, compositor and frame worker reading one picture back).
+    image_copy: Mutex<()>,
 }
 
 // SAFETY: a VADisplay may be used from any thread when its driver serialises its entry points:
@@ -157,24 +161,20 @@ impl Display {
     /// The display on render node `node` (fork 6E.3: one media stack per GPU): the process's
     /// decode or encode display when it is on that node, else one opened once per node and kept.
     pub fn for_node(node: &str) -> Result<Arc<Display>, String> {
-        static NODES: Mutex<Vec<Arc<Display>>> = Mutex::new(Vec::new());
+        static NODES: Mutex<NodeCache<Arc<Display>>> = Mutex::new(NodeCache::new());
         for d in [Display::get(), Display::for_encode()].into_iter().flatten() {
             if d.node == node {
                 return Ok(d);
             }
         }
-        let mut open = NODES.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(d) = open.iter().find(|d| d.node == node) {
-            return Ok(d.clone());
-        }
-        // a handful of GPUs at most; a hostile list of names can't grow it without bound
-        if open.len() >= 8 {
-            return Err("too many VA-API displays".into());
-        }
-        let d = Display::open(lib()?, node).map_err(|e| format!("{node}: {e}"))?;
-        log::info!("VA-API: {} on {}", d.vendor, d.node);
-        open.push(d.clone());
-        Ok(d)
+        // failures are kept too (XPS 16): nvidia-vaapi-driver's node is refused after vaInitialize,
+        // which loads CUDA (~0.4 s, and it wakes a sleeping NVIDIA GPU); perf.stats and the
+        // two-GPU export option ask for it again and again
+        NODES.lock().unwrap_or_else(PoisonError::into_inner).get_or_open(node, || {
+            let d = Display::open(lib()?, node).map_err(|e| format!("{node}: {e}"))?;
+            log::info!("VA-API: {} on {}", d.vendor, d.node);
+            Ok(d)
+        })
     }
 
     /// The display that encodes HEVC Main 4:2:2 10 (fork 6E.4): [`Display::for_encode`] when its
@@ -292,6 +292,13 @@ impl Display {
     }
 
     fn open_raw(lib: &'static sys::Va, node: &str) -> Result<Display, String> {
+        // NVIDIA's node answers VA-API only through nvidia-vaapi-driver, which is refused below
+        // anyway; its vaInitialize loads CUDA, which wakes a sleeping laptop dGPU and keeps it
+        // awake (XPS 16, Power saving): known from sysfs, without opening it
+        let any_driver = std::env::var("FILMCRAFT_VAAPI_ANY_DRIVER").ok().as_deref() == Some("1");
+        if skip_unopened(vendor(node), any_driver) {
+            return Err(format!("{node}: NVIDIA's GPU (its VA-API driver is not used; FILMCRAFT_VAAPI_ANY_DRIVER=1 tries it)"));
+        }
         OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let file = std::fs::OpenOptions::new().read(true).write(true).open(node).map_err(|e| e.to_string())?;
         // SAFETY: the fd is a valid open DRM node, kept open by `file` for the display's lifetime.
@@ -321,10 +328,10 @@ impl Display {
         let vp = unsafe { lib.vaQueryVendorString(dpy) };
         // SAFETY: non-null pointers from vaQueryVendorString are NUL-terminated strings owned by libva.
         let vendor = if vp.is_null() { String::new() } else { unsafe { CStr::from_ptr(vp) }.to_string_lossy().into_owned() };
-        let mut d = Display { lib, dpy, _file: file, node: node.to_string(), vendor, profiles: Vec::new() };
+        let mut d = Display { lib, dpy, _file: file, node: node.to_string(), vendor, profiles: Vec::new(), image_copy: Mutex::new(()) };
         // the `Send` / `Sync` impls above rest on the driver's own per-display lock; `d` drops
         // (vaTerminate) while `OPENING` is still held by `open`
-        if !driver_is_thread_safe(&d.vendor) && std::env::var("FILMCRAFT_VAAPI_ANY_DRIVER").ok().as_deref() != Some("1") {
+        if !driver_is_thread_safe(&d.vendor) && !any_driver {
             log::warn!(
                 "VA-API: {node} ({}) is not a driver Revolution has checked for thread safety; using software decoding \
                  (FILMCRAFT_VAAPI_ANY_DRIVER=1 uses it anyway)",
@@ -1067,7 +1074,7 @@ impl LinearCopy {
         if let Some(imported) = known
             && let Some(how) = ways.iter().find(|w| w.is_imported() == imported)
         {
-            let pool = SurfacePool::shared_linear(display, rt_format, fourcc, padded, height, how.clone());
+            let pool = SurfacePool::private_linear(display, rt_format, fourcc, padded, height, how.clone());
             return Ok(LinearCopy { context, pool, size: (width, height) });
         }
         let mut tried = Vec::new();
@@ -1089,7 +1096,7 @@ impl LinearCopy {
                     if found.len() < 16 {
                         found.push((key.0, key.1, key.2, how.is_imported()));
                     }
-                    let pool = SurfacePool::shared_linear(display, rt_format, fourcc, padded, height, how);
+                    let pool = SurfacePool::private_linear(display, rt_format, fourcc, padded, height, how);
                     return Ok(LinearCopy { context, pool, size: (width, height) });
                 }
                 Ok(m) => tried.push(format!("{how:?}: modifier {m:#x}")),
@@ -1319,6 +1326,12 @@ fn driver_is_thread_safe(vendor: &str) -> bool {
     vendor.starts_with("Mesa Gallium driver") || vendor.starts_with("Intel iHD driver")
 }
 
+/// Whether a render node is refused before it is opened: NVIDIA's (see [`Display::open_raw`]),
+/// unless every driver is asked for.
+fn skip_unopened(vendor: Option<u32>, any_driver: bool) -> bool {
+    vendor == Some(VENDOR_NVIDIA) && !any_driver
+}
+
 /// PCI vendor ids of DRM render nodes.
 const VENDOR_AMD: u32 = 0x1002;
 const VENDOR_NVIDIA: u32 = 0x10de;
@@ -1329,6 +1342,33 @@ fn vendor(node: &str) -> Option<u32> {
     let name = std::path::Path::new(node).file_name()?.to_str()?;
     let s = std::fs::read_to_string(format!("/sys/class/drm/{name}/device/vendor")).ok()?;
     u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok()
+}
+
+/// What opening a display on each render node gave, failures included, so a node whose driver
+/// is refused is not initialised again on every ask. A handful of GPUs at most: a hostile list of
+/// names can't grow it without bound.
+struct NodeCache<T> {
+    entries: Vec<(String, Result<T, String>)>,
+}
+
+impl<T: Clone> NodeCache<T> {
+    const MAX: usize = 16;
+
+    const fn new() -> Self {
+        NodeCache { entries: Vec::new() }
+    }
+
+    fn get_or_open(&mut self, node: &str, open: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        if let Some((_, r)) = self.entries.iter().find(|(n, _)| n == node) {
+            return r.clone();
+        }
+        if self.entries.len() >= Self::MAX {
+            return Err("too many VA-API displays".into());
+        }
+        let r = open();
+        self.entries.push((node.to_string(), r.clone()));
+        r
+    }
 }
 
 /// Render nodes in preference order (U0.2.4: here, not in the fork-only `ffmpeg.rs`): discrete GPUs first (AMD, NVIDIA, others), Intel last.
@@ -1405,8 +1445,22 @@ impl SurfacePool {
     }
 
     /// [`SurfacePool::shared`] for untiled surfaces, asked for as `how` ([`SurfacePool::linear`]).
-    pub fn shared_linear(display: &Arc<Display>, rt_format: u32, fourcc: u32, width: u32, height: u32, how: LinearAlloc) -> Arc<SurfacePool> {
-        SurfacePool::shared_with(display, rt_format, fourcc, (width, height), Some(how))
+    /// Untiled surfaces for one copier alone ([`LinearCopy`]): never handed to another copier.
+    /// XPS 16 (iHD 26.3.5): a linear copy surface reused by the next stream's copier (same size)
+    /// was not written by the video processor, so that stream's pictures read back as the
+    /// previous stream's (`va_422_handoff`, `consecutive_streams_…`); a private pool, freed with
+    /// its copier, never crosses streams.
+    pub fn private_linear(display: &Arc<Display>, rt_format: u32, fourcc: u32, width: u32, height: u32, how: LinearAlloc) -> Arc<SurfacePool> {
+        Arc::new(SurfacePool {
+            display: display.clone(),
+            rt_format,
+            fourcc,
+            size: (width, height),
+            linear: Some(how),
+            free: Mutex::new(Vec::new()),
+            count: Default::default(),
+            upload: Mutex::new(None),
+        })
     }
 
     fn shared_with(display: &Arc<Display>, rt_format: u32, fourcc: u32, size: (u32, u32), linear: Option<LinearAlloc>) -> Arc<SurfacePool> {
@@ -1712,6 +1766,7 @@ impl Surface {
             // SAFETY: unmaps the mapping made above; `bytes` is not used after this.
             unsafe { l.vaUnmapBuffer(d.dpy, image.buf) };
             filled?;
+            let _copy = d.image_copy.lock().unwrap_or_else(PoisonError::into_inner);
             // SAFETY: the image (as large as the surface, checked above) is copied into this
             // surface, which is of this display.
             d.check(unsafe { l.vaPutImage(d.dpy, self.id, image.image_id, 0, 0, w, h, 0, 0, w, h) }, "vaPutImage")
@@ -1813,6 +1868,8 @@ impl Surface {
         let mut format = self.image_format()?;
         let int = |v: u32| i32::try_from(v).map_err(|_| format!("{v} does not fit libva's int"));
         let (xi, yi, wi, hi) = (int(x)?, int(y)?, int(w)?, int(h)?);
+        // one CPU copy of this display at a time, through vaDestroyImage below
+        let _copy = d.image_copy.lock().unwrap_or_else(PoisonError::into_inner);
         let mut image: sys::VAImage = Default::default();
         // SAFETY: a valid format struct and out-pointer.
         d.check(unsafe { l.vaCreateImage(d.dpy, &mut format, wi, hi, &mut image) }, "vaCreateImage")?;
@@ -1858,6 +1915,132 @@ impl Surface {
 
 #[cfg(test)]
 mod tests {
+    /// XPS 16: a node whose display fails to open (nvidia-vaapi-driver, refused after a CUDA-loading
+    /// vaInitialize) is opened once; later asks get the same error without opening it again, and
+    /// a run of hostile names stays bounded.
+    /// XPS 11: the profiles and entry points Revolution reads from the driver (`vaQueryConfigProfiles` /
+    /// `vaQueryConfigEntrypoints` through our FFI) are exactly what `vainfo` lists for the same node:
+    /// every capability is read from the driver, none assumed. `vainfo` is an external oracle, like
+    /// ffmpeg; skips without it or without VA-API.
+    #[test]
+    fn driver_capabilities_match_vainfo() {
+        let Ok(d) = Display::get() else {
+            eprintln!("no VA-API; skipped");
+            return;
+        };
+        let Ok(out) = std::process::Command::new("vainfo").args(["--display", "drm", "--device", &d.node]).output() else {
+            eprintln!("no vainfo; skipped");
+            return;
+        };
+        let text = String::from_utf8_lossy(&out.stdout);
+        let profiles = [
+            ("VAProfileNone", sys::VAProfile_VAProfileNone),
+            ("VAProfileMPEG2Simple", sys::VAProfile_VAProfileMPEG2Simple),
+            ("VAProfileMPEG2Main", sys::VAProfile_VAProfileMPEG2Main),
+            ("VAProfileMPEG4Simple", sys::VAProfile_VAProfileMPEG4Simple),
+            ("VAProfileMPEG4AdvancedSimple", sys::VAProfile_VAProfileMPEG4AdvancedSimple),
+            ("VAProfileMPEG4Main", sys::VAProfile_VAProfileMPEG4Main),
+            ("VAProfileH264Baseline", sys::VAProfile_VAProfileH264Baseline),
+            ("VAProfileH264Main", sys::VAProfile_VAProfileH264Main),
+            ("VAProfileH264High", sys::VAProfile_VAProfileH264High),
+            ("VAProfileVC1Simple", sys::VAProfile_VAProfileVC1Simple),
+            ("VAProfileVC1Main", sys::VAProfile_VAProfileVC1Main),
+            ("VAProfileVC1Advanced", sys::VAProfile_VAProfileVC1Advanced),
+            ("VAProfileH263Baseline", sys::VAProfile_VAProfileH263Baseline),
+            ("VAProfileJPEGBaseline", sys::VAProfile_VAProfileJPEGBaseline),
+            ("VAProfileH264ConstrainedBaseline", sys::VAProfile_VAProfileH264ConstrainedBaseline),
+            ("VAProfileVP8Version0_3", sys::VAProfile_VAProfileVP8Version0_3),
+            ("VAProfileH264MultiviewHigh", sys::VAProfile_VAProfileH264MultiviewHigh),
+            ("VAProfileH264StereoHigh", sys::VAProfile_VAProfileH264StereoHigh),
+            ("VAProfileHEVCMain", sys::VAProfile_VAProfileHEVCMain),
+            ("VAProfileHEVCMain10", sys::VAProfile_VAProfileHEVCMain10),
+            ("VAProfileVP9Profile0", sys::VAProfile_VAProfileVP9Profile0),
+            ("VAProfileVP9Profile1", sys::VAProfile_VAProfileVP9Profile1),
+            ("VAProfileVP9Profile2", sys::VAProfile_VAProfileVP9Profile2),
+            ("VAProfileVP9Profile3", sys::VAProfile_VAProfileVP9Profile3),
+            ("VAProfileHEVCMain12", sys::VAProfile_VAProfileHEVCMain12),
+            ("VAProfileHEVCMain422_10", sys::VAProfile_VAProfileHEVCMain422_10),
+            ("VAProfileHEVCMain422_12", sys::VAProfile_VAProfileHEVCMain422_12),
+            ("VAProfileHEVCMain444", sys::VAProfile_VAProfileHEVCMain444),
+            ("VAProfileHEVCMain444_10", sys::VAProfile_VAProfileHEVCMain444_10),
+            ("VAProfileHEVCMain444_12", sys::VAProfile_VAProfileHEVCMain444_12),
+            ("VAProfileHEVCSccMain", sys::VAProfile_VAProfileHEVCSccMain),
+            ("VAProfileHEVCSccMain10", sys::VAProfile_VAProfileHEVCSccMain10),
+            ("VAProfileHEVCSccMain444", sys::VAProfile_VAProfileHEVCSccMain444),
+            ("VAProfileAV1Profile0", sys::VAProfile_VAProfileAV1Profile0),
+            ("VAProfileAV1Profile1", sys::VAProfile_VAProfileAV1Profile1),
+            ("VAProfileHEVCSccMain444_10", sys::VAProfile_VAProfileHEVCSccMain444_10),
+            ("VAProfileProtected", sys::VAProfile_VAProfileProtected),
+            ("VAProfileH264High10", sys::VAProfile_VAProfileH264High10),
+            ("VAProfileVVCMain10", sys::VAProfile_VAProfileVVCMain10),
+            ("VAProfileVVCMultilayerMain10", sys::VAProfile_VAProfileVVCMultilayerMain10),
+            ("VAProfileAV1Profile2", sys::VAProfile_VAProfileAV1Profile2),
+            ("VAProfileH264High422", sys::VAProfile_VAProfileH264High422),
+        ];
+        let entrypoints = [
+            ("VAEntrypointVLD", sys::VAEntrypoint_VAEntrypointVLD),
+            ("VAEntrypointIZZ", sys::VAEntrypoint_VAEntrypointIZZ),
+            ("VAEntrypointIDCT", sys::VAEntrypoint_VAEntrypointIDCT),
+            ("VAEntrypointMoComp", sys::VAEntrypoint_VAEntrypointMoComp),
+            ("VAEntrypointDeblocking", sys::VAEntrypoint_VAEntrypointDeblocking),
+            ("VAEntrypointEncSlice", sys::VAEntrypoint_VAEntrypointEncSlice),
+            ("VAEntrypointEncPicture", sys::VAEntrypoint_VAEntrypointEncPicture),
+            ("VAEntrypointEncSliceLP", sys::VAEntrypoint_VAEntrypointEncSliceLP),
+            ("VAEntrypointVideoProc", sys::VAEntrypoint_VAEntrypointVideoProc),
+            ("VAEntrypointFEI", sys::VAEntrypoint_VAEntrypointFEI),
+            ("VAEntrypointStats", sys::VAEntrypoint_VAEntrypointStats),
+            ("VAEntrypointProtectedTEEComm", sys::VAEntrypoint_VAEntrypointProtectedTEEComm),
+            ("VAEntrypointProtectedContent", sys::VAEntrypoint_VAEntrypointProtectedContent),
+        ];
+        let mut theirs: Vec<(sys::VAProfile, sys::VAEntrypoint)> = text
+            .lines()
+            .filter_map(|l| {
+                let (p, e) = l.split_once(':')?;
+                let p = profiles.iter().find(|(n, _)| *n == p.trim())?.1;
+                let e = entrypoints.iter().find(|(n, _)| *n == e.trim())?.1;
+                Some((p, e))
+            })
+            .collect();
+        let mut ours: Vec<(sys::VAProfile, sys::VAEntrypoint)> = d.profiles.iter().flat_map(|(p, es)| es.iter().map(move |e| (*p, *e))).collect();
+        theirs.sort_unstable();
+        ours.sort_unstable();
+        assert!(!theirs.is_empty(), "vainfo listed nothing for {}:\n{text}", d.node);
+        assert_eq!(ours, theirs, "{} ({})", d.node, d.vendor);
+        eprintln!("{} ({}): {} profile / entry point pairs, as vainfo lists them", d.node, d.vendor, ours.len());
+    }
+
+    /// XPS 16: NVIDIA's render node is refused from sysfs, never opened (opening it loads CUDA and
+    /// wakes the dGPU), unless FILMCRAFT_VAAPI_ANY_DRIVER=1; other makers' nodes are opened.
+    #[test]
+    fn nvidia_nodes_are_refused_without_opening_them() {
+        assert!(super::skip_unopened(Some(super::VENDOR_NVIDIA), false));
+        assert!(!super::skip_unopened(Some(super::VENDOR_NVIDIA), true));
+        assert!(!super::skip_unopened(Some(super::VENDOR_INTEL), false));
+        assert!(!super::skip_unopened(Some(super::VENDOR_AMD), false));
+        assert!(!super::skip_unopened(None, false));
+    }
+
+    #[test]
+    fn failed_nodes_are_not_opened_again() {
+        let mut cache = super::NodeCache::<u32>::new();
+        let mut opens = 0;
+        for _ in 0..5 {
+            let r = cache.get_or_open("/dev/dri/renderD129", || {
+                opens += 1;
+                Err("/dev/dri/renderD129: VA-API driver not supported".into())
+            });
+            assert!(r.is_err());
+        }
+        assert_eq!(opens, 1, "the refused node is opened once");
+        assert_eq!(cache.get_or_open("/dev/dri/renderD128", || Ok(7)), Ok(7));
+        assert_eq!(cache.get_or_open("/dev/dri/renderD128", || panic!("opened twice")), Ok(7));
+        for i in 0..100 {
+            let _ = cache.get_or_open(&format!("/dev/dri/hostile{i}"), || Err("no".into()));
+        }
+        assert!(cache.entries.len() <= 16, "bounded");
+        assert_eq!(cache.get_or_open("/dev/dri/renderD128", || panic!("opened again")), Ok(7), "known nodes stay");
+    }
+
     /// Fork XPS a: the node order is by vendor, so the XPS 16 (Intel iGPU renderD128, RTX 4050
     /// renderD129, or the other way round after a reboot) tries Intel first, and this desktop
     /// (AMD renderD129, Intel renderD128) tries AMD first.
@@ -1910,6 +2093,38 @@ mod tests {
         // passes the check (the driver may still refuse an empty picture)
         if let Err(e) = ctx.decode(&fits, &[]) {
             assert!(!e.contains("target surface"), "{e}");
+        }
+    }
+
+    /// XPS 16 crash: with the window on the NVIDIA GPU (which can't import Intel's tiled pictures),
+    /// the compositor and a frame worker read the same decoded picture back at once, and iHD's
+    /// vaGetImage segfaulted in libigdgmm's CPU copy. Reads of one display are serialised: many
+    /// threads reading one surface at once all get its pixels, no crash.
+    #[test]
+    fn concurrent_reads_of_one_surface_never_crash() {
+        let Ok(d) = Display::get() else {
+            eprintln!("no VA-API; skipped");
+            return;
+        };
+        let Ok(surface) = SurfacePool::new(&d, sys::VA_RT_FORMAT_YUV420, sys::VA_FOURCC_NV12, 1920, 1088).get() else {
+            eprintln!("no NV12 surface; skipped");
+            return;
+        };
+        let surface = Arc::new(surface);
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let s = surface.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..40 {
+                        let mut rows = 0;
+                        s.read((0, 0, 1920, 1088), |_, _, _| rows += 1).expect("read");
+                        assert_eq!(rows, 1088 + 544);
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("a reading thread");
         }
     }
 

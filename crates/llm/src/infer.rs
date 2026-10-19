@@ -594,7 +594,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         let forward = model("smollm3", [Q8_0; 4], 9);
         let mut gpu = GpuForward::with_context(ctx, &forward).unwrap();
-        gpu.slow_drop = Some(SlowDrop(Duration::from_secs(60)));
+        // the hung device takes 5 s to drop; falling back must not wait for it
+        gpu.slow_drop = Some(SlowDrop::new(Duration::from_secs(5)));
         let mut m = Model { info: *find(DEFAULT_MODEL).unwrap(), forward, tokenizer, stop: vec![3], cached: Vec::new(), gpu: Some(gpu) };
         let toks = [5u32, 17, 3, 88];
         m.step(&toks[..2], 0, None).unwrap().unwrap();
@@ -608,7 +609,7 @@ mod tests {
         m.gpu.as_ref().unwrap().ctx_for_tests().force_timeouts();
         let t = Instant::now();
         let got = m.step(&toks[2..], 2, None).unwrap().unwrap();
-        assert!(t.elapsed() < Duration::from_secs(10), "fell back in {:?}", t.elapsed());
+        assert!(t.elapsed() < Duration::from_secs(4), "fell back in {:?} (waited for the hung device?)", t.elapsed());
         assert!(m.gpu_adapter().is_none());
         let mut cpu = model("smollm3", [Q8_0; 4], 9);
         assert_eq!(got, cpu.forward(&toks, 0).unwrap());
@@ -622,6 +623,8 @@ mod tests {
         m.gpu.as_ref().unwrap().ctx_for_tests().force_timeouts();
         assert_eq!(m.step(&toks[2..], 2, Some(Instant::now())).unwrap(), None);
         assert!(m.gpu_adapter().is_none());
+        // the abandoned device finishes dropping before the test (and the process) ends
+        assert!(SlowDrop::wait_all(Duration::from_secs(15)), "the slow drop never finished");
     }
 
     /// A GPU that hangs in the middle of a batched prompt (a 20-token prefill from 0, and a

@@ -66,6 +66,10 @@ impl FilmcraftApp {
     }
 
     fn start_source_playback(&mut self, start: Option<Tick>, stop: Option<Tick>, speed: f64) -> Result<(), String> {
+        // as the Program monitor's Play: not behind the Project Manager
+        if self.ui.home.open {
+            return Err(tl!("Close the Project Manager to play").into());
+        }
         let item = self.session.state.source_item.ok_or("Open a media file in the Source monitor first")?;
         let view = source_view(&self.session, item).ok_or("Source item is unavailable")?;
         let media = self.session.project.item(view.media).and_then(|i| i.as_media()).ok_or("Source playback currently supports media files and subclips")?;

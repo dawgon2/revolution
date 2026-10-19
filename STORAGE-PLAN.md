@@ -53,7 +53,7 @@ playback from the cache matches local playback (synthetic). Tag `storage-1`.
 ## Phase S2: built-in remote locations, and sending projects (≈ 35–70 h)
 
 **Owner, 2026-10-17 (FORK-PLAN §1a.104):** S2 runs right after `xps-1`, and it renames the one-file package from
-`.fcpackage` to **`.revolution`** (both open; new packages are `.revolution`).
+`.fcpackage` to **`.revpkg`** (both open; new packages are `.revpkg`).
 
 Connect without mounting anything.
 1. **Backends** behind one `RemoteStore` trait (list, stat, read range, write, rename, lock):

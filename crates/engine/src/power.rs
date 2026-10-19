@@ -26,6 +26,17 @@ pub fn on_battery_from(supplies: &[Supply]) -> bool {
     discharging && !external
 }
 
+/// Whether the computer has a battery of its own (a laptop), charging or not; a wireless mouse's or
+/// headset's (`scope` `Device`) doesn't count (fork XPS item 17: Auto's GPU choice).
+pub fn has_battery_from(supplies: &[Supply]) -> bool {
+    supplies.iter().any(|s| s.kind == "Battery" && s.scope != "Device")
+}
+
+/// [`has_battery_from`] on this computer (never in the browser).
+pub fn has_battery() -> bool {
+    !cfg!(target_arch = "wasm32") && has_battery_from(&supplies())
+}
+
 /// The supplies under `/sys/class/power_supply` (at most 16; none elsewhere).
 pub fn supplies() -> Vec<Supply> {
     let read = |p: &std::path::Path, f: &str| std::fs::read_to_string(p.join(f)).map(|v| v.trim().chars().take(32).collect::<String>()).unwrap_or_default();
@@ -89,6 +100,18 @@ mod tests {
         let mouse = Supply { scope: "Device".into(), ..s("Battery", Some(false), "Discharging") };
         assert!(!on_battery_from(std::slice::from_ref(&mouse)));
         assert!(on_battery_from(&[mouse, s("Mains", Some(false), ""), s("Battery", None, "Discharging")]));
+    }
+
+    /// XPS 17: a laptop has a battery whether charging, full or discharging; a desktop with a
+    /// wireless mouse or headset battery does not.
+    #[test]
+    fn a_battery_of_its_own_makes_a_laptop() {
+        assert!(has_battery_from(&[s("Mains", Some(true), ""), s("Battery", None, "Charging")]));
+        assert!(has_battery_from(&[s("Battery", None, "Full")]));
+        assert!(!has_battery_from(&[s("Mains", Some(true), "")]));
+        assert!(!has_battery_from(&[]));
+        let mouse = Supply { scope: "Device".into(), ..s("Battery", Some(false), "Discharging") };
+        assert!(!has_battery_from(&[mouse, s("Mains", Some(true), "")]));
     }
 
     #[test]

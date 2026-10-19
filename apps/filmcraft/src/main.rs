@@ -56,6 +56,8 @@ mod native_menu;
 #[cfg(target_os = "linux")]
 mod recent_files;
 mod single_instance;
+#[cfg(target_os = "linux")]
+mod vk_select;
 mod window_memory;
 mod window_raise;
 
@@ -118,6 +120,13 @@ fn main() -> eframe::Result {
                 std::process::exit(2);
             }
         };
+    // fork §1a.105 (b): on the Intel GPU, start again without NVIDIA's Vulkan driver (which woke a
+    // sleeping RTX 4050 for ~20 s); first, before anything is opened
+    #[cfg(target_os = "linux")]
+    {
+        let prefs = data_dir.clone().or_else(default_data_dir).map(|d| filmcraft_engine::autosave::Preferences::load(&d.join("preferences.json")));
+        vk_select::restart_on_the_intel_driver_if_wanted(&prefs.unwrap_or_default().playback.graphics_device);
+    }
     // the whole process uses `--data-dir` (models are found without the launch arguments)
     if let Some(d) = &data_dir {
         filmcraft_engine::autosave::set_launch_data_dir(d);
@@ -173,6 +182,8 @@ fn main() -> eframe::Result {
     // decoded frames are drawn in place on it (a frame from another GPU is copied instead); export
     // devices follow the same choice (fork XPS a)
     filmcraft_gpu::adapter_pick::set_preference(filmcraft_ui_egui::graphics_device::preference(&prefs.playback.graphics_device));
+    // Auto on a hybrid Intel + NVIDIA laptop draws on the Intel GPU (fork XPS item 17)
+    filmcraft_gpu::adapter_pick::set_battery_powered(filmcraft_engine::power::has_battery());
     #[cfg(target_os = "linux")]
     if let Some((vendor, device)) = filmcraft_ui_egui::graphics_device::parse(&prefs.playback.graphics_device) {
         filmcraft_platform::va::prefer_gpu(vendor, device);
@@ -224,6 +235,9 @@ fn main() -> eframe::Result {
         graphics::configure(&mut options, eframe::wgpu::Backends::from_env());
         options
     };
+    // a lost window GPU device: start again, recovering the session (egui-wgpu can't draw on it)
+    #[cfg(unix)]
+    filmcraft_ui_egui::set_window_gpu_lost_hook(Box::new(restart_after_gpu_loss));
     let started = eframe::run_native(
         "Revolution",
         options,
@@ -445,6 +459,45 @@ fn open_path(path: &str, reveal: bool) -> Result<(), String> {
     cmd.spawn().map(|_| ()).map_err(|e| format!("can't open {path}: {e}"))
 }
 
+/// Set on a process started again after its window's GPU was lost (how many times).
+const GPU_LOST_RESTARTS: &str = "FILMCRAFT_GPU_LOST_RESTARTS";
+
+/// The window's GPU device was lost (`why`): replace this process with a fresh start that
+/// recovers the session from the crash-recovery journal (`--recover`), instead of the panic
+/// egui-wgpu meets drawing on the lost device. A second loss starts on the CPU compositor; a
+/// third doesn't restart.
+#[cfg(unix)]
+fn restart_after_gpu_loss(why: &str) {
+    use std::os::unix::process::CommandExt;
+    let restarts: u32 = std::env::var(GPU_LOST_RESTARTS).ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let Some((args, env)) = gpu_loss_restart(std::env::args_os().skip(1).collect(), restarts) else {
+        log::error!("the GPU was lost again ({why}); not restarting a third time");
+        return;
+    };
+    let msg = format!("the GPU stopped ({why}); Revolution restarts and recovers the open work");
+    log::error!("{msg}");
+    filmcraft_ui_egui::crash::record(&msg);
+    let Ok(exe) = std::env::current_exe() else { return };
+    let err = std::process::Command::new(exe).args(args).envs(env).exec();
+    log::error!("restarting after the GPU loss failed: {err}");
+}
+
+/// The arguments and environment of the restart after `restarts` earlier ones: the launch
+/// arguments with `--recover` (and without `--no-recover`), the count, and from the second one
+/// the CPU compositor. None: no more restarts.
+fn gpu_loss_restart(mut args: Vec<std::ffi::OsString>, restarts: u32) -> Option<(Vec<std::ffi::OsString>, Vec<(&'static str, String)>)> {
+    if restarts >= 2 {
+        return None;
+    }
+    args.retain(|a| a != "--recover" && a != "--no-recover");
+    args.push("--recover".into());
+    let mut env = vec![(GPU_LOST_RESTARTS, (restarts + 1).to_string())];
+    if restarts >= 1 {
+        env.push(("FILMCRAFT_CPU_COMPOSITE", "1".to_string()));
+    }
+    Some((args, env))
+}
+
 /// The GPU export frame renderer (filmcraft-gpu's off-screen compositor behind filmcraft-export's
 /// frame-renderer hook): exports with GPU rendering Auto composite on the GPU and fall back to the
 /// CPU reference renderer wherever it cannot.
@@ -570,6 +623,19 @@ mod tests {
         let claim = src[main..].find("single_instance::claim(").expect("main claims the instance");
         let attach = src[main..].find("logger.attach_dir(").expect("main opens the log file");
         assert!(claim < attach, "hand-off launches would rotate the running instance's log");
+    }
+
+    /// Fork XPS sign-off: losing the window's GPU restarts with `--recover`, then on the CPU
+    /// compositor, then not again (no restart loop).
+    #[test]
+    fn a_lost_gpu_restarts_recovering_then_on_the_cpu_then_stops() {
+        let args: Vec<std::ffi::OsString> = ["--control", "9876", "--no-recover", "clip.mov"].iter().map(Into::into).collect();
+        let (a, env) = super::gpu_loss_restart(args.clone(), 0).expect("first restart");
+        assert_eq!(a, ["--control", "9876", "clip.mov", "--recover"].map(std::ffi::OsString::from).to_vec());
+        assert_eq!(env, vec![(super::GPU_LOST_RESTARTS, "1".to_string())]);
+        let (_, env) = super::gpu_loss_restart(args.clone(), 1).expect("second restart");
+        assert!(env.contains(&("FILMCRAFT_CPU_COMPOSITE", "1".to_string())), "{env:?}");
+        assert!(super::gpu_loss_restart(args, 2).is_none(), "no third restart");
     }
 
     /// Start-up registers the hardware decoders whether or not anything is logged (no logger is

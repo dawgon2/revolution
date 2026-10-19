@@ -80,17 +80,16 @@ The **Encoder** choice {ui:export.video.hevcEncoder} (Video section, only shown 
 2. After an export, `perf.stats` names the encoder that was actually used.
 
 **[Fork] With an NVIDIA graphics card on Linux** (a laptop such as the XPS 16, or a desktop
-card), **Auto** also uses NVIDIA's encoder (NVENC) for 8-bit SDR 4:2:0 H.265:
+card), **Auto** also uses NVIDIA's encoder (NVENC) for 8-bit and 10-bit 4:2:0 H.265, HDR included:
 
 - when the export renders on the NVIDIA GPU (Settings ▸ Playback ▸ **Graphics device** is
   Performance, or Auto on a machine whose fastest GPU is NVIDIA), NVENC goes first, so the
   pictures don't cross to another GPU's video engine;
 - otherwise it comes after the VA-API encoders and before software x265.
 
-10-bit, HDR and 4:2:2 exports keep using VA-API or x265 (NVIDIA's encoder has no 4:2:2, and its
-10-bit path on Linux is still to be checked on a real card). **Hardware (VA-API)** never uses
-NVENC. If NVENC stops part-way through an export (the card is lost, the driver resets) the
-export ends with a message naming NVENC; export again, or pick **Hardware (VA-API)**.
+4:2:2 exports keep using VA-API or x265 (NVIDIA's encoder has no 4:2:2). **Hardware (VA-API)** never uses
+NVENC. If NVENC stops part-way through an export (the card is lost, the driver resets), VA-API
+carries on from a keyframe and the log says so; if it can't, the export ends naming both.
 
 **Chroma.** Why: delivery files (YouTube, phones) halve the colour detail in both directions
 (4:2:0). Cameras such as the X-M5 can record 4:2:2, which keeps every row of colour; keying and

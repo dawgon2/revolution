@@ -345,11 +345,13 @@ the effects during playback, so it matters for smooth playback and for battery l
 
 The choices:
 
-- **Auto (default):** the high-performance GPU (the discrete one). It also follows the
+- **Auto (default):** the high-performance GPU (the discrete one), except on a battery-powered
+  computer with Intel and NVIDIA graphics, where it is the Intel GPU: it decodes the camera's
+  H.265 and draws it in place, which measured several times faster there. It also follows the
   system-wide switches: `DRI_PRIME=1` (start Revolution on the discrete GPU from a launcher's
-  "Run on discrete graphics" option), `__NV_PRIME_RENDER_OFFLOAD=1` (NVIDIA's version of it),
-  `MESA_VK_DEVICE_SELECT`, or `WGPU_POWER_PREF=low`: with one of those set, the GPU the driver
-  puts first is used. Good for most people.
+  "Run on discrete graphics" option), `MESA_VK_DEVICE_SELECT`, or `WGPU_POWER_PREF=low`: with
+  one of those set, the GPU the driver puts first is used. `__NV_PRIME_RENDER_OFFLOAD=1`
+  (NVIDIA's version, what `prime-run` sets) starts it on the NVIDIA GPU. Good for most people.
 - **Power saving (integrated GPU)** / **Performance (discrete GPU)** **[Fork]:** a kind of GPU
   rather than a named one, so the choice still means the same thing on another computer, or
   when the laptop's GPUs are listed in a different order after a driver upgrade. A computer
@@ -368,10 +370,12 @@ frames are drawn in place without a copy (`FILMCRAFT_VAAPI_DEVICE` still overrid
 only Auto and the two kinds, close and reopen it. **[Fork]** Exports render on the same GPU by
 the same rule, so a laptop never draws on one GPU and exports on the other by accident; the
 Export dialog's two-GPU option still splits an export across both
-([Export: Two GPUs](export.md)). On a laptop with an Intel and an NVIDIA GPU, hardware video
+([Export: Two GPUs](export.md)); with NVIDIA under Performance that is NVENC plus Intel, files `hev1`. On a laptop with an Intel and an NVIDIA GPU, hardware video
 decoding uses the Intel video engine first (it decodes the 4:2:2 clips NVIDIA's can't) and
 NVIDIA's decoder (NVDEC) takes only the clips Intel's declines (`FILMCRAFT_NVDEC_FIRST=1` puts
-NVDEC first instead); the
+NVDEC first instead). When the window draws on the NVIDIA GPU, each 4:2:2 picture still goes
+from the Intel engine straight to it (a shared buffer, no copy through main memory). NVIDIA's driver is only loaded when a clip first needs NVDEC, so with
+**Power saving** (or Auto on such a laptop) a sleeping NVIDIA GPU stays asleep and saves battery, from the start: Revolution starts with Intel's Vulkan driver only, so switching to Performance takes effect at the next start; the
 render node numbers (`renderD128`, `renderD129`) don't matter, Revolution goes by the maker.
 Agents:
 `graphics.listDevices` lists the GPUs, the stored choice and the one drawing now.
@@ -380,7 +384,8 @@ Agents:
 {ui:settings.playback.batteryPreview} (off by default): while the computer runs on battery,
 playback renders one Playback Resolution step lower (Full becomes 1/2); when stopped, and in
 every export, full resolution is kept. Plugged in again, it returns to your setting within about
-ten seconds. Trade-off: less detail while playing, for less heat and a longer battery. Also
+ten seconds (agents: `perf.stats` `playback.effectiveResolution`). Trade-off: less detail while
+playing, for less heat and a longer battery. Also
 automatic: decoded pictures kept on an integrated GPU are sized from the RAM it shares (an
 eighth, at most 4 GB; Preferences ▸ Memory overrides it), and Revolution asks the desktop not to
 suspend while an export runs (the lid setting may still suspend it).

@@ -18,6 +18,9 @@ pub fn stats(app: &FilmcraftApp) -> Value {
         "dropped": dropped,
         "dropRate": if shown + dropped == 0 { 0.0 } else { dropped as f64 / (shown + dropped) as f64 },
         "resolution": app.ui.program.res.label(),
+        // what the Program monitor draws at now (paused full / high quality, one step lower on
+        // battery with Settings ▸ Playback ▸ Lower playback resolution on battery: XPS item 13)
+        "effectiveResolution": app.ui.program.res_now(app.playback.playing, app.session.prefs.playback.battery_preview, app.session.prefs.playback.battery_preview && filmcraft_engine::power::on_battery()).label(),
         "draftDecode": app.session.prefs.playback.draft_decode,
     });
     #[cfg(not(target_arch = "wasm32"))]

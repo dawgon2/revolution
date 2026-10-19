@@ -13,7 +13,7 @@ use crate::background::{Activity, BackgroundJob, BackgroundWorker, JobKind, JobO
 const WAIT: Duration = Duration::from_secs(10);
 
 fn cfg() -> WorkerConfig {
-    WorkerConfig { resume_delay: Duration::from_millis(60), scrub_window: Duration::from_millis(40), pace: None }
+    WorkerConfig { resume_delay: Duration::from_millis(60), scrub_window: Duration::from_millis(40), pace: None, memory: None }
 }
 
 #[derive(Default)]
@@ -370,4 +370,36 @@ fn status_serializes_for_commands() {
     let s = crate::Session::default();
     assert!(s.background.is_idle());
     assert!(!crate::background::foreground_jobs_running(&s));
+}
+
+/// Owner (fork XPS sign-off): the render cache and proxies back off while memory is low — on the
+/// 16 GB XPS 16 they ran next to 6.2K playback and an export until the machine swapped and the
+/// Arc GPU ran out of memory. A job waits (state `LowMemory`) and runs once memory is free.
+#[test]
+fn waits_while_memory_is_low_and_runs_once_it_is_free() {
+    static LOW: AtomicBool = AtomicBool::new(true);
+    fn memory() -> Option<(u64, u64)> {
+        let total = 16u64 << 30;
+        Some((total, if LOW.load(Ordering::SeqCst) { 2 << 30 } else { 10 << 30 }))
+    }
+    let w = BackgroundWorker::new(WorkerConfig { memory: Some(memory), ..cfg() });
+    let p = Arc::new(Probe::default());
+    w.submit(spec(JobKind::Cache, "c", false, 0), Fake::new("C", 2, &p).boxed()).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(p.steps.load(Ordering::SeqCst), 0, "nothing runs while memory is low");
+    assert!(until(|| w.status().state == WorkerState::LowMemory));
+    LOW.store(false, Ordering::SeqCst);
+    assert!(w.wait_idle(Duration::from_secs(10)), "runs once memory is free");
+    assert_eq!(p.steps.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn memory_is_low_under_3_gb_or_a_quarter_of_the_machine() {
+    use crate::background::memory_low;
+    const GB: u64 = 1 << 30;
+    assert!(memory_low(16 * GB, 3 * GB + GB / 2), "16 GB: under 4 GB free");
+    assert!(!memory_low(16 * GB, 5 * GB));
+    assert!(memory_low(8 * GB, 2 * GB + GB / 2), "8 GB: under 3 GB free");
+    assert!(!memory_low(64 * GB, 17 * GB));
+    assert!(memory_low(64 * GB, 15 * GB), "64 GB: under 16 GB free");
 }

@@ -69,7 +69,9 @@ fn monitor_readouts_and_dropdowns_do_not_overlap() {
     let mut failures = Vec::new();
     for (which, prefix) in [(Which::Source, "source"), (Which::Program, "program")] {
         for kind in [ThemeKind::Dark, ThemeKind::Medium, ThemeKind::Light] {
-            for width in [720.0, 500.0, 300.0, 250.0] {
+            // 160 / 140: a monitor in a small window or with the UI at 2× (XPS item 15), where the
+            // duration is left out rather than drawn over the current time
+            for width in [720.0, 500.0, 300.0, 250.0, 160.0, 140.0] {
                 for scale in [1.0, 2.0] {
                     let mut h = harness_at_scale(width, kind, which, scale);
                     if let Ok(directory) = std::env::var("CRAFT_UI_VISUAL_DIR") {
@@ -88,8 +90,12 @@ fn monitor_readouts_and_dropdowns_do_not_overlap() {
                             _ => None,
                         })
                         .collect();
-                    assert_eq!(timecodes.len(), 2, "both actual timecode galleys must be painted");
-                    if overlaps(timecodes[0], timecodes[1]) {
+                    if width >= 250.0 {
+                        assert_eq!(timecodes.len(), 2, "both actual timecode galleys must be painted");
+                    } else {
+                        assert!(!timecodes.is_empty(), "the current time is always painted");
+                    }
+                    if timecodes.len() == 2 && overlaps(timecodes[0], timecodes[1]) {
                         failures.push(format!("{prefix} {kind:?} {width} {scale}x: actual timecode text overlaps: {timecodes:?}"));
                     }
                     for (i, first) in controls.iter().enumerate() {

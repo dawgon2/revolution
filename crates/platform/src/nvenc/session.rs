@@ -204,6 +204,9 @@ pub enum Submitted {
 struct Slot {
     input: *mut c_void,
     output: *mut c_void,
+    /// A registered picture mapped for the picture in this slot (fork 8.6d D2), unmapped once its
+    /// bitstream is read.
+    mapped: Option<*mut c_void>,
 }
 
 /// An initialised encoder with its buffers.
@@ -213,6 +216,8 @@ pub struct Session {
     // Keeps the Direct3D device / retained CUDA context alive through session destruction.
     _device: Device,
     slots: Vec<Slot>,
+    /// CUDA device pointers registered as input pictures (fork 8.6d D2), unregistered on drop.
+    registered: Vec<*mut c_void>,
     size: (u32, u32),
     out_size: u32,
     /// `NV_ENC_BUFFER_FORMAT_*` of the input buffers and pictures, and its bytes per sample.
@@ -286,6 +291,7 @@ impl Session {
             enc,
             _device: device,
             slots: Vec::new(),
+            registered: Vec::new(),
             size: (0, 0),
             out_size: 0,
             fmt: NV_ENC_BUFFER_FORMAT_NV12,
@@ -359,11 +365,13 @@ impl Session {
             preset.version = NV_ENC_PRESET_CONFIG_VER;
             preset.presetCfg.version = NV_ENC_CONFIG_VER;
             let mut preset_used = preset_guid(p.preset);
+            let mut used = p.preset;
             let mut s = preset_fn(self.enc, p.codec.guid(), preset_used, NV_ENC_TUNING_INFO_HIGH_QUALITY, &mut *preset);
             if s != NV_ENC_SUCCESS && matches!(p.preset, 1..=4 | 6..=7) {
                 // a preset this driver doesn't know: the default one (fork XPS b)
                 log::info!("NVENC preset P{} refused ({s}); using P5", p.preset);
                 preset_used = NV_ENC_PRESET_P5_GUID;
+                used = 5;
                 *preset = std::mem::zeroed();
                 preset.version = NV_ENC_PRESET_CONFIG_VER;
                 preset.presetCfg.version = NV_ENC_CONFIG_VER;
@@ -372,6 +380,18 @@ impl Session {
             if s != NV_ENC_SUCCESS {
                 return Err(status("reading the encoder preset", s, self.enc, self.api));
             }
+            // which preset runs, for the Encoder speed check (XPS item 6: Speed P1, Balanced P4,
+            // Quality P7)
+            log::info!(
+                "NVENC {} {}{}x{} preset P{used}",
+                match p.codec {
+                    Codec::H264 => "H.264",
+                    Codec::Hevc => "H.265",
+                },
+                if p.ten_bit { "Main 10 " } else { "" },
+                p.width,
+                p.height
+            );
             let mut cfg: Box<NV_ENC_CONFIG> = Box::new(preset.presetCfg);
             cfg.version = NV_ENC_CONFIG_VER;
             cfg.profileGUID = match (p.codec, p.profile) {
@@ -506,7 +526,7 @@ impl Session {
                 }
                 return Err(status("creating an output buffer", s, self.enc, self.api));
             }
-            self.slots.push(Slot { input: i.inputBuffer, output: o.bitstreamBuffer });
+            self.slots.push(Slot { input: i.inputBuffer, output: o.bitstreamBuffer, mapped: None });
         }
         Ok(())
     }
@@ -609,6 +629,107 @@ impl Session {
         }
     }
 
+    /// Register `pointer`, CUDA device memory of the session's CUDA context (`pitch` bytes a row,
+    /// NV12 / P010 in the session's input format with the chroma right after the `height` luma
+    /// rows), as an input picture (fork 8.6d D2). Its index for [`Session::submit_registered`];
+    /// unregistered when the session is dropped, so the memory must outlive the session.
+    pub fn register_cuda(&mut self, pointer: u64, pitch: u32) -> Result<usize, String> {
+        let register = self.api.list.nvEncRegisterResource.ok_or("no nvEncRegisterResource")?;
+        if self.fmt == NV_ENC_BUFFER_FORMAT_ABGR || pointer == 0 || pitch == 0 || !pitch.is_multiple_of(4) {
+            return Err("only planar input sessions take a CUDA picture with a pitch that is a multiple of 4".into());
+        }
+        if (pitch as usize) < (self.size.0 as usize).saturating_mul(self.bytes_per_sample) {
+            return Err(format!("a pitch of {pitch} bytes for {}-pixel rows", self.size.0));
+        }
+        // SAFETY: a zeroed parameter block with its version (nvEncodeAPI.h 12.1 layout, pinned in
+        // abi_tests); `pointer` is a CUdeviceptr the caller keeps allocated for the session's life
+        // (documented above), passed as the resource handle as NVIDIA's API asks for device pointers.
+        unsafe {
+            let mut r: NV_ENC_REGISTER_RESOURCE = std::mem::zeroed();
+            r.version = NV_ENC_REGISTER_RESOURCE_VER;
+            r.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR;
+            r.width = self.size.0;
+            r.height = self.size.1;
+            r.pitch = pitch;
+            r.resourceToRegister = pointer as *mut c_void;
+            r.bufferFormat = self.fmt;
+            r.bufferUsage = NV_ENC_INPUT_IMAGE;
+            let st = register(self.enc, &mut r);
+            if st != NV_ENC_SUCCESS || r.registeredResource.is_null() {
+                return Err(status("registering a CUDA picture", st, self.enc, self.api));
+            }
+            self.registered.push(r.registeredResource);
+        }
+        Ok(self.registered.len() - 1)
+    }
+
+    /// Submit registered picture `reg` ([`Session::register_cuda`], already written and finished
+    /// on the GPU) with timestamp `pts`; slot `slot`'s output buffer receives the bitstream, and the
+    /// picture stays mapped until [`Session::read`] reads it.
+    pub fn submit_registered(&mut self, slot: usize, reg: usize, pitch: u32, pts: u64) -> Result<Submitted, String> {
+        let resource = *self.registered.get(reg).ok_or("no such registered picture")?;
+        let s = self.slots.get(slot).ok_or("no such buffer slot")?;
+        if s.mapped.is_some() {
+            return Err("the buffer slot still holds a picture".into());
+        }
+        let output = s.output;
+        let (map, unmap, encode) = (
+            self.api.list.nvEncMapInputResource.ok_or("no nvEncMapInputResource")?,
+            self.api.list.nvEncUnmapInputResource.ok_or("no nvEncUnmapInputResource")?,
+            self.api.list.nvEncEncodePicture.ok_or("no nvEncEncodePicture")?,
+        );
+        // SAFETY: a zeroed parameter block with its version and a resource this session registered.
+        let (mapped, fmt) = unsafe {
+            let mut m: NV_ENC_MAP_INPUT_RESOURCE = std::mem::zeroed();
+            m.version = NV_ENC_MAP_INPUT_RESOURCE_VER;
+            m.registeredResource = resource;
+            let st = map(self.enc, &mut m);
+            if st != NV_ENC_SUCCESS || m.mappedResource.is_null() {
+                return Err(status("mapping a CUDA picture", st, self.enc, self.api));
+            }
+            (m.mappedResource, m.mappedBufferFmt)
+        };
+        let (w, h) = self.size;
+        let idr = !self.sei_array.is_empty() && self.submitted.is_multiple_of(self.gop);
+        self.submitted = self.submitted.saturating_add(1);
+        // SAFETY: as in `submit`, with the mapped picture as the input (it stays mapped until the
+        // slot's bitstream is read, as the API requires).
+        let st = unsafe {
+            let mut e: NV_ENC_PIC_PARAMS = std::mem::zeroed();
+            if idr {
+                let h = &mut e.codecPicParams.hevcPicParams;
+                h.seiPayloadArrayCnt = u32::try_from(self.sei_array.len()).unwrap_or(0);
+                h.seiPayloadArray = self.sei_array.as_mut_ptr();
+            }
+            e.version = NV_ENC_PIC_PARAMS_VER;
+            e.inputWidth = w;
+            e.inputHeight = h;
+            e.inputPitch = pitch;
+            e.inputBuffer = mapped;
+            e.outputBitstream = output;
+            e.bufferFmt = fmt;
+            e.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+            e.inputTimeStamp = pts;
+            e.inputDuration = 1;
+            encode(self.enc, &mut e)
+        };
+        match st {
+            NV_ENC_SUCCESS | NV_ENC_ERR_NEED_MORE_INPUT => {
+                if let Some(s) = self.slots.get_mut(slot) {
+                    s.mapped = Some(mapped);
+                }
+                Ok(if st == NV_ENC_SUCCESS { Submitted::Ready } else { Submitted::NeedMoreInput })
+            }
+            s => {
+                // SAFETY: the picture was mapped above and is not in the encoder.
+                unsafe {
+                    let _ = unmap(self.enc, mapped);
+                }
+                Err(status("encoding a picture", s, self.enc, self.api))
+            }
+        }
+    }
+
     /// Tell the encoder the stream ends: every picture it still holds becomes ready.
     pub fn end_of_stream(&mut self) -> Result<(), String> {
         let encode = self.api.list.nvEncEncodePicture.ok_or("no nvEncEncodePicture")?;
@@ -646,6 +767,12 @@ impl Session {
                 if l.bitstreamBufferPtr.is_null() || n == 0 { Vec::new() } else { std::slice::from_raw_parts(l.bitstreamBufferPtr.cast::<u8>(), n).to_vec() };
             let out = Output { data, pts: l.outputTimeStamp, pic_type: l.pictureType };
             let st = unlock(self.enc, output);
+            // a mapped CUDA picture (D2) is done with once its bitstream is out
+            if let Some(mapped) = self.slots.get_mut(slot).and_then(|s| s.mapped.take())
+                && let Some(unmap) = self.api.list.nvEncUnmapInputResource
+            {
+                let _ = unmap(self.enc, mapped);
+            }
             if st != NV_ENC_SUCCESS {
                 return Err(status("releasing a bitstream", st, self.enc, self.api));
             }
@@ -658,6 +785,16 @@ impl Drop for Session {
     fn drop(&mut self) {
         // SAFETY: every handle was created by this session and is destroyed once, buffers first.
         unsafe {
+            for s in &mut self.slots {
+                if let (Some(mapped), Some(unmap)) = (s.mapped.take(), self.api.list.nvEncUnmapInputResource) {
+                    unmap(self.enc, mapped);
+                }
+            }
+            for r in self.registered.drain(..) {
+                if let Some(u) = self.api.list.nvEncUnregisterResource {
+                    u(self.enc, r);
+                }
+            }
             for s in self.slots.drain(..) {
                 if let Some(d) = self.api.list.nvEncDestroyInputBuffer {
                     d(self.enc, s.input);

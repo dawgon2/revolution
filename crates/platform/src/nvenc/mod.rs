@@ -31,8 +31,12 @@
 #[allow(unsafe_code)]
 pub(crate) mod device;
 pub mod export;
+#[cfg(target_os = "linux")]
+pub mod fallback;
 #[allow(unsafe_code)]
 mod ffi;
+#[cfg(target_os = "linux")]
+pub mod gpu_input;
 pub mod hevc;
 #[allow(unsafe_code)]
 mod session;
@@ -41,6 +45,7 @@ mod session;
 mod abi_tests;
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use filmcraft_isobmff::HevcConfig;
 
@@ -127,6 +132,8 @@ pub struct Nvenc {
     ten_bit: bool,
     /// Pictures go in as packed RGBA ([`Nvenc::encode_rgba`]) and the GPU converts them to 4:2:0.
     rgba_input: bool,
+    /// Per buffer slot: the owner of a registered picture in flight there (fork 8.6d D2).
+    held: Vec<Option<Arc<dyn std::any::Any + Send + Sync>>>,
 }
 
 /// The H.264 encoder (the name it had before HEVC joined it).
@@ -165,6 +172,31 @@ pub fn hevc_available() -> bool {
 
 /// The answer of [`hevc_available`], once asked.
 static HEVC_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Fork XPS item 8 (tests): pictures from this index on fail as they do when the driver loses the
+/// GPU mid-export (no sudo, no GPU reset: `lose_device_after`, or `FILMCRAFT_NVENC_LOSE_AFTER=<n>`
+/// in a debug build). `u64::MAX`: off.
+static LOSE_AFTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+
+/// Tests: every NVENC encoder fails its pictures from index `n` on, as with a lost device;
+/// `u64::MAX` turns it off.
+#[doc(hidden)]
+pub fn lose_device_after(n: u64) {
+    LOSE_AFTER.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn device_lost(index: u64) -> bool {
+    #[cfg(debug_assertions)]
+    {
+        static ENV: std::sync::Once = std::sync::Once::new();
+        ENV.call_once(|| {
+            if let Some(n) = std::env::var("FILMCRAFT_NVENC_LOSE_AFTER").ok().and_then(|v| v.parse::<u64>().ok()) {
+                lose_device_after(n);
+            }
+        });
+    }
+    index >= LOSE_AFTER.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Ask [`hevc_available`] on a thread of its own (once, however often this is called), so the
 /// first draw of Export's format list does not wait for the probe session. Whoever asks while it
@@ -337,6 +369,7 @@ impl Nvenc {
             size: (w, h),
             ten_bit,
             rgba_input,
+            held: (0..slots).map(|_| None).collect(),
         })
     }
 
@@ -422,6 +455,35 @@ impl Nvenc {
     }
 
     fn submit_picture(&mut self, index: u64, fill: impl FnOnce(Locked<'_>)) -> Result<Vec<Packet>, String> {
+        self.submit_with(index, None, |session, slot| session.submit(slot, index, fill))
+    }
+
+    /// Fork 8.6d D2: register `pointer` (CUDA device memory of NVENC's context, NV12 / P010 in the
+    /// encoder's depth at `pitch` bytes a row, chroma right after the luma rows) as an input
+    /// picture; its index for [`Nvenc::encode_registered`]. The memory must outlive this encoder.
+    pub fn register_cuda(&mut self, pointer: u64, pitch: u32) -> Result<usize, String> {
+        if self.rgba_input {
+            return Err("an RGBA-input encoder takes no CUDA pictures".into());
+        }
+        self.session.register_cuda(pointer, pitch)
+    }
+
+    /// Encode registered picture `reg` (written and finished on the GPU) as picture `index`;
+    /// `keep` (the memory's owner) is held until its bitstream is out, so the memory isn't
+    /// written again meanwhile. The pictures that came out, as for [`Nvenc::encode`].
+    pub fn encode_registered(&mut self, reg: usize, pitch: u32, index: u64, keep: Arc<dyn std::any::Any + Send + Sync>) -> Result<Vec<Packet>, String> {
+        self.submit_with(index, Some(keep), |session, slot| session.submit_registered(slot, reg, pitch, index))
+    }
+
+    fn submit_with(
+        &mut self,
+        index: u64,
+        keep: Option<Arc<dyn std::any::Any + Send + Sync>>,
+        submit: impl FnOnce(&mut Session, usize) -> Result<Submitted, String>,
+    ) -> Result<Vec<Packet>, String> {
+        if device_lost(index) {
+            return Err("the GPU was lost (NV_ENC_ERR_DEVICE_NOT_EXIST, simulated)".into());
+        }
         let mut out = Vec::new();
         let slot = match self.free.pop() {
             Some(s) => s,
@@ -434,14 +496,16 @@ impl Nvenc {
                 self.free.pop().ok_or("no free encoder buffer")?
             }
         };
-        let st = self.session.submit(slot, index, fill);
-        let st = match st {
+        let st = match submit(&mut self.session, slot) {
             Ok(s) => s,
             Err(e) => {
                 self.free.push(slot);
                 return Err(e);
             }
         };
+        if let Some(h) = self.held.get_mut(slot) {
+            *h = keep;
+        }
         self.pending.push_back(slot);
         if st == Submitted::Ready {
             self.ready = self.pending.len();
@@ -466,6 +530,9 @@ impl Nvenc {
         let slot = self.pending.pop_front().ok_or("no picture in flight")?;
         self.ready = self.ready.saturating_sub(1);
         let r = self.session.read(slot);
+        if let Some(h) = self.held.get_mut(slot) {
+            *h = None;
+        }
         self.free.push(slot);
         let o = r?;
         let data = annex_b_to_length_prefixed_for(self.codec, &o.data)?;
@@ -642,6 +709,27 @@ pub fn split_hevc_parameter_sets(data: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u
     match (find(32), find(33), find(34)) {
         (Some(v), Some(s), Some(p)) => Ok((v, s, p)),
         _ => Err("the encoder returned no VPS / SPS / PPS".into()),
+    }
+}
+
+/// Fork XPS item 8: an encoder dropped with pictures in flight (an export cancelled, or ended by an
+/// error part-way) first ends the stream and drains them, as NVIDIA's teardown order requires;
+/// destroying the buffers of pictures the encoder still holds segfaulted inside the driver
+/// (`libnvcuvid`) on the RTX 4050 after a dozen pictures. Errors are ignored here: the device may
+/// already be gone, and the session is destroyed either way.
+impl Drop for Nvenc {
+    fn drop(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        if self.session.end_of_stream().is_ok() {
+            self.ready = self.pending.len();
+            while self.ready > 0 {
+                if self.read_oldest().is_err() {
+                    break;
+                }
+            }
+        }
     }
 }
 

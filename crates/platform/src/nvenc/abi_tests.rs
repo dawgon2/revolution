@@ -479,6 +479,11 @@ fn guids_match_the_header() {
     assert_eq!(NV_ENC_H264_PROFILE_HIGH_GUID.to_u128(), 0xe7cbc3094f7a4b89af2ad537c92be310u128, "NV_ENC_H264_PROFILE_HIGH_GUID");
     assert_eq!(NV_ENC_PRESET_P4_GUID.to_u128(), 0x90a7b826df064862b9d2cd6d73a08681u128, "NV_ENC_PRESET_P4_GUID");
     assert_eq!(NV_ENC_PRESET_P5_GUID.to_u128(), 0x21c6e6b4297a4cba998fb6cbde72ade3u128, "NV_ENC_PRESET_P5_GUID");
+    assert_eq!(NV_ENC_PRESET_P1_GUID.to_u128(), 0xfc0a8d3e45f84cf880c7298871590ebfu128, "NV_ENC_PRESET_P1_GUID");
+    assert_eq!(NV_ENC_PRESET_P2_GUID.to_u128(), 0xf581cfb888d6438193f0df13f9c27dabu128, "NV_ENC_PRESET_P2_GUID");
+    assert_eq!(NV_ENC_PRESET_P3_GUID.to_u128(), 0x368501103a07441f94d53670631f91f6u128, "NV_ENC_PRESET_P3_GUID");
+    assert_eq!(NV_ENC_PRESET_P6_GUID.to_u128(), 0x8e75c27962994ab683020b215a335cf5u128, "NV_ENC_PRESET_P6_GUID");
+    assert_eq!(NV_ENC_PRESET_P7_GUID.to_u128(), 0x84848c126f714c13931b53e283f57974u128, "NV_ENC_PRESET_P7_GUID");
     assert_eq!(NV_ENC_CODEC_HEVC_GUID.to_u128(), 0x790cdc8845224d7b9425bda9975f7603u128, "NV_ENC_CODEC_HEVC_GUID");
     assert_eq!(NV_ENC_HEVC_PROFILE_MAIN_GUID.to_u128(), 0xb514c39ab55b40fa878ff1253b4dfdecu128, "NV_ENC_HEVC_PROFILE_MAIN_GUID");
     assert_eq!(NV_ENC_HEVC_PROFILE_MAIN10_GUID.to_u128(), 0xfa4d2b6c3a5b411a80180a3f5e3c9be5u128, "NV_ENC_HEVC_PROFILE_MAIN10_GUID");
@@ -498,4 +503,34 @@ fn bit_field_masks_match_the_header() {
     assert_eq!(HEVC_OUTPUT_RECOVERY_POINT_SEI, 0x40000, "NV_ENC_CONFIG_HEVC.outputRecoveryPointSEI");
     assert_eq!(HEVC_CHROMA_FORMAT_MASK >> HEVC_CHROMA_FORMAT_SHIFT, 3, "chromaFormatIDC is 2 bits");
     assert_eq!(HEVC_PIXEL_BIT_DEPTH_MASK >> HEVC_PIXEL_BIT_DEPTH_SHIFT, 7, "pixelBitDepthMinus8 is 3 bits");
+}
+
+/// Fork 8.6d D2: the register / map blocks, checked with a C compiler against nvEncodeAPI.h 12.1
+/// (nv-codec-headers n12.1.14.0) on x86_64 Linux.
+#[test]
+fn register_and_map_blocks_match_the_header() {
+    use std::mem::{offset_of, size_of};
+    assert_eq!(size_of::<NV_ENC_REGISTER_RESOURCE>(), 1536);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, resourceType), 4);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, width), 8);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, pitch), 16);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, resourceToRegister), 24);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, registeredResource), 32);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, bufferFormat), 40);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, bufferUsage), 44);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, pInputFencePoint), 48);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, chromaOffset), 56);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, reserved1), 64);
+    assert_eq!(offset_of!(NV_ENC_REGISTER_RESOURCE, reserved2), 1048);
+    assert_eq!(size_of::<NV_ENC_MAP_INPUT_RESOURCE>(), 1544);
+    assert_eq!(offset_of!(NV_ENC_MAP_INPUT_RESOURCE, inputResource), 8);
+    assert_eq!(offset_of!(NV_ENC_MAP_INPUT_RESOURCE, registeredResource), 16);
+    assert_eq!(offset_of!(NV_ENC_MAP_INPUT_RESOURCE, mappedResource), 24);
+    assert_eq!(offset_of!(NV_ENC_MAP_INPUT_RESOURCE, mappedBufferFmt), 32);
+    assert_eq!(offset_of!(NV_ENC_MAP_INPUT_RESOURCE, reserved1), 36);
+    assert_eq!(offset_of!(NV_ENC_MAP_INPUT_RESOURCE, reserved2), 1040);
+    assert_eq!(NV_ENC_REGISTER_RESOURCE_VER, 0x7104_000c);
+    assert_eq!(NV_ENC_MAP_INPUT_RESOURCE_VER, 0x7104_000c);
+    assert_eq!(offset_of!(NV_ENCODE_API_FUNCTION_LIST, nvEncUnmapInputResource), 216);
+    assert_eq!(offset_of!(NV_ENCODE_API_FUNCTION_LIST, nvEncUnregisterResource), 256);
 }

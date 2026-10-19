@@ -154,10 +154,36 @@ enum Angles<'a> {
 #[cfg(test)]
 pub(crate) struct SlowDrop(pub(crate) std::time::Duration);
 
+/// Slow drops still sleeping (a test waits for them before it ends: a process exiting while a
+/// thread is still tearing a GPU device down crashed in NVIDIA's driver on the XPS 16).
+#[cfg(test)]
+pub(crate) static SLOW_DROPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+impl SlowDrop {
+    pub(crate) fn new(d: std::time::Duration) -> SlowDrop {
+        SLOW_DROPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        SlowDrop(d)
+    }
+
+    /// Wait (at most `limit`) until every slow drop has finished.
+    pub(crate) fn wait_all(limit: std::time::Duration) -> bool {
+        let t = std::time::Instant::now();
+        while SLOW_DROPS.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            if t.elapsed() > limit {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 impl Drop for SlowDrop {
     fn drop(&mut self) {
         std::thread::sleep(self.0);
+        SLOW_DROPS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

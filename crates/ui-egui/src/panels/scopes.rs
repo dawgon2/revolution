@@ -143,10 +143,10 @@ fn footer(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, space: Option<Colo
         ColorSpace::Rec2100 => "Rec. 2100".to_string(),
         s => crate::i18n::t(s.label()).to_string(),
     };
-    let lr = ui.painter().text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, &label, Tokens::ui(12.0), t.text);
-    app.auto.add("scopes.space", lr, &label);
     // right side: wrench · ☑ Clamp Signal · [8 Bit ▾]
-    let scale_w = 92.0;
+    // the scale box gives up room first in a narrow footer (down to what "8 Bit" needs)
+    let space_w = ui.painter().layout_no_wrap(label.clone(), Tokens::ui(12.0), t.text).size().x;
+    let scale_w = (r.width() - (8.0 + space_w + 6.0 + 27.0 + 10.0 + 22.0) - 6.0).clamp(56.0, 92.0);
     let sr = Rect::from_min_size(pos2(r.max.x - scale_w - 6.0, r.min.y + 4.0), vec2(scale_w, 22.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(sr));
     let mut scale = scale0;
@@ -157,14 +157,19 @@ fn footer(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, space: Option<Colo
         }
     });
     app.auto.add("scopes.scale", cb.response.rect, "Signal scale");
-    let galley = ui.painter().layout_no_wrap(tl!("Clamp Signal").into(), Tokens::ui(12.0), t.text);
-    let cw = galley.size().x + 24.0;
+    // the colour space on the left; in a narrow footer (the UI at 2×: XPS item 15) Clamp Signal
+    // keeps its box and loses its words (they show on hover), then the colour space is cut short
+    let words_w = ui.painter().layout_no_wrap(tl!("Clamp Signal").into(), Tokens::ui(12.0), t.text).size().x;
+    let (cw, words) = clamp_width(sr.min.x - r.min.x, space_w, words_w);
     let cr = Rect::from_min_size(pos2(sr.min.x - cw - 10.0, r.min.y + 4.0), vec2(cw, 22.0));
     let mut clamp = clamp0;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(cr));
-    let cresp = child.checkbox(&mut clamp, tl!("Clamp Signal"));
+    let cresp = if words { child.checkbox(&mut clamp, tl!("Clamp Signal")) } else { child.checkbox(&mut clamp, "").on_hover_text(tl!("Clamp Signal")) };
     app.auto.add("scopes.clamp", cresp.rect, "Clamp Signal");
     let wr = Rect::from_center_size(pos2(cr.min.x - 16.0, r.center().y), vec2(22.0, 22.0));
+    let space_clip = Rect::from_min_max(r.min, pos2((wr.min.x - 6.0).max(r.min.x), r.max.y));
+    let lr = ui.painter().with_clip_rect(space_clip).text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, &label, Tokens::ui(12.0), t.text);
+    app.auto.add("scopes.space", lr.intersect(space_clip), &label);
     let wresp = ui.interact(wr, egui::Id::new("scopes-wrench"), Sense::click());
     icons::paint(ui.painter(), wr.shrink(4.0), Icon::Wrench, if wresp.hovered() { t.tab_text_active } else { t.icon });
     app.auto.add("scopes.wrench", wr, "Scope settings");
@@ -179,6 +184,16 @@ fn footer(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, space: Option<Colo
         st.clamp = clamp;
         st.preset.clear();
     }
+}
+
+/// The Clamp Signal checkbox's width, and whether it shows its words, in a footer with `room`
+/// points left of the scale box, the colour space's label `space_w` wide and the words `words_w`.
+/// Room for the label, the wrench and the words: all of them; otherwise the box alone.
+fn clamp_width(room: f32, space_w: f32, words_w: f32) -> (f32, bool) {
+    // label at 8, then 6 before the wrench (22, centred 16 left of the box), then 10 before the scale box
+    let fixed = 8.0 + space_w + 6.0 + 27.0 + 10.0;
+    let with_words = words_w + 24.0;
+    if fixed + with_words <= room { (with_words, true) } else { (22.0, false) }
 }
 
 type Picks = Vec<(String, Rect, String, bool)>;

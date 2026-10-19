@@ -599,6 +599,45 @@ pub struct NV_ENC_SEQUENCE_PARAM_PAYLOAD {
     pub reserved2: [*mut c_void; 64],
 }
 
+/// `NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR`.
+pub const NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR: u32 = 1;
+/// `NV_ENC_INPUT_IMAGE` (`NV_ENC_BUFFER_USAGE`).
+pub const NV_ENC_INPUT_IMAGE: u32 = 0;
+pub const NV_ENC_REGISTER_RESOURCE_VER: u32 = struct_version(4);
+pub const NV_ENC_MAP_INPUT_RESOURCE_VER: u32 = struct_version(4);
+
+/// `NV_ENC_REGISTER_RESOURCE` (nvEncodeAPI.h 12.1; fork 8.6d D2: a CUDA device pointer as an input picture).
+#[repr(C)]
+pub struct NV_ENC_REGISTER_RESOURCE {
+    pub version: u32,
+    pub resourceType: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pitch: u32,
+    pub subResourceIndex: u32,
+    pub resourceToRegister: *mut c_void,
+    pub registeredResource: *mut c_void,
+    pub bufferFormat: u32,
+    pub bufferUsage: u32,
+    pub pInputFencePoint: *mut c_void,
+    pub chromaOffset: [u32; 2],
+    pub reserved1: [u32; 245],
+    pub reserved2: [*mut c_void; 61],
+}
+
+/// `NV_ENC_MAP_INPUT_RESOURCE` (nvEncodeAPI.h 12.1).
+#[repr(C)]
+pub struct NV_ENC_MAP_INPUT_RESOURCE {
+    pub version: u32,
+    pub subResourceIndex: u32,
+    pub inputResource: *mut c_void,
+    pub registeredResource: *mut c_void,
+    pub mappedResource: *mut c_void,
+    pub mappedBufferFmt: u32,
+    pub reserved1: [u32; 251],
+    pub reserved2: [*mut c_void; 63],
+}
+
 type Unused = *const c_void;
 
 /// The driver's function table (`NV_ENCODE_API_FUNCTION_LIST`); the entries this backend does not
@@ -632,13 +671,13 @@ pub struct NV_ENCODE_API_FUNCTION_LIST {
     pub nvEncGetSequenceParams: Option<unsafe extern "system" fn(Handle, *mut NV_ENC_SEQUENCE_PARAM_PAYLOAD) -> NvStatus>,
     pub nvEncRegisterAsyncEvent: Unused,
     pub nvEncUnregisterAsyncEvent: Unused,
-    pub nvEncMapInputResource: Unused,
-    pub nvEncUnmapInputResource: Unused,
+    pub nvEncMapInputResource: Option<unsafe extern "system" fn(Handle, *mut NV_ENC_MAP_INPUT_RESOURCE) -> NvStatus>,
+    pub nvEncUnmapInputResource: Option<unsafe extern "system" fn(Handle, *mut c_void) -> NvStatus>,
     pub nvEncDestroyEncoder: Option<unsafe extern "system" fn(Handle) -> NvStatus>,
     pub nvEncInvalidateRefFrames: Unused,
     pub nvEncOpenEncodeSessionEx: Option<unsafe extern "system" fn(*mut NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS, *mut Handle) -> NvStatus>,
-    pub nvEncRegisterResource: Unused,
-    pub nvEncUnregisterResource: Unused,
+    pub nvEncRegisterResource: Option<unsafe extern "system" fn(Handle, *mut NV_ENC_REGISTER_RESOURCE) -> NvStatus>,
+    pub nvEncUnregisterResource: Option<unsafe extern "system" fn(Handle, *mut c_void) -> NvStatus>,
     pub nvEncReconfigureEncoder: Unused,
     pub reserved1: Unused,
     pub nvEncCreateMVBuffer: Unused,

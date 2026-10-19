@@ -964,6 +964,16 @@ mod tests {
     }
 
     #[test]
+    fn battery_preview_lowers_playing_resolution_one_step() {
+        let v = MonitorView::default();
+        // playing at 1/2 (the default): 1/4 on battery with the setting, else as set
+        assert_eq!(v.res_now(true, true, true), PlaybackRes::Quarter);
+        assert_eq!(v.res_now(true, true, false), PlaybackRes::Half, "on mains");
+        assert_eq!(v.res_now(true, false, true), PlaybackRes::Half, "setting off");
+        assert_eq!(v.res_now(false, true, true), PlaybackRes::Full, "paused: full");
+    }
+
+    #[test]
     fn effective_resolution_follows_paused_and_high_quality() {
         let mut v = MonitorView::default();
         assert_eq!(v.effective_res(false), PlaybackRes::Full);

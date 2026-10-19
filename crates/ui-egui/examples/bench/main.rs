@@ -50,6 +50,25 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 }
 
 fn main() {
+    // fork XPS item 17: the GPU Settings ▸ Playback ▸ Graphics device would pick (power-saving,
+    // performance, auto, or PCI ids), for the window's compositor, export rendering and the
+    // encoders' placement alike; without it, as before (Auto: the discrete GPU)
+    filmcraft_gpu::adapter_pick::set_battery_powered(filmcraft_engine::power::has_battery());
+    if let Ok(v) = std::env::var("FILMCRAFT_GRAPHICS_DEVICE") {
+        filmcraft_gpu::adapter_pick::set_preference(filmcraft_gpu::adapter_pick::GpuPref::parse(&v));
+    }
+    // as the app's window on an NVIDIA GPU: a device NVDEC's pictures are shared with (fork 8.6c),
+    // so the export-only cases decode the way the app does there
+    #[cfg(target_os = "linux")]
+    let _window_device = {
+        let instance = eframe::wgpu::Instance::default();
+        filmcraft_gpu::adapter_pick::choose(&instance, eframe::wgpu::Backends::PRIMARY).filter(|a| a.get_info().vendor == 0x10de).and_then(|a| {
+            let desc = filmcraft_ui_egui::device_descriptor(&a);
+            let (d, q) = filmcraft_gpu::interop::create_device(&a, &desc)?.ok()?;
+            filmcraft_gpu::interop::set_cuda_target(Some(d.clone()));
+            Some((d, q))
+        })
+    };
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
