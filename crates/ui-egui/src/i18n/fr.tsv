@@ -3632,3 +3632,5 @@
 	Local copy of {name} ready: it now plays from this computer	Copie locale de {name} prête : elle est maintenant lue depuis cet ordinateur
 	Couldn't copy {name} from the network share: {error}	Impossible de copier {name} depuis le partage réseau : {error}
 	On a network share: {share}; plays from its local copy	Sur un partage réseau : {share} ; lu depuis sa copie locale
+	App icon	Icône de l’application
+	Rounded (macOS style)	Arrondi (style macOS)

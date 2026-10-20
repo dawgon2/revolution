@@ -3631,3 +3631,5 @@
 	Local copy of {name} ready: it now plays from this computer	{name} のローカルコピーの準備ができました: このコンピューターから再生します
 	Couldn't copy {name} from the network share: {error}	ネットワーク共有から {name} をコピーできませんでした: {error}
 	On a network share: {share}; plays from its local copy	ネットワーク共有上: {share}。ローカルコピーから再生します
+	App icon	アプリのアイコン
+	Rounded (macOS style)	角丸（macOS スタイル）

@@ -172,6 +172,10 @@ pub struct AppearancePrefs {
     /// GNOME's `text-scaling-factor`). The whole interface scales, not only text. Off by default;
     /// a fixed UI Scale ignores it.
     pub match_desktop_text_size: bool,
+    /// "App icon" (fork, owner 2026-10-20, FORK-PLAN §1a.108): `rounded` (default: the macOS-style
+    /// tile the packages install) | `square` (the plain square picture). The window icon follows
+    /// at once; on Linux the desktop's launcher / taskbar icon is written to the user's icon theme.
+    pub app_icon: String,
 }
 
 impl Default for AppearancePrefs {
@@ -187,6 +191,7 @@ impl Default for AppearancePrefs {
             motion: "system".into(),
             ui_scale: "auto".into(),
             match_desktop_text_size: false,
+            app_icon: "rounded".into(),
         }
     }
 }
@@ -812,6 +817,8 @@ const BIN_OPEN: &[(&str, &str)] = &[("openInPlace", "Open in place"), ("openNewT
 const PROJECT_OPEN: &[(&str, &str)] = &[("openNewTab", "Open new tab"), ("openNewWindow", "Open in new window")];
 const THEMES: &[(&str, &str)] = &[("darkest", "Darkest"), ("dark", "Dark"), ("light", "Light"), ("resolve", "Resolve")];
 pub const APPEARANCE_MODES: &[(&str, &str)] = &[("auto", "Sync with system"), ("dark", "Dark"), ("light", "Light")];
+/// Settings ▸ Appearance ▸ App icon (fork, §1a.108).
+pub const APP_ICONS: &[(&str, &str)] = &[("rounded", "Rounded (macOS style)"), ("square", "Square")];
 pub const MOTION: &[(&str, &str)] = &[("system", "Sync with system"), ("on", "On"), ("off", "Off (reduce motion)")];
 /// The text factors "Match the desktop's text size" applies; a larger or smaller desktop factor
 /// is held at the nearest end.
@@ -975,6 +982,7 @@ static CATEGORIES: &[Category] = &[
             f("appearance.motion", "Animations", Kind::Choice(MOTION), true),
             f("appearance.uiScale", "UI Scale", Kind::Choice(UI_SCALES), true),
             b("appearance.matchDesktopTextSize", "Match the desktop's text size", true),
+            f("appearance.appIcon", "App icon", Kind::Choice(APP_ICONS), true),
         ],
     },
     Category {

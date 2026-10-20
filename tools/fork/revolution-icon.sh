@@ -25,15 +25,22 @@ cp "$TMP/tile.png" "$DIR/filmcraft-1024.png"
 
 render() { magick "$TMP/tile.png" -filter Lanczos -resize "$1x$1" -strip "PNG32:$2"; }
 
-# macOS: Apple's grid, tile body 824 of 1024 with a transparent margin.
-magick "$TMP/tile.png" -resize 412x412 -background none -gravity center -extent 512x512 -strip "PNG32:$DIR/filmcraft-macos-512.png"
+# macOS style (owner, 2026-10-20, FORK-PLAN §1a.108: the default desktop icon everywhere): Apple's
+# grid, tile body 824 of 1024 with a transparent margin and a soft drop shadow under the tile.
+magick "$TMP/tile.png" -resize 824x824 -background none -gravity center -extent 1024x1024 "$TMP/body.png"
+magick "$TMP/body.png" \( +clone -background black -shadow 50x14+0+12 \) +swap -background none -layers merge +repage \
+  -gravity center -crop 1024x1024+0+0 +repage -extent 1024x1024 -strip "$TMP/mac.png"
+magick "$TMP/mac.png" -filter Lanczos -resize 512x512 -strip "PNG32:$DIR/filmcraft-macos-512.png"
+mac() { magick "$TMP/mac.png" -filter Lanczos -resize "$1x$1" -strip "PNG32:$2"; }
 
+# hicolor: the macOS-style tile; 16 and 24 px keep the full-bleed tile (a margin would leave a
+# speck). The square variant (Settings ▸ Appearance ▸ App icon ▸ Square) is made by the app.
 for s in 16 24 32 48 64 128 256 512; do
   mkdir -p "$DIR/hicolor/${s}x${s}/apps"
-  render "$s" "$DIR/hicolor/${s}x${s}/apps/$APP_ID.png"
+  if [ "$s" -le 24 ]; then render "$s" "$DIR/hicolor/${s}x${s}/apps/$APP_ID.png"; else mac "$s" "$DIR/hicolor/${s}x${s}/apps/$APP_ID.png"; fi
 done
 # "scalable": the 512 px tile inside an SVG (desktops prefer the scalable icon)
-render 512 "$TMP/512.png"
+mac 512 "$TMP/512.png"
 mkdir -p "$DIR/hicolor/scalable/apps"
 {
   printf '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" width="512" height="512">'
@@ -46,7 +53,7 @@ render 128 "$ROOT/apps/filmcraft-web/web/favicon.png"
 
 ICO_PNGS=()
 for s in 16 20 24 32 40 48 64 128 256; do
-  render "$s" "$TMP/ico-$s.png"
+  if [ "$s" -le 24 ]; then render "$s" "$TMP/ico-$s.png"; else mac "$s" "$TMP/ico-$s.png"; fi
   ICO_PNGS+=("$TMP/ico-$s.png")
 done
 (cd "$ROOT" && cargo run -q -p xtask -- ico "$DIR/filmcraft.ico" "${ICO_PNGS[@]}")

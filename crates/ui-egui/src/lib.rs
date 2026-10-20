@@ -29,6 +29,7 @@ macro_rules! tlf {
     };
 }
 
+pub mod app_logo;
 pub mod automation;
 mod cjk;
 pub mod coach_ids;
@@ -197,6 +198,10 @@ pub struct HostHooks {
     /// This computer's GPUs for Settings ▸ Playback ▸ Graphics device (L2.6; the desktop app:
     /// [`graphics_device::list`]). Without it Settings offers Auto only.
     pub graphics_devices: Option<Box<dyn FnMut() -> Vec<graphics_device::GpuChoice>>>,
+    /// Settings ▸ Appearance ▸ App icon changed (fork §1a.108; `rounded` | `square`): the desktop
+    /// app sets the window icon and, on Linux, the desktop's launcher icon. Without it nothing
+    /// changes outside the app.
+    pub app_icon_changed: Option<Box<dyn FnMut(&egui::Context, &str)>>,
 }
 
 /// [`HostHooks::run_dialog_from`]: a dialog and the folder it starts in.
@@ -405,6 +410,12 @@ pub struct FilmcraftApp {
     /// Tell the window on the first frame whether to be full screen (the desktop app opens it
     /// right already; an agent's window stays windowed: `false`).
     pub full_screen_at_start: bool,
+    /// The editor's window (size, maximised) to bring back once the Project Manager the app
+    /// opened into closes ([`Self::launch_project_manager_windowed`]).
+    pub editor_window: Option<filmcraft_engine::window_state::WindowState>,
+    /// When the editor's window was given back ([`window_chrome::restore_editor_window`]); the
+    /// window's size isn't remembered until it has settled ([`Self::window_is_editors`]).
+    pub editor_window_restored: Option<web_time::Instant>,
     /// Set by the host while the desktop shows this window's menu in its global menu (Plasma's
     /// Global Menu); with Settings ▸ General ▸ Menu bar ▸ Auto the window then hides its own
     /// menu bar, except in full screen ([`Self::in_window_menu`]).
@@ -847,6 +858,8 @@ impl FilmcraftApp {
             sent_full_screen: None,
             full_screen_sent_at: None,
             full_screen_at_start: true,
+            editor_window: None,
+            editor_window_restored: None,
             global_menu: None,
             published_menu: (Vec::new(), None),
             last_timeline_width: 1000.0,
@@ -887,6 +900,28 @@ impl FilmcraftApp {
         {
             panels::home::show_home(self);
         }
+    }
+
+    /// The app opened into the Project Manager in a plain window (fork, owner 2026-10-20, FORK-PLAN
+    /// §1a.108): never full screen there at launch (Project Manager full screen lasts until the
+    /// next start), and the editor's `editor` window comes back when a project opens
+    /// ([`window_chrome::restore_editor_window`]).
+    pub fn launch_project_manager_windowed(&mut self, editor: filmcraft_engine::window_state::WindowState) {
+        self.editor_window = Some(editor);
+        if self.session.prefs.general.project_manager_full_screen {
+            let mut p = self.session.prefs.clone();
+            p.general.project_manager_full_screen = false;
+            if let Err(e) = self.session.set_prefs(p) {
+                log::warn!("saving preferences: {e}");
+            }
+        }
+    }
+
+    /// Whether the window now shows the editor at its own size (not the Project Manager, and not
+    /// the moments after the editor's size was given back, when the window still reports the
+    /// Project Manager's): the window size the next start restores is taken only then.
+    pub fn window_is_editors(&self) -> bool {
+        !self.ui.home.open && self.editor_window.is_none() && self.editor_window_restored.is_none_or(|t| t.elapsed() > std::time::Duration::from_millis(1500))
     }
 
     /// Open the Project Manager home screen (`projects.show`).
@@ -1026,6 +1061,7 @@ impl FilmcraftApp {
                 self.set_theme(ctx, k);
             }
         }
+        window_chrome::restore_editor_window(self, ctx);
         window_chrome::sync_full_screen(self, ctx);
         if self.applied_prefs.as_ref() == Some(&self.session.prefs) {
             return;
@@ -1040,6 +1076,12 @@ impl FilmcraftApp {
             if window_chrome::SUPPORTED {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(!own));
             }
+        }
+        if let Some(q) = &prev
+            && q.appearance.app_icon != p.appearance.app_icon
+            && let Some(f) = self.hooks.app_icon_changed.as_mut()
+        {
+            f(ctx, &p.appearance.app_icon);
         }
         if prev.as_ref().is_none_or(|q| q.appearance != p.appearance || q.general.show_tool_tips != p.general.show_tool_tips) {
             let k = self.appearance_kind(ctx);

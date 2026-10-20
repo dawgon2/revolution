@@ -45,7 +45,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     // Community and project links.
     let y = 90.0 + 150.0 + 36.0;
-    ui.painter().text(pos2(rect.min.x + 24.0, rect.min.y + y), Align2::LEFT_CENTER, "Revolution", Tokens::semibold(15.0), t.text);
+    let logo = Rect::from_center_size(pos2(rect.min.x + 33.0, rect.min.y + y), egui::vec2(18.0, 18.0));
+    crate::app_logo::paint(ui.ctx(), ui.painter(), logo, Color32::WHITE);
+    ui.painter().text(pos2(rect.min.x + 50.0, rect.min.y + y), Align2::LEFT_CENTER, "Revolution", Tokens::semibold(15.0), t.text);
     let mut x = rect.min.x + 24.0;
     for (i, (id, label, url)) in crate::links::ALL.iter().take(4).enumerate() {
         let primary = i == 0;

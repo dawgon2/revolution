@@ -514,6 +514,48 @@ pub fn store_poster(cache: &Path, project: &Path, w: u32, h: u32, rgba: &[u8], p
     Ok(())
 }
 
+/// Make the poster of a project that has none (fork, owner 2026-10-20, FORK-PLAN §1a.108: every
+/// project in the Project Manager shows a picture of its timeline): open it in a session of its
+/// own (nothing is saved, no recent list or auto-save touched), render its active timeline at a
+/// frame that shows something and store it with [`store_poster`]. The frame is the saved
+/// playhead's, else one second into the first video clip, else the middle of the timeline; a
+/// black frame moves on to the next candidate. Slow (it decodes media): run it off the UI thread.
+pub fn make_poster(services: std::sync::Arc<dyn crate::Services>, cache: &Path, project: &Path) -> std::result::Result<(), String> {
+    let mut s = Session::new(services);
+    s.execute("file.open", json!({"path": project.to_string_lossy()})).map_err(|e| e.to_string())?;
+    let seq_id = s.state.active_sequence.ok_or("the project has no timeline")?;
+    let seq = s.project.sequence(seq_id).ok_or("the project has no timeline")?;
+    let width = seq.settings.width.max(1);
+    let duration = seq.duration();
+    if duration <= filmcraft_time::Tick::ZERO {
+        return Err("the timeline is empty".into());
+    }
+    let second = filmcraft_time::Tick(filmcraft_time::TICKS_PER_SECOND);
+    let first_clip = seq
+        .video_tracks
+        .iter()
+        .flat_map(|t| t.items.iter())
+        .filter(|i| i.enabled && i.duration > filmcraft_time::Tick::ZERO)
+        .min_by_key(|i| i.start)
+        .map(|i| filmcraft_time::Tick(i.start.0.saturating_add(second.0.min(i.duration.0 / 2))));
+    let middle = filmcraft_time::Tick(duration.0 / 2);
+    let scale = (POSTER_WIDTH.min(width) as f32 / width as f32).clamp(0.01, 1.0);
+    let mut fallback = None;
+    for t in [Some(s.playhead()), first_clip, Some(middle)].into_iter().flatten() {
+        let Some(img) = s.render_program_at(scale, t) else { continue };
+        let px = img.over_black_rgba8();
+        let (w, h) = (u32::try_from(img.w).map_err(|e| e.to_string())?, u32::try_from(img.h).map_err(|e| e.to_string())?);
+        // a frame with nothing on it (black, a gap) is a poor poster: try the next one
+        let lit = px.as_chunks::<4>().0.iter().filter(|p| p.iter().take(3).any(|c| *c > 16)).count();
+        if lit * 50 > px.len() / 4 {
+            return store_poster(cache, project, w, h, &px, None).map_err(|e| e.to_string());
+        }
+        fallback.get_or_insert((w, h, px));
+    }
+    let (w, h, px) = fallback.ok_or("no frame of the timeline could be rendered")?;
+    store_poster(cache, project, w, h, &px, None).map_err(|e| e.to_string())
+}
+
 /// A poster PNG decoded to RGBA8 (capped size and dimensions; None when it can't be read).
 pub fn load_poster(png_path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     let bytes = read_capped(png_path, MAX_POSTER_BYTES)?;

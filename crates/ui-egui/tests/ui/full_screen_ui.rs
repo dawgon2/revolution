@@ -210,3 +210,28 @@ fn project_manager_full_screen_in_premiere() {
 fn project_manager_full_screen_in_resolve() {
     project_manager_remembers_its_own(Workflow::Resolve);
 }
+
+/// Fork §1a.108 (owner): the app opens into the Project Manager in a plain window (not full
+/// screen even when Project Manager full screen was on); the editor's size and maximised state
+/// come back when a project opens, and only the editor's window is remembered for the next start.
+#[test]
+fn project_manager_opens_windowed_and_the_editor_gets_its_window_back() {
+    let mut d = Driver::new(Workflow::Resolve);
+    d.harness.state_mut().session.prefs.general.project_manager_full_screen = true;
+    let editor = filmcraft_engine::window_state::WindowState { inner_size: [1500.0, 900.0], maximized: true };
+    d.harness.state_mut().launch_project_manager_windowed(editor);
+    d.ok("engine.execute", json!({"command": "projects.show", "params": {}}));
+    d.frames(2);
+    assert!(d.harness.state().ui.home.open);
+    assert!(!d.harness.state().session.prefs.general.project_manager_full_screen, "not full screen at launch");
+    assert!(!filmcraft_ui_egui::window_chrome::wanted_full_screen(d.harness.state()));
+    assert!(!d.harness.state().window_is_editors(), "the Project Manager's window is not remembered");
+    assert_eq!(d.harness.state().editor_window, Some(editor), "kept until a project opens");
+    d.ok("engine.execute", json!({"command": "projects.close", "params": {}}));
+    d.frames(2);
+    assert!(!d.harness.state().ui.home.open);
+    assert_eq!(d.harness.state().editor_window, None, "given back once");
+    assert!(d.harness.state().editor_window_restored.is_some());
+    assert!(!d.harness.state().window_is_editors(), "not while the window settles");
+    assert!(filmcraft_ui_egui::window_chrome::wanted_full_screen(d.harness.state()), "the editor's full screen comes back");
+}

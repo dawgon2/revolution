@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 pub const FILE: &str = "window.json";
 /// The window's default inner size in points (the size of a first start).
 pub const DEFAULT_SIZE: [f32; 2] = [1600.0, 980.0];
+/// The window's size when the app opens into the Project Manager (fork, owner 2026-10-20, FORK-PLAN
+/// §1a.108: never full screen or maximised there, like Resolve's; the editor's own size and
+/// maximised state come back when a project opens).
+pub const PROJECT_MANAGER_SIZE: [f32; 2] = [1360.0, 800.0];
 /// The smallest inner size the window allows, in points.
 pub const MIN_SIZE: [f32; 2] = [900.0, 560.0];
 /// Larger sizes in the file are clamped to this (no display is wider; guards a corrupt file).

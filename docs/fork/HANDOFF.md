@@ -5,7 +5,27 @@ newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), t
 [`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (Q51 answered, **Q52** FYI, **Q53 owed**), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
 
-## Exact next step (2026-10-18, laptop session): XPS signed off (`xps-1`, local); next: owner pushes, then S2
+## Exact next step (2026-10-20, live): runner resumes: PKG → S2 (release 0.1.3) → REF → C2 → AI2 → A3 (publish 0.2), then stop
+
+**State:** `revolution-wip` (XPS, `xps-1`) merged into `hevc-vaapi`. **Revolution 0.1.1 is published**
+(dawgon2/revolution, 2026-10-18 23:29 EDT). §1a numbering: XPS decisions **105**, Music **106**, packaging **107**,
+logo / Project Manager / app icon **108** (done this session), cleanup + PKG2 + run order + models **109**.
+**Next: Phase PKG** (§1a.107): Windows MSI (x64 + arm64), .deb, .rpm, AppImage, Flatpak for x86_64 and aarch64
+from upstream's `release.yml` + `packaging/linux/*` under the Revolution names (rename the packaged icon / desktop /
+metainfo files to `io.github.dawgon2.Revolution`; the app id is already that). **Then S2** → publish **Revolution 0.1.3**
+(PKG + S2) → REF → C2 → AI2 → **A3** → publish **Revolution 0.2** (REF + C2 + AI2 + A3) → `.fork-paused`.
+Only those two publishes (§1a.109 d). **PKG2** (AUR `revolution-bin` + `revolution`, Flathub, COPR, apt) waits for a
+live session with the owner and then adds the listings for 0.2.
+**Every phase ends with** `tools/fork/cleanup.sh` then `--apply` (§1a.109 a). **Models:** Opus main, Sonnet subagents
+wherever reliable, Fable only after Opus fails twice.
+
+## Owner note (2026-10-17 ~03:30, live): Music / music video plan added (FORK-PLAN §1a.106, MUSIC-PLAN.md)
+
+Goal: song + music video in one project. Nothing changes before A3; when A3 starts, build its buses / track effects
+on SoundCraft's `mix` crate (import it first; source: storytold/soundcraft, or the owner's
+`~/Downloads/soundcraft-main.zip`, v0.7.0). M1 → M2 follow A3. The exact next step below still holds.
+
+## Was: Exact next step (2026-10-18, laptop session): XPS signed off (`xps-1`, local); next: owner pushes, then S2
 
 **State:** `revolution-wip` at eef8b517, tag `xps-1` on it, **both unpushed** (owner approves pushes and tag pushes; ~45
 commits ahead of `origin/revolution-wip`). Build `~/Apps/filmcraft-builds/xps-1` (`latest`), launcher "Revolution".
@@ -17,7 +37,11 @@ files); B3 NVDEC 13 slots at 6.2K (Performance playback 0.17 % dropped); §1a.10
 driver (no NVIDIA device file held on Power saving / Auto); **never crash on a lost window GPU** (restart + `--recover`,
 reproduced); llm test exit crash; `shared_picture` Linux-only (wasm); `va_interop` test on the decode GPU. D1 (H.264 /
 HDR exports on the GPU) moved to Phase 8 item 8 (owner).
-**Next:** owner OK → push `revolution-wip` + tag `xps-1`, publish per §1a.33; then S2 (§1a.104). Before more laptop
+**Pushed (owner's OK):** `revolution-wip` + tag `xps-1` to the private repo. **Revolution 0.1.1 is prepared, not
+published** (the session's safety check refused the push to the public repo): from the repo root the owner runs
+`git -C target/tmp/release/pub push https://github.com/dawgon2/revolution.git snap:refs/heads/fork refs/tags/revolution-0.1.1`
+then `gh release create revolution-0.1.1 -R dawgon2/revolution --target fork --title "Revolution 0.1.1" --notes-file target/tmp/release/NOTES.md target/tmp/release/pkg/revolution-0.1.1-linux-x86_64.tar.gz target/tmp/release/pkg/SHA256SUMS`
+(FORK-PLAN §7 2026-10-18: snapshot scanned clean, build scrubbed). **Next:** S2 (§1a.104). Before more laptop
 sessions read the gotchas below.
 **Owner to do / decide:** (1) approve the push (+ tag); (2) measure the start-up D3 yourself: close System Monitor's GPU
 sensor (KDE ksystemstats runs `nvidia-smi dmon`, which keeps the RTX 4050 awake), start Revolution on Auto,

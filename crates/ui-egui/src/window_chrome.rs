@@ -127,6 +127,22 @@ pub fn sync_full_screen(app: &mut FilmcraftApp, ctx: &egui::Context) {
     app.sent_full_screen = Some(wanted);
 }
 
+/// Once the Project Manager the app opened into has closed, give the window the editor's size and
+/// maximised state back (fork, owner 2026-10-20, FORK-PLAN §1a.108; full screen follows through
+/// [`sync_full_screen`]). Once only.
+pub fn restore_editor_window(app: &mut FilmcraftApp, ctx: &egui::Context) {
+    if app.ui.home.open {
+        return;
+    }
+    let Some(w) = app.editor_window.take() else { return };
+    app.editor_window_restored = Some(web_time::Instant::now());
+    let [width, height] = w.inner_size;
+    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
+    if w.maximized {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    }
+}
+
 /// How long after a full-screen request the window's changes count as its answer (seconds).
 const FULL_SCREEN_SETTLE_S: f64 = 1.5;
 

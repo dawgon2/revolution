@@ -133,6 +133,20 @@ pub fn memory_low(total: u64, available: u64) -> bool {
     available < (3u64 << 30).max(total / 4)
 }
 
+/// Whether this machine's memory is low now ([`memory_low`] on `/proc/meminfo`; false where the
+/// numbers aren't known). For other background work that should wait too (the Project
+/// Manager's posters).
+pub fn memory_low_now() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        meminfo().is_some_and(|(total, available)| memory_low(total, available))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 /// How long the worker waits before it looks at the memory again.
 const MEMORY_RECHECK: Duration = Duration::from_secs(2);
 

@@ -334,3 +334,48 @@ fn a_projects_folder_at_the_top_of_the_disk_is_not_used() {
     assert!(d.element("projects.tile.new").is_some(), "the screen still draws");
     assert!(d.element_now("projects.folder.0").is_none_or(|f| !f["label"].as_str().is_some_and(|l| l == "home" || l == "etc")), "not the disk's folders");
 }
+
+/// Fork §1a.108: a project saved where no poster could be made (here: by another session, no
+/// frontend) gets one when the Project Manager lists it, rendered from its timeline in the
+/// background; until then its tile shows the faded logo.
+#[test]
+fn a_project_without_a_poster_gets_one_when_listed() {
+    let (mut d, _) = Driver::launch("backfill", Workflow::Resolve, |dir| {
+        let root = dir.join("Projects");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        s.execute("file.saveAs", json!({"path": root.join("Old.fcproj").to_string_lossy()})).unwrap();
+    });
+    assert!(d.open());
+    let path = d.root().join("Old.fcproj");
+    let cache = d.dir.join("data").join(filmcraft_engine::projects::CACHE_DIR);
+    let png = cache.join(format!("{}.png", filmcraft_engine::projects::cache_key(&path)));
+    for _ in 0..3000 {
+        if png.is_file() {
+            break;
+        }
+        d.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(png.is_file(), "a poster made for the listed project");
+    let (w, _, px) = filmcraft_engine::projects::load_poster(&png).expect("a readable poster");
+    assert!(w <= 480);
+    assert!(px.as_chunks::<4>().0.iter().any(|p| p[..3].iter().any(|c| *c > 16)), "a frame with something on it");
+    d.frames(30);
+    let listing = d.exec("projects.list", json!({}));
+    assert_eq!(listing["projects"][0]["poster"], json!(png.to_string_lossy()));
+    // the selection border has room above the first row (the scroll area clipped it)
+    let tile = d.element("projects.tile.new").unwrap();
+    let top = tile["rect"][1].as_f64().unwrap();
+    assert!(top >= 36.0 + 38.0 + 10.0 + 4.0 - 0.5, "the first row starts below the border room: {tile}");
+    d.shot("backfill");
+    d.click("projects.tile.0");
+    d.shot("backfill-selected");
+    // the editor's page bar carries the logo too
+    d.ok("ui.click", json!({"id": "projects.tile.0", "count": 2}));
+    d.frames(6);
+    assert!(!d.open());
+    assert!(d.element("pageBar.app").is_some());
+    d.shot("editor");
+}

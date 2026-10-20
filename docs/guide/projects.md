@@ -53,6 +53,26 @@ What Revolution shows at launch is set in Edit ▸ Preferences ▸ General ▸ *
 project**. **Workflow default** means the Project Manager in the Resolve workflow, and Premiere's
 own **At Startup** setting in the Premiere workflow.
 
+## The window and the project pictures
+
+> id: projects.window | does: the Project Manager opens in a window at launch; every project tile shows a picture of its timeline | ui: projects.tile.new | cmd: projects.show, projects.list | resolve: Project Manager window, project thumbnails | when: "why isn't the Project Manager full screen?"; a project tile shows the logo instead of a picture; the editor opened at the wrong size | see: projects.opening
+
+**[Resolve-style] [Fork]**
+
+- **At launch the Project Manager opens in a window** of its own size, never full screen or
+  maximised, as Resolve's does. When you open a project, the editor comes back the way you left
+  it: full screen, maximised or a window of the size you last gave it. Full screen on the
+  Project Manager (F11 or its full-screen button) lasts until you quit.
+- **Every project shows a picture of its timeline.** Saving a project takes the frame under the
+  playhead. Projects that have no picture yet (saved before this version, made by another
+  program or an agent, or saved before their frame was ready) get one in the background the
+  first time the Project Manager lists them: the frame at the saved playhead, or a second into
+  the first clip when that frame is black. Until it arrives the tile shows the faded Revolution
+  logo. It waits while the computer is low on memory. A project that can't be read keeps its
+  **Can't read** tile.
+- Revolution's logo sits where Resolve shows its own: the Project Manager's title, the **New
+  Project** tile and the bottom left of the page bar.
+
 ## Make a new project
 
 > id: projects.new | does: makes a new project or folder from the Project Manager | ui: projects.tile.new, projects.new, projects.newFolder, projects.dialog.* | cmd: projects.new, projects.newFolder | resolve: New Project | premiere: New Project | when: starting something new | see: projects.open

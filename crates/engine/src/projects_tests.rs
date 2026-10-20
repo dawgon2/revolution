@@ -951,3 +951,35 @@ fn a_one_file_package_round_trips() {
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), before, "nothing left behind");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Fork §1a.108: a project saved without a poster gets one made from its timeline (a frame with
+/// something on it), and projects that can't give one fail cleanly.
+#[test]
+fn a_project_without_a_poster_gets_one_from_its_timeline() {
+    let e = env("backfill");
+    let movie = e.dir.join("clip.mp4");
+    crate::media_test_util::make_movie(&movie, filmcraft_media::DemoScene::Aurora, 96, 54, 12);
+    let (mut s, _, _) = crate::media_test_util::session_with(&[&movie]);
+    let project = e.root.join("Clip.fcproj");
+    std::fs::create_dir_all(&e.root).unwrap();
+    s.execute("file.saveAs", json!({"path": project.to_string_lossy()})).unwrap();
+    let cache = e.dir.join("cache");
+    let services = Session::default().services.clone();
+    projects::make_poster(services.clone(), &cache, &project).unwrap();
+    let s = projects::summary(Some(&cache), &project);
+    let png = s.poster.expect("a poster is stored");
+    let (w, h, px) = projects::load_poster(Path::new(&png)).unwrap();
+    assert_eq!((w, h), (96, 54));
+    assert!(px.as_chunks::<4>().0.iter().any(|p| p[..3].iter().any(|c| *c > 16)), "not a black frame");
+
+    // an empty timeline, garbage and a missing file: an error, no poster, no panic
+    let mut empty = Session::default();
+    let empty_path = e.root.join("Empty.fcproj");
+    save_project(&mut empty, &empty_path, 640, 360, 24.0);
+    let garbage = e.root.join("Garbage.fcproj");
+    std::fs::write(&garbage, b"\x00not a project").unwrap();
+    for p in [empty_path, garbage, e.root.join("Missing.fcproj")] {
+        assert!(projects::make_poster(services.clone(), &cache, &p).is_err(), "{}", p.display());
+        assert!(projects::summary(Some(&cache), &p).poster.is_none());
+    }
+}

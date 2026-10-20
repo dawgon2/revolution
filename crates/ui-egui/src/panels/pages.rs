@@ -11,7 +11,7 @@
 //!
 //! Automation ids: `page.<id>` (the pages), `pageBar.home`, `pageBar.settings`.
 
-use egui::{Align2, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 
 use crate::FilmcraftApp;
 use crate::icons::{self, Icon};
@@ -106,9 +106,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 0.0, t.header_bg);
     p.line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, t.separator));
-    // the app's name (our own icon and name; never Resolve's mark)
+    // the app's name: Revolution's own logo where Resolve shows its mark (owner, §1a.108)
     let mark = Rect::from_center_size(pos2(rect.min.x + 26.0, rect.center().y), vec2(18.0, 18.0));
-    icons::paint(&p, mark, Icon::Film, t.text);
+    crate::app_logo::paint(ui.ctx(), &p, mark, Color32::WHITE);
     let name = p.text(pos2(mark.max.x + 8.0, rect.center().y), Align2::LEFT_CENTER, "Revolution", Tokens::semibold(13.0), t.text);
     app.auto.add("pageBar.app", mark.union(name), "Revolution");
     // the coach's buttons left of Home (FORK-PLAN §1a.78)

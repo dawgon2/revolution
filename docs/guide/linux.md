@@ -229,6 +229,27 @@ under X11 the desktop already folds Large Text into the display scale, so the sw
 nothing there (it would otherwise count twice).
 Agents can read and set it as `appearance.matchDesktopTextSize`.
 
+## The app icon: rounded or square
+
+> id: linux.app-icon | does: choose the app icon's shape, the rounded macOS-style tile or the plain square picture | cmd: appearance.appIcon | when: "can I change the app icon?"; the launcher or taskbar icon looks wrong next to your other icons | see: linux.accent
+
+**[Fork]**
+
+Revolution's icon is a rounded tile with a little margin and a soft shadow, the shape macOS
+uses, so it sits well beside other app icons on most docks and panels. **Settings ▸ Appearance ▸
+App icon** switches it:
+
+- **Rounded (macOS style)** (default): the icon the packages install.
+- **Square**: the same picture as a plain square, edge to edge. Some panels and icon themes
+  (square or flat ones) look tidier with it.
+
+The window's own icon changes at once. On Linux the launcher, taskbar and app-switcher icon come
+from your icon theme, so Revolution also writes the chosen icon to your user icon folder
+(`~/.local/share/icons/hicolor`). Some desktops cache icons: if the old one stays, it changes
+after you log out and back in. In a Flatpak only the window icon changes (the sandbox can't
+write there). On Windows and macOS the shortcut and Dock icons stay rounded. Agents can read
+and set it as `appearance.appIcon` (`rounded` | `square`).
+
 ## Progress on the taskbar and a notification when a job finishes
 
 > id: linux.progress | does: export and proxy progress on the taskbar icon, and a notification when done | when: working in another app during a long export | see: linux.inhibit

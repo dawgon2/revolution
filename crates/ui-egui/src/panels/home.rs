@@ -47,6 +47,9 @@ const RELIST_SECS: f64 = 5.0;
 const LIST_WAIT: std::time::Duration = std::time::Duration::from_millis(15);
 /// A poster render that hasn't arrived after this long is given up.
 const POSTER_TIMEOUT: f64 = 30.0;
+/// Room left of and above the grid for a tile's selection border (2 px, drawn outside the tile;
+/// the scroll area cut the top row's off).
+const BORDER_ROOM: f32 = 4.0;
 /// Posters decoded per frame at most (the rest on the next frames).
 const POSTER_LOADS_PER_FRAME: usize = 4;
 
@@ -131,6 +134,10 @@ pub struct Runtime {
     posters: Vec<PendingPoster>,
     /// The project shown when the screen opened (a different, freshly loaded one closes it).
     shown_project: usize,
+    /// The poster being made for a project that has none ([`backfill_posters`]): its path.
+    backfill: Option<std::sync::mpsc::Receiver<String>>,
+    /// Projects a poster was already tried for this run (made or failed: not tried again).
+    backfill_tried: std::collections::HashSet<String>,
 }
 
 struct PendingPoster {
@@ -488,6 +495,62 @@ pub fn tick_posters(app: &mut FilmcraftApp, ctx: &egui::Context) {
     }
 }
 
+/// Make a poster for each listed project that has none (fork, owner 2026-10-20, FORK-PLAN
+/// §1a.108: every project shows a picture of its timeline, as in Resolve; projects saved before
+/// posters existed, or saved while their frame wasn't ready, had the placeholder for good). One
+/// project at a time on a background thread under `catch_unwind`, each tried once per run; it
+/// waits while the machine is low on memory. The tile shows the faded logo until the poster lands.
+fn backfill_posters(app: &mut FilmcraftApp, ctx: &egui::Context) {
+    if let Some(rx) = &app.home_rt.backfill {
+        match rx.try_recv() {
+            Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                app.home_rt.backfill = None;
+                app.home_rt.stale = true;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                return;
+            }
+        }
+    }
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
+    let Some(cache) = projects::cache_dir(&app.session) else { return };
+    let Some(listing) = &app.home_rt.listing else { return };
+    let tried = &app.home_rt.backfill_tried;
+    let Some(path) = listing
+        .projects
+        .iter()
+        .chain(&listing.other)
+        .find(|s| s.poster.is_none() && !s.missing && s.error.is_none() && !tried.contains(&s.path))
+        .map(|s| s.path.clone())
+    else {
+        return;
+    };
+    if filmcraft_engine::background::memory_low_now() {
+        ctx.request_repaint_after(std::time::Duration::from_secs(2));
+        return;
+    }
+    app.home_rt.backfill_tried.insert(path.clone());
+    let services = app.session.services.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let job = path.clone();
+    let run = move || {
+        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| projects::make_poster(services, &cache, std::path::Path::new(&job))));
+        match made {
+            Ok(Ok(())) => log::debug!("poster made for {job}"),
+            Ok(Err(e)) => log::debug!("no poster for {job}: {e}"),
+            Err(_) => log::warn!("making the poster of {job} failed"),
+        }
+        let _ = tx.send(job);
+    };
+    match std::thread::Builder::new().name("filmcraft-project-poster".into()).spawn(run) {
+        Ok(_) => app.home_rt.backfill = Some(rx),
+        Err(e) => log::warn!("poster of {path}: {e}"),
+    }
+}
+
 // ------------------------------------------------------------------ listing
 
 fn refresh(app: &mut FilmcraftApp, ctx: &egui::Context, now: f64) {
@@ -651,6 +714,7 @@ pub fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, full: Rect) {
         return;
     }
     refresh(app, &ctx, now);
+    backfill_posters(app, &ctx);
     let t = app.tokens;
     let mut acts: Vec<Act> = Vec::new();
     let p = ui.painter().clone();
@@ -675,7 +739,12 @@ pub fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, full: Rect) {
     p.text(local.center(), Align2::CENTER_CENTER, tl!("Local"), Tokens::ui(13.0), t.text);
     p.line_segment([pos2(local.min.x + 10.0, local.max.y - 1.0), pos2(local.max.x - 10.0, local.max.y - 1.0)], Stroke::new(2.0, t.accent));
     app.auto.add("projects.tab.local", local, "Local");
-    p.text(title.center(), Align2::CENTER_CENTER, "Revolution", Tokens::semibold(14.0), t.text);
+    // Revolution's logo left of the name, where Resolve shows its mark (owner, §1a.108)
+    let name = p.layout_no_wrap("Revolution".into(), Tokens::semibold(14.0), t.text);
+    let logo_side = 18.0;
+    let left = title.center().x - (logo_side + 8.0 + name.size().x) / 2.0;
+    crate::app_logo::paint(&ctx, &p, Rect::from_min_size(pos2(left, title.center().y - logo_side / 2.0), vec2(logo_side, logo_side)), Color32::WHITE);
+    p.galley(pos2(left + logo_side + 8.0, title.center().y - name.size().y / 2.0), name, t.text);
 
     // ---- row 2: sidebar, breadcrumb | new folder, size, sort, info, grid / list, search
     let bar = Rect::from_min_size(pos2(full.min.x, title.max.y), vec2(full.width(), BAR_H));
@@ -949,7 +1018,9 @@ fn grid_view(
 ) {
     let (tw, th) = (TILE_W * scale, TILE_H * scale);
     let (cw, ch, gap) = (tw, th + 26.0, 18.0);
-    let avail = ui.available_width().max(cw);
+    // the scroll area clips at its edges: the outside border needs room above and left of the tiles
+    ui.add_space(BORDER_ROOM);
+    let avail = (ui.available_width() - 2.0 * BORDER_ROOM).max(cw);
     let cols = (((avail + gap) / (cw + gap)).floor() as usize).max(1);
     let ctx = ui.ctx().clone();
     // the New Project tile, then folders and projects; recent projects elsewhere in their own group
@@ -968,7 +1039,8 @@ fn grid_view(
         let n = items.len() + usize::from(with_new);
         let rows = n.div_ceil(cols);
         let height = rows as f32 * (ch + gap);
-        let (area, _) = ui.allocate_exact_size(vec2(avail, height), Sense::hover());
+        let (area, _) = ui.allocate_exact_size(vec2(avail + 2.0 * BORDER_ROOM, height), Sense::hover());
+        let area = area.with_min_x(area.min.x + BORDER_ROOM);
         let p = ui.painter().clone();
         for k in 0..n {
             let (r, c) = (k / cols, k % cols);
@@ -981,11 +1053,16 @@ fn grid_view(
                 let resp = ui.interact(cell, egui::Id::new("projects.tile.new"), Sense::click());
                 p.rect_filled(thumb, 4.0, if resp.hovered() { t.hover } else { t.panel_bg });
                 p.rect_stroke(thumb, 4.0, Stroke::new(1.0, t.separator), StrokeKind::Inside);
-                // FilmCraft's own plus (drawn, not an asset)
-                let c0 = thumb.center();
-                let arm = th * 0.16;
-                p.line_segment([pos2(c0.x - arm, c0.y), pos2(c0.x + arm, c0.y)], Stroke::new(3.0, t.text_dim));
-                p.line_segment([pos2(c0.x, c0.y - arm), pos2(c0.x, c0.y + arm)], Stroke::new(3.0, t.text_dim));
+                // Revolution's logo with a plus badge, as Resolve's New Project tile (owner, §1a.108)
+                let side = th * 0.42;
+                let logo = Rect::from_center_size(thumb.center(), vec2(side, side));
+                crate::app_logo::paint(&ctx, &p, logo, Color32::from_gray(200));
+                let badge = pos2(logo.max.x - side * 0.04, logo.max.y - side * 0.04);
+                let br = side * 0.2;
+                p.circle_filled(badge, br, t.panel_bg);
+                p.circle_stroke(badge, br, Stroke::new(1.5, t.text));
+                p.line_segment([pos2(badge.x - br * 0.5, badge.y), pos2(badge.x + br * 0.5, badge.y)], Stroke::new(1.5, t.text));
+                p.line_segment([pos2(badge.x, badge.y - br * 0.5), pos2(badge.x, badge.y + br * 0.5)], Stroke::new(1.5, t.text));
                 p.text(pos2(cell.min.x + 2.0, thumb.max.y + 6.0), Align2::LEFT_TOP, tl!("New Project"), Tokens::ui(13.0), t.text);
                 app.auto.add("projects.tile.new", cell, "New Project");
                 if resp.clicked() {
@@ -1010,7 +1087,8 @@ fn grid_view(
                         dim = true;
                         p.text(thumb.center(), Align2::CENTER_CENTER, tl!("Can't read"), Tokens::ui(13.0), t.hot_text);
                     } else {
-                        icons::paint(&p, Rect::from_center_size(thumb.center(), vec2(th * 0.36, th * 0.36)), Icon::Film, t.text_faint);
+                        // no poster yet (one is being made, §1a.108): the logo, faded, as in Resolve
+                        crate::app_logo::paint(&ctx, &p, Rect::from_center_size(thumb.center(), vec2(th * 0.42, th * 0.42)), Color32::from_gray(110));
                     }
                 }
             }

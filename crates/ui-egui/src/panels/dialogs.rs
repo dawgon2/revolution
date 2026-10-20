@@ -448,7 +448,11 @@ fn about_tab(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     use crate::links;
     let t = app.tokens;
     ui.set_width(380.0);
-    ui.heading("Revolution");
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+        crate::app_logo::paint(ui.ctx(), ui.painter(), r, egui::Color32::WHITE);
+        ui.heading("Revolution");
+    });
     ui.label(tlf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
     ui.label(tl!("A pure-Rust non-linear video editor. Based on FilmCraft by the ArtCraft team and community."));
     ui.add_space(10.0);

@@ -11,12 +11,15 @@ pub struct WindowMemory<A> {
     inner: A,
     path: PathBuf,
     tracker: WindowTracker,
+    /// While this says so, the window isn't followed (the Project Manager's window, fork §1a.108).
+    skip: fn(&A) -> bool,
 }
 
 impl<A> WindowMemory<A> {
-    /// `path` is `window.json` in the state directory; `start` is what the window opened with.
-    pub fn new(inner: A, path: PathBuf, start: WindowState) -> Self {
-        Self { inner, path, tracker: WindowTracker::new(start) }
+    /// `path` is `window.json` in the state directory; `start` is the editor's state from the last
+    /// run; the window isn't followed while `skip` says so.
+    pub fn new(inner: A, path: PathBuf, start: WindowState, skip: fn(&A) -> bool) -> Self {
+        Self { inner, path, tracker: WindowTracker::new(start), skip }
     }
 }
 
@@ -33,7 +36,9 @@ impl<A: eframe::App> eframe::App for WindowMemory<A> {
             let size = v.inner_rect.unwrap_or_else(|| i.viewport_rect()).size();
             ([size.x, size.y], v.maximized, v.fullscreen, v.minimized)
         });
-        self.tracker.observe(Some(size), maximized, fullscreen, minimized);
+        if !(self.skip)(&self.inner) {
+            self.tracker.observe(Some(size), maximized, fullscreen, minimized);
+        }
         self.inner.logic(ctx, frame);
     }
 
