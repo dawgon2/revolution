@@ -69,6 +69,9 @@ pub mod proxies;
 pub mod proxy_jobs;
 pub mod relink;
 pub mod remix;
+pub mod remote;
+pub mod remote_project;
+pub mod remote_transfer;
 pub mod render_cache;
 pub mod scene_detect;
 pub mod scopes;
@@ -553,6 +556,8 @@ pub struct Session {
     pub poster_requests: Vec<String>,
     /// Trash folder override for `projects.trash` (tests); None = the operating system's trash.
     pub trash_dir: Option<std::path::PathBuf>,
+    /// The project open from a remote location (STORAGE-PLAN S2), with its lock.
+    pub remote_project: Option<remote_project::RemoteProject>,
 }
 
 /// An export advanced a batch at a time on the host's thread ([`Session::pump_jobs`]).
@@ -663,6 +668,7 @@ impl Session {
             updater: Default::default(),
             poster_requests: Vec::new(),
             trash_dir: None,
+            remote_project: None,
         }
     }
 

@@ -3619,7 +3619,7 @@
 	{n} clip(s) are back online	{n} 個のクリップがオンラインに戻りました
 	Packaging {name}	{name} をパッケージ化しています
 	Packaging {name} (about {size})	{name} をパッケージ化しています（約 {size}）
-	Revolution package (.fcpackage or manifest.json)	Revolution パッケージ（.fcpackage または manifest.json）
+	Revolution package (.revpkg or manifest.json)	Revolution パッケージ（.revpkg または manifest.json）
 	Package as One File…	1 つのファイルにパッケージ化…
 	Package	パッケージ化
 	Import Package	パッケージを読み込み

@@ -72,6 +72,7 @@ const SYNONYM_WEIGHT: f64 = 0.5;
 pub const GUIDE_PAGES: &[(&str, &str)] = &[
     ("README.md", include_str!("../../../docs/guide/README.md")),
     ("getting-started.md", include_str!("../../../docs/guide/getting-started.md")),
+    ("install.md", include_str!("../../../docs/guide/install.md")),
     ("audio.md", include_str!("../../../docs/guide/audio.md")),
     ("cards.md", include_str!("../../../docs/guide/cards.md")),
     ("command-reference.md", include_str!("../../../docs/guide/command-reference.md")),
@@ -161,6 +162,8 @@ const NOT_INDEXED: &[&str] = &[
     "practice/mixed-cameras.md",
     // fork UPD: about the app's own updates, not editing (its words pushed the pool floors)
     "updates.md",
+    // fork PKG: installing each release package, not editing (like updates.md)
+    "install.md",
 ];
 
 /// Sections that are never an answer (page, heading): the glossary's table of Resolve / Premiere

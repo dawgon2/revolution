@@ -1,5 +1,5 @@
 # FEATURE-POOL batch feature-project-package (FEATURE-QUEUE row S1.5: project packages, Package /
-# Import Package, `.fcpackage`, size estimate, stills + shader effects carried). Sources:
+# Import Package, `.revpkg`, size estimate, stills + shader effects carried). Sources:
 # network-storage.md (network-storage.package). Held-out test questions, written from the guide's text
 # (README.md beside this file). No creative family: a hand-over tool, not a technique.
 
@@ -28,7 +28,7 @@ id = "feat-pk-dra"
 kind = "tool"
 q = "how do I export a project archive like a .dra so I can hand it over as one file"
 sources = ["network-storage.package"]
-must = ["Package as One File… in the project tile's menu (projects.menu.package-file), or projects.package with format file", "it writes one <project name>.fcpackage"]
+must = ["Package as One File… in the project tile's menu (projects.menu.package-file), or projects.package with format file", "it writes one <project name>.revpkg"]
 must_not = []
 style = "resolve-words"
 
@@ -142,4 +142,4 @@ origin = "agent"
 page = "network-storage.md"
 heading = "Send a whole project as a package"
 status = "covered"
-facts = ["Import Package", ".fcpackage or manifest.json"]
+facts = ["Import Package", ".revpkg or manifest.json"]

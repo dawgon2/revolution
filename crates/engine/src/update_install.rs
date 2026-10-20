@@ -4,9 +4,12 @@
 //! or interrupted update leaves everything as it was (the half-made files are removed), and the
 //! previous build stays for "Roll back".
 //!
-//! Only builds laid out by the fork's build procedure (`<builds>/<tag>/filmcraft` with a
-//! `<builds>/latest` link) update themselves; anything else (Flatpak, packages, a build run from
-//! `target/`) only shows the prompt.
+//! Builds laid out by the fork's build procedure (`<builds>/<tag>/filmcraft` with a
+//! `<builds>/latest` link: the portable tarball) update themselves, and so does an AppImage
+//! (FORK-PLAN §1a.107 (d): the release's AppImage for this processor replaces the running file,
+//! which is kept as `<file>.previous` for "Roll back"); anything else (Flatpak, .deb / .rpm /
+//! pacman packages, the Windows installer or zip, a build run from `target/`) only shows the
+//! prompt, saying how that kind of install is updated.
 
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -31,14 +34,47 @@ pub struct Layout {
     pub builds: PathBuf,
     /// The running build's folder.
     pub current: PathBuf,
+    /// The running AppImage (`$APPIMAGE`), when this is one: updates replace that file instead.
+    pub appimage: Option<PathBuf>,
 }
 
 /// The install layout of the build at `exe`, or why it can't update itself.
 pub fn layout(exe: &Path) -> Result<Layout, String> {
-    if std::env::var_os("FLATPAK_ID").is_some() {
-        return Err("this copy of Revolution is a Flatpak: update it with your software centre".into());
+    let (appimage, appdir) = (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR"));
+    let home = std::env::var_os("HOME");
+    layout_in(
+        exe,
+        std::env::var_os("FLATPAK_ID").is_some(),
+        appimage.as_deref().map(Path::new),
+        appdir.as_deref().map(Path::new),
+        home.as_deref().map(Path::new),
+    )
+}
+
+/// [`layout`] with the environment passed in: `flatpak` = running in a Flatpak, `appimage` /
+/// `appdir` = the `$APPIMAGE` / `$APPDIR` the AppImage runtime sets, `home` = `$HOME`.
+pub fn layout_in(exe: &Path, flatpak: bool, appimage: Option<&Path>, appdir: Option<&Path>, home: Option<&Path>) -> Result<Layout, String> {
+    if flatpak {
+        return Err("this copy of Revolution is a Flatpak: install the newer .flatpak from the release page (flatpak install --user <file>)".into());
+    }
+    // `$APPIMAGE` is inherited by every program an AppImage starts (a terminal or editor run as an
+    // AppImage): only trust it when this program runs from inside that AppImage's mount (`$APPDIR`).
+    let ours = |_: &&Path| {
+        let (Some(dir), Ok(exe)) = (appdir.filter(|d| !d.as_os_str().is_empty()), std::fs::canonicalize(exe)) else { return false };
+        std::fs::canonicalize(dir).is_ok_and(|d| exe.starts_with(d))
+    };
+    if let Some(app) = appimage.filter(|p| !p.as_os_str().is_empty()).filter(ours) {
+        let app = std::fs::canonicalize(app).map_err(|e| format!("can't find this AppImage: {e}"))?;
+        let dir = app.parent().ok_or("can't find this AppImage's folder")?.to_path_buf();
+        if !app.is_file() {
+            return Err("can't find this AppImage".into());
+        }
+        return Ok(Layout { builds: dir.clone(), current: dir, appimage: Some(app) });
     }
     let exe = std::fs::canonicalize(exe).map_err(|e| format!("can't find this build: {e}"))?;
+    if let Some(why) = packaged_install(&exe, home) {
+        return Err(why.into());
+    }
     let current = exe.parent().ok_or("can't find this build's folder")?.to_path_buf();
     let builds = current.parent().ok_or("can't find the builds folder")?.to_path_buf();
     let latest = builds.join(LATEST);
@@ -46,7 +82,85 @@ pub fn layout(exe: &Path) -> Result<Layout, String> {
     if !is_link {
         return Err("this build wasn't installed by the build procedure (no `latest` link beside it): download the update from the release page".into());
     }
-    Ok(Layout { builds, current })
+    Ok(Layout { builds, current, appimage: None })
+}
+
+/// Why a build installed by a package or installer can't replace itself, with how to update it
+/// instead (`None`: not one of those).
+fn packaged_install(exe: &Path, home: Option<&Path>) -> Option<&'static str> {
+    let dir = exe.parent()?;
+    if cfg!(windows) {
+        return Some(if dir.join(crate::autosave::PORTABLE_MARKER).is_file() {
+            "this is the portable Windows folder: download the newer .zip from the release page and extract it in its place"
+        } else {
+            "Revolution was installed with the Windows installer: run the newer .msi from the release page (it replaces this version)"
+        });
+    }
+    let user_bin = home.map(|h| h.join(".local/bin"));
+    if dir == Path::new("/usr/bin") || dir == Path::new("/usr/local/bin") || dir.starts_with("/opt") || user_bin.as_deref() == Some(dir) {
+        return Some("Revolution was installed by your package manager: install the newer .deb or .rpm from the release page (or rebuild the PKGBUILD)");
+    }
+    None
+}
+
+/// Where an AppImage update keeps the file it replaced (`<file>.previous`).
+pub fn previous_appimage(app: &Path) -> PathBuf {
+    let mut name = app.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(".previous");
+    app.with_file_name(name)
+}
+
+/// Removes `.<tag>.AppImage.part` downloads an interrupted AppImage update left in `dir`.
+fn remove_appimage_leftovers(dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.take(10_000).flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(tag) = name.strip_prefix('.').and_then(|n| n.strip_suffix(".AppImage.part")) else { continue };
+        if valid_tag(tag) && std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_file()) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// Downloads and checks the release's AppImage, then puts it in place of `app` (the old one
+/// becomes [`previous_appimage`]); returns `app`. A failure leaves the running AppImage as it was.
+fn install_appimage(fetch: &dyn Fetch, rel: &Release, app: &Path, progress: &mut dyn FnMut(u64, u64) -> bool) -> Result<PathBuf, String> {
+    let file = rel.appimage.as_ref().ok_or("this release has no AppImage for this computer")?;
+    let sums = rel.sums.as_ref().ok_or("this release has no SHA256SUMS file, so the download can't be checked")?;
+    if file.size > MAX_TARBALL_BYTES {
+        return Err("the release's AppImage is too large".into());
+    }
+    let sums = fetch.get(&sums.url, MAX_SUMS_BYTES)?;
+    let want = parse_sums(&String::from_utf8_lossy(&sums), &file.name).ok_or("SHA256SUMS doesn't list the AppImage")?;
+    let dir = app.parent().ok_or("can't find this AppImage's folder")?;
+    let part = dir.join(format!(".{}.AppImage.part", rel.tag));
+    remove_appimage_leftovers(dir);
+    let r = (|| {
+        let got = fetch.download(&file.url, &part, file.size, progress)?;
+        if got != file.size {
+            return Err(format!("the download is {got} bytes, the release says {}", file.size));
+        }
+        let (sha, _) = crate::package::sha256_file(&part).map_err(|e| format!("checking the download: {e}"))?;
+        if sha != want {
+            return Err("the download doesn't match its checksum (SHA256SUMS): nothing was changed".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("making the AppImage executable: {e}"))?;
+        }
+        let prev = previous_appimage(app);
+        std::fs::rename(app, &prev).map_err(|e| format!("keeping the old AppImage: {e}"))?;
+        if let Err(e) = std::fs::rename(&part, app) {
+            if let Err(back) = std::fs::rename(&prev, app) {
+                return Err(format!("putting the new AppImage in place: {e}; the old one is now {} ({back}): rename it back", prev.display()));
+            }
+            return Err(format!("putting the new AppImage in place: {e}"));
+        }
+        Ok(app.to_path_buf())
+    })();
+    let _ = std::fs::remove_file(&part);
+    r
 }
 
 /// The SHA-256 (lower-case hex) the `SHA256SUMS` text gives for `name` (`<hex>  <name>` or
@@ -265,7 +379,10 @@ pub fn install(fetch: &dyn Fetch, rel: &Release, prefix: &str, layout: &Layout, 
     if !valid_tag(&rel.tag) {
         return Err("the release has a strange name".into());
     }
-    let tarball = rel.tarball.as_ref().ok_or("this release has no Linux build")?;
+    if let Some(app) = &layout.appimage {
+        return install_appimage(fetch, rel, app, progress);
+    }
+    let tarball = rel.tarball.as_ref().ok_or("this release has no Linux build for this computer")?;
     let sums = rel.sums.as_ref().ok_or("this release has no SHA256SUMS file, so the download can't be checked")?;
     if tarball.size > MAX_TARBALL_BYTES {
         return Err("the release's Linux build is too large".into());
@@ -284,7 +401,8 @@ pub fn install(fetch: &dyn Fetch, rel: &Release, prefix: &str, layout: &Layout, 
         if sha != want {
             return Err("the download doesn't match its checksum (SHA256SUMS): nothing was changed".into());
         }
-        let top = tarball.name.strip_suffix("-linux-x86_64.tar.gz").unwrap_or(&tarball.name).to_string();
+        let suffix = format!("-linux-{}.tar.gz", crate::update::linux_arch());
+        let top = tarball.name.strip_suffix(suffix.as_str()).unwrap_or(&tarball.name).to_string();
         let files = unpack_tar_gz(&part, &unpack, &top)?;
         if !files.iter().any(|f| PROGRAMS.iter().any(|p| f == Path::new(p))) {
             return Err("the download has no `revolution` program".into());

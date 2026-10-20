@@ -23,8 +23,12 @@ const POOL_COACH_FLOOR: usize = 142;
 /// 911 with feature-project-package-trim; 917 with feature-assistant-search; 920 with
 /// feature-project-package-newer; 934 with feature-updates, 944 with feature-gpu-rule, where
 /// `feat-pl-igpu-speed` now misses because the XPS guide text on GPUs outranks its section; 948 with
-/// feature-nvenc-presets; 956 with feature-nvenc-linux; 960 with feature-nvdec-order; 969 with feature-battery-igpu).
-const POOL_RETRIEVAL_FLOOR: usize = 969;
+/// feature-nvenc-presets; 956 with feature-nvenc-linux; 960 with feature-nvdec-order; 969 with feature-battery-igpu;
+/// 982 with feature-pm-window-icon, where the guide's later text also brings `feat-pl-igpu-speed` back;
+/// 980 with S2's remote-location sections: none of them is in the two misses' top 5, the corpus change
+/// only flips two near-ties, `pool-e2-through-edits` (10.074 vs 10.115) and `pool-p1-proxy-cache`
+/// (15.696 vs 15.724)).
+const POOL_RETRIEVAL_FLOOR: usize = 980;
 /// Token-set similarity at or above which a training question counts as a near-copy of a test one.
 const NEAR_COPY: f64 = 0.7;
 
@@ -494,6 +498,8 @@ struct WithOrigin {
 /// 556 after the new `practice.titles.write-on` section (no plan cites it yet; it takes one slot);
 /// 558 measured 2026-10-16 (FEATURE-POOL; no creative items added, the guide's later sections).
 /// 559 measured 2026-10-16 (FEATURE-POOL package trim; no creative items added, the guide's new sections).
+/// 560 measured 2026-10-20 (FEATURE-POOL pm-window-icon; no creative items added, the guide's §1a.108 text).
+/// 559 measured 2026-10-20 (S2's remote-location sections; no creative items added, corpus statistics only).
 const CREATIVE_COVERAGE_FLOOR: usize = 559;
 
 /// AI-PLAN AI4 item 5c: a creative question needs a section for each sub-task, not one best match,

@@ -1,0 +1,151 @@
+# FEATURE-POOL batch feature-pm-window-icon (FEATURE-QUEUE row "§1a.108: Project Manager opens windowed at
+# launch; every project tile gets a picture of its timeline; Revolution's logo in the PM title, New Project
+# tile and page bar; Settings ▸ Appearance ▸ App icon (Rounded macOS style / Square)").
+# Source: projects.md (projects.window, with projects.opening for the startup setting), linux.md
+# (linux.app-icon). Held-out test questions, written from the guide's text (README.md beside this file).
+# No creative family: a window size, a tile picture and an icon shape are not creative goals.
+# No recipe spot check: the Dell's app build (2026-10-14) predates the setting, and the tile pictures and
+# window size need a desktop session; the ids were checked against the registry instead (settings.rs
+# APP_ICONS `rounded` / `square`, projects.rs `projects.show` / `projects.list`, menus.rs
+# `app.settings.general`; Appearance is a menu item only, so the pairs name it as Edit ▸ Preferences ▸ Appearance…).
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-pmw-why-window"
+kind = "tool"
+q = "Why does the Project Manager open in a smaller window instead of filling the screen?"
+sources = ["projects.window"]
+must = ["at launch the Project Manager opens in a window of its own size, never full screen or maximised, as Resolve's does", "F11 or its full-screen button makes it full screen until you quit"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-pmw-editor-size"
+kind = "tool"
+q = "If I open a project from that little Project Manager window, is the editor going to be small too?"
+sources = ["projects.window"]
+must = ["no: the editor comes back the way you left it: full screen, maximised or a window of the size you last gave it"]
+must_not = ["the editor opens at the Project Manager's size"]
+style = "beginner"
+
+[[question]]
+id = "feat-pmw-fullscreen-persist"
+kind = "tool"
+q = "hit f11 on the project manager, will it start fullscreen next time too"
+sources = ["projects.window"]
+must = ["no: full screen on the Project Manager lasts until you quit", "at the next launch it opens in a window again"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-pmw-logo-tile"
+kind = "tool"
+q = "A few of my project tiles show a faded Revolution logo instead of a picture. What's going on?"
+sources = ["projects.window"]
+must = ["those projects have no picture yet; Revolution makes one in the background the first time the Project Manager lists them", "until it arrives the tile shows the faded logo; it waits while the computer is low on memory"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-pmw-which-frame"
+kind = "tool"
+q = "Which frame ends up as a project's tile picture?"
+sources = ["projects.window"]
+must = ["saving a project takes the frame under the playhead", "a picture made later uses the frame at the saved playhead, or a second into the first clip when that frame is black"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-pmw-old-projects"
+kind = "tool"
+q = "Resolve shows a thumbnail for every project. Will projects saved by an older Revolution or made by an agent get one too?"
+sources = ["projects.window"]
+must = ["yes: projects with no picture yet get one in the background the first time the Project Manager lists them"]
+must_not = []
+style = "resolve-words"
+
+[[question]]
+id = "feat-pmw-cant-read"
+kind = "tool"
+q = "One tile says Can't read. Will Revolution give it a picture like the others?"
+sources = ["projects.window"]
+must = ["no: a project that can't be read keeps its Can't read tile"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-icon-change"
+kind = "tool"
+q = "Can I change Revolution's app icon?"
+sources = ["linux.app-icon"]
+must = ["Settings ▸ Appearance ▸ App icon", "Rounded (macOS style), the default, or Square"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-icon-square-why"
+kind = "tool"
+q = "When would the Square app icon be the better pick over the rounded one?"
+sources = ["linux.app-icon"]
+must = ["Square is the same picture as a plain square, edge to edge", "some square or flat panels and icon themes look tidier with it; Rounded sits well beside other app icons on most docks and panels"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-icon-taskbar-stale"
+kind = "tool"
+q = "switched the app icon to square but my taskbar still has the old rounded one"
+sources = ["linux.app-icon"]
+must = ["the window's own icon changes at once; on Linux the taskbar icon comes from the icon theme, so Revolution writes the chosen icon to ~/.local/share/icons/hicolor", "some desktops cache icons: it changes after you log out and back in"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-icon-flatpak"
+kind = "tool"
+q = "I installed Revolution from Flatpak. Does the App icon setting change my launcher icon?"
+sources = ["linux.app-icon"]
+must = ["no: in a Flatpak only the window icon changes; the sandbox can't write to the user icon folder"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-icon-windows"
+kind = "tool"
+q = "On Windows, will picking the square icon change my desktop shortcut too?"
+sources = ["linux.app-icon"]
+must = ["no: on Windows and macOS the shortcut and Dock icons stay rounded", "the window's own icon changes"]
+must_not = []
+style = "premiere-words"
+
+[[question]]
+id = "feat-icon-agent"
+kind = "tool"
+q = "As an agent, how do I switch the app icon to the square one?"
+sources = ["linux.app-icon"]
+must = ["set appearance.appIcon to square (values rounded | square)"]
+must_not = []
+style = "pro"
+
+# ---------- keyword-coach format ----------
+
+[[coach]]
+id = "feat-pmw-c-window"
+q = "why isn't the project manager full screen"
+kind = "what-for"
+origin = "agent"
+page = "projects.md"
+heading = "The window and the project pictures"
+status = "covered"
+facts = ["opens in a window", "never full screen or"]
+
+[[coach]]
+id = "feat-icon-c-change"
+q = "change the app icon to square"
+kind = "how"
+origin = "agent"
+page = "linux.md"
+heading = "The app icon: rounded or square"
+status = "covered"
+facts = ["App icon", "Square"]

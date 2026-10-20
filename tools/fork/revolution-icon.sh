@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIR="$ROOT/assets/app-icon"
 SRC="$DIR/revolution-photo.png"
-APP_ID="ai.storyteller.filmcraft" # file names only (packaging keeps upstream's paths)
+APP_ID="io.github.dawgon2.Revolution" # the packaged icon names (FORK-PLAN §1a.107)
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

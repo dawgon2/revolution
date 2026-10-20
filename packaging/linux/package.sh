@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Build and package FilmCraft for Linux (<arch> is x86_64 or aarch64, or riscv64 when cross-compiling):
+# Build and package Revolution for Linux (<arch> is x86_64 or aarch64, or riscv64 when cross-compiling).
+# The programs are built as filmcraft / filmcraft-cli and installed as revolution / revolution-cli
+# (fork rebrand, FORK-PLAN §1a.103 / §1a.107; internals keep their filmcraft-* names):
 #
-#   $DIST/filmcraft-<version>-linux-<arch>.AppImage  any distro with glibc >= the build host's
-#   $DIST/filmcraft-<version>-linux-<arch>.AppImage.zsync  delta updates (needs zsyncmake)
-#   $DIST/filmcraft-<version>-linux-<arch>.deb       Debian, Ubuntu, Mint, Pop!_OS, ...
-#   $DIST/filmcraft-<version>-linux-<arch>.rpm       Fedora, openSUSE, RHEL, ...
-#   $DIST/filmcraft-<version>-linux-<arch>.tar.gz    plain FHS-style tree (bin/, share/)
+# <tag> below is $FILMCRAFT_RELEASE_TAG (revolution-0.1.3), else revolution-<version> (env.sh):
 #
-# Usage: packaging/linux/package.sh [--skip-build] [--formats "appimage deb rpm tar"]
+#   $DIST/<tag>-linux-<arch>.AppImage        any distro with glibc >= the build host's
+#   $DIST/<tag>-linux-<arch>.AppImage.zsync  delta updates (needs zsyncmake)
+#   $DIST/<tag>-linux-<arch>.deb             Debian, Ubuntu, Mint, Pop!_OS, ...
+#   $DIST/<tag>-linux-<arch>.rpm             Fedora, openSUSE, RHEL, ...
+#   $DIST/<tag>-linux-<arch>.tar.gz          portable folder <tag>/ (the programs + NOTES.md; what
+#                                            the in-app updater installs)
+#   $DIST/<tag>-linux-<arch>-fhs.tar.gz      FHS-style tree (bin/, share/, install.sh); the Flatpak
+#                                            bundle is made from it
+#
+# Usage: packaging/linux/package.sh [--skip-build] [--formats "appimage deb rpm tar portable"]
+# NOTES.md for the portable tarball: $REVOLUTION_NOTES (a file), else a short default.
 #
 # Needs: cargo; nfpm for deb/rpm (https://nfpm.goreleaser.com); appimagetool for the AppImage
 # (downloaded into $CARGO_TARGET_DIR if missing). Build on an old distro (CI: Ubuntu 22.04,
@@ -21,15 +29,17 @@ set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 HERE="$ROOT/packaging/linux"
-APP_ID=ai.storyteller.filmcraft
+APP_ID=io.github.dawgon2.Revolution
+PROGRAM=revolution
+CLI=revolution-cli
 
 SKIP_BUILD=0
-FORMATS="appimage deb rpm tar"
+FORMATS="appimage deb rpm tar portable"
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1; shift ;;
     --formats) FORMATS="$2"; shift 2 ;;
-    -h | --help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -41,10 +51,10 @@ case "$ARCH" in
   aarch64 | arm64) ARCH=aarch64; DEB_ARCH=arm64 ;;
   *) echo "unsupported architecture $ARCH" >&2; exit 2 ;;
 esac
-export FILMCRAFT_MAINTAINER="${FILMCRAFT_MAINTAINER:-FilmCraft maintainers <filmcraft@storyteller.ai>}"
-BASENAME="filmcraft-$VERSION-linux-$ARCH"
+export FILMCRAFT_MAINTAINER="${FILMCRAFT_MAINTAINER:-dawgon2 <dawgon2@users.noreply.github.com>}"
+BASENAME="$RELEASE_NAME-linux-$ARCH"
 
-echo "==> FilmCraft $VERSION for Linux $ARCH ($FORMATS)"
+echo "==> Revolution $VERSION for Linux $ARCH ($FORMATS)"
 
 if [ "$SKIP_BUILD" = 0 ]; then
   if [ -n "${CROSS_TARGET:-}" ]; then
@@ -59,9 +69,9 @@ STAGE="$WORK/root"
 rm -rf "$WORK"
 
 # ---- stage an FHS tree (shared by every format) -------------------------------------------------
-install -Dm755 "$BIN/filmcraft" "$STAGE/usr/bin/filmcraft"
-install -Dm755 "$BIN/filmcraft-cli" "$STAGE/usr/bin/filmcraft-cli"
-"${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/filmcraft" "$STAGE/usr/bin/filmcraft-cli" 2>/dev/null || true
+install -Dm755 "$BIN/filmcraft" "$STAGE/usr/bin/$PROGRAM"
+install -Dm755 "$BIN/filmcraft-cli" "$STAGE/usr/bin/$CLI"
+"${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/$PROGRAM" "$STAGE/usr/bin/$CLI" 2>/dev/null || true
 install -Dm644 "$HERE/$APP_ID.desktop" "$STAGE/usr/share/applications/$APP_ID.desktop"
 install -Dm644 "$HERE/$APP_ID.mime.xml" "$STAGE/usr/share/mime/packages/$APP_ID.xml"
 # project-file thumbnails for GNOME-family file managers (Dolphin: fork/kde-thumbnailer)
@@ -71,8 +81,9 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@DATE@/$FILMCRAFT_BUILD_DATE/g" \
   "$HERE/$APP_ID.metainfo.xml.in" >"$STAGE/usr/share/metainfo/$APP_ID.metainfo.xml"
 mkdir -p "$STAGE/usr/share/icons"
 cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/usr/share/icons/"
-mkdir -p "$STAGE/usr/share/doc/filmcraft"
-copy_docs "$STAGE/usr/share/doc/filmcraft"
+find "$STAGE/usr/share/icons" -name '*.attribution' -delete
+mkdir -p "$STAGE/usr/share/doc/$PROGRAM"
+copy_docs "$STAGE/usr/share/doc/$PROGRAM"
 
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$STAGE/usr/share/applications/$APP_ID.desktop"
@@ -83,13 +94,36 @@ fi
 
 has() { case " $FORMATS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-# ---- .tar.gz ------------------------------------------------------------------------------------
+# ---- -fhs.tar.gz (FHS tree + install.sh) -------------------------------------------------------
 if has tar; then
   mkdir -p "$WORK/tar"
   cp -R "$STAGE/usr" "$WORK/tar/$BASENAME"
   install -m755 "$HERE/install.sh" "$WORK/tar/$BASENAME/install.sh"
-  tar -C "$WORK/tar" -czf "$DIST/$BASENAME.tar.gz" "$BASENAME"
-  echo "wrote $DIST/$BASENAME.tar.gz"
+  tar -C "$WORK/tar" -czf "$DIST/$BASENAME-fhs.tar.gz" "$BASENAME"
+  echo "wrote $DIST/$BASENAME-fhs.tar.gz"
+fi
+
+# ---- portable .tar.gz (the fork's build layout, what the updater installs) ----------------------
+# One folder `revolution-<version>/` with the two programs, NOTES.md and the licences: the layout
+# of every Revolution release so far (`update_install` unpacks exactly this).
+if has portable; then
+  # Named after the release tag (revolution-0.2 even when the package version is 0.2.0): the
+  # updater looks for `<tag>-linux-<arch>.tar.gz` holding `<tag>/`.
+  TOP="$RELEASE_NAME"
+  P="$WORK/portable/$TOP"
+  mkdir -p "$P"
+  install -m755 "$STAGE/usr/bin/$PROGRAM" "$P/$PROGRAM"
+  install -m755 "$STAGE/usr/bin/$CLI" "$P/$CLI"
+  for f in LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md; do
+    if [ -f "$ROOT/$f" ]; then cp "$ROOT/$f" "$P/"; fi
+  done
+  if [ -n "${REVOLUTION_NOTES:-}" ] && [ -f "$REVOLUTION_NOTES" ]; then
+    cp "$REVOLUTION_NOTES" "$P/NOTES.md"
+  else
+    printf '# Revolution %s\n\nRun ./%s to start. Release notes: https://github.com/dawgon2/revolution/releases\n' "$VERSION" "$PROGRAM" >"$P/NOTES.md"
+  fi
+  tar -C "$WORK/portable" --owner=0 --group=0 -czf "$DIST/$TOP-linux-$ARCH.tar.gz" "$TOP"
+  echo "wrote $DIST/$TOP-linux-$ARCH.tar.gz"
 fi
 
 # ---- .deb / .rpm --------------------------------------------------------------------------------
@@ -106,10 +140,10 @@ fi
 
 # ---- AppImage -----------------------------------------------------------------------------------
 if has appimage; then
-  APPDIR="$WORK/FilmCraft.AppDir"
+  APPDIR="$WORK/Revolution.AppDir"
   cp -R "$STAGE" "$APPDIR"
   mv "$APPDIR/usr/share/doc" "$WORK/doc-unused"
-  ln -s usr/bin/filmcraft "$APPDIR/AppRun"
+  ln -s "usr/bin/$PROGRAM" "$APPDIR/AppRun"
   cp "$HERE/$APP_ID.desktop" "$APPDIR/$APP_ID.desktop"
   cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
   ln -s "$APP_ID.png" "$APPDIR/.DirIcon"
@@ -133,8 +167,8 @@ if has appimage; then
   # fetch only the blocks that changed in a newer release, through the .zsync published next to
   # each AppImage on GitHub Releases. `latest` is the newest published release that is not a
   # pre-release. A fork's builds point at its own releases through GITHUB_REPOSITORY.
-  REPO="${GITHUB_REPOSITORY:-storytold/filmcraft}"
-  UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest|filmcraft-*-linux-$ARCH.AppImage.zsync"
+  REPO="${GITHUB_REPOSITORY:-dawgon2/revolution}"
+  UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest|$PROGRAM-*-linux-$ARCH.AppImage.zsync"
   # Extract-and-run: works without FUSE (containers, CI). The output embeds the static runtime,
   # so users don't need libfuse2 either. With zsyncmake on the host (CI installs the zsync
   # package) appimagetool also writes the .zsync, into its working directory, hence the cd.
@@ -148,9 +182,9 @@ if has appimage; then
 fi
 
 if [ -z "${CROSS_TARGET:-}" ]; then
-  "$STAGE/usr/bin/filmcraft-cli" --version
+  "$STAGE/usr/bin/$CLI" --version
 elif [ -n "${EMULATOR:-}" ]; then
-  "$EMULATOR" "$STAGE/usr/bin/filmcraft-cli" --version
+  "$EMULATOR" "$STAGE/usr/bin/$CLI" --version
 fi
 echo "==> done"
 ls -lh "$DIST"

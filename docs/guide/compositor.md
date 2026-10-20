@@ -16,7 +16,8 @@ editor in the inspector and drawing masks on the viewer come later in C1.
 > id: compositor.basics | does: explains comps, the node kinds and how pictures flow through them | cmd: comp.new, comp.addNode, comp.connect, comp.params | resolve: Fusion page node graph | premiere: — (closest: nested sequence) | when: before building a first comp | see: compositor.make, compositor.recipes
 
 What is a comp? A **comp** (short for composite) is a project item that holds a node graph; on the
-timeline you use it as a comp clip. A comp has a size, a frame rate and a length, and a graph of **nodes**. Each node takes pictures
+timeline you use it as a comp clip. Like a nested sequence, one comp can be on the timeline in
+many places: change it once and every comp clip that uses it changes too. A comp has a size, a frame rate and a length, and a graph of **nodes**. Each node takes pictures
 in on the left, does one job, and passes a picture out on the right. The comp shows what reaches
 its **Media Out** node; every new comp starts with one.
 

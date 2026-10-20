@@ -1,0 +1,35 @@
+[package]
+name = "filmcraft-remote"
+description = "FilmCraft remote locations (STORAGE-PLAN S2): the RemoteStore trait (list, stat, read range, write, rename, delete, create-if-absent), checked remote paths, lock files, and the WebDAV / S3-compatible / SFTP backends (pure Rust)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# The WebDAV and S3 backends over HTTP(S): pure-Rust TLS (rustls + RustCrypto, OS
+# certificate verification). Off by default (and in wasm builds).
+net = ["dep:ureq", "dep:rustls", "dep:rustls-rustcrypto", "dep:roxmltree", "dep:sha2"]
+# SFTP backend (russh, RustCrypto only).
+sftp = ["dep:russh", "dep:russh-sftp", "dep:tokio"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"], optional = true }
+rustls = { version = "0.23", default-features = false, optional = true }
+rustls-rustcrypto = { version = "0.0.2-alpha", optional = true }
+roxmltree = { workspace = true, optional = true }
+sha2 = { version = "0.10", optional = true }
+# russh pinned to 0.52.1: every later release requires ring or aws-lc-rs (C/asm crypto),
+# which the pure-Rust rule forbids; 0.52 builds on RustCrypto only. It pulls the `rsa` crate,
+# which has RUSTSEC-2023-0071 (Marvin timing side channel); it only matters when signing in
+# with an RSA user key (Sftp::key_warning tells the user to prefer ed25519).
+russh = { version = "=0.52.1", default-features = false, optional = true }
+russh-sftp = { version = "2", default-features = false, optional = true }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "net"], optional = true }

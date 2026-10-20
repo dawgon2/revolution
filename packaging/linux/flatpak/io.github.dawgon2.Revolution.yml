@@ -1,11 +1,11 @@
-# Flatpak manifest for FilmCraft, ready for a Flathub submission.
+# Flatpak manifest for Revolution (FilmCraft-based), ready for a Flathub submission.
 #
 # Flatpak builds run offline, so the crate sources must be vendored first. From the repo root:
 #
 #   curl -fsSLO https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
 #   python3 flatpak-cargo-generator.py Cargo.lock -o packaging/linux/flatpak/cargo-sources.json
-#   flatpak-builder --user --install --force-clean build-flatpak packaging/linux/flatpak/ai.storyteller.filmcraft.yml
-#   flatpak run ai.storyteller.filmcraft
+#   flatpak-builder --user --install --force-clean build-flatpak packaging/linux/flatpak/io.github.dawgon2.Revolution.yml
+#   flatpak run io.github.dawgon2.Revolution
 #
 # For a local test build without the generator script, `cargo vendor --locked <dir>` works too:
 # in a copy of this file, replace the `cargo-sources.json` source with a `dir` source of <dir>
@@ -16,17 +16,17 @@
 #
 # The command-line tool and its MCP server run in the same sandbox, without opening a window:
 #
-#   flatpak run --command=filmcraft-cli ai.storyteller.filmcraft --version
-#   flatpak run --command=filmcraft-cli ai.storyteller.filmcraft mcp
+#   flatpak run --command=revolution-cli io.github.dawgon2.Revolution --version
+#   flatpak run --command=revolution-cli io.github.dawgon2.Revolution mcp
 #
 # For Flathub, replace the `dir` source with a `git` source pinned to a release tag and commit.
-id: ai.storyteller.filmcraft
+id: io.github.dawgon2.Revolution
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
-command: filmcraft
+command: revolution
 finish-args:
   # X11 shared memory (MIT-SHM). Without it the X11 fallback is slow or fails.
   - --share=ipc
@@ -62,9 +62,11 @@ finish-args:
   - --talk-name=org.kde.kdeconnect
   # Eject a camera card after its verified copy (LINUX-PLAN L2.4): UDisks2 on the system bus.
   - --system-talk-name=org.freedesktop.UDisks2
-  # Deliberately not granted: network (the optional --control server listens on 127.0.0.1 in
-  # the sandbox; `flatpak override --user --share=network ai.storyteller.filmcraft` exposes it
-  # to host agents) and host-wide filesystem access.
+  # Network (fork, FORK-PLAN §1a.107): Revolution checks GitHub for updates, downloads the
+  # assistant's models on request and can share an answer as a GitHub issue, so unlike upstream
+  # it is granted. The optional --control server still listens on 127.0.0.1 only. Host-wide
+  # filesystem access is deliberately not granted.
+  - --share=network
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
 modules:
@@ -76,17 +78,17 @@ modules:
         CARGO_NET_OFFLINE: 'true'
     build-commands:
       - cargo --offline build --release --locked -p filmcraft -p filmcraft-cli
-      - install -Dm755 target/release/filmcraft /app/bin/filmcraft
+      - install -Dm755 target/release/filmcraft /app/bin/revolution
       # The headless CLI and its stdio MCP server, as in the release bundle (#346).
-      - install -Dm755 target/release/filmcraft-cli /app/bin/filmcraft-cli
-      - install -Dm644 packaging/linux/ai.storyteller.filmcraft.desktop /app/share/applications/ai.storyteller.filmcraft.desktop
-      - install -Dm644 packaging/linux/ai.storyteller.filmcraft.mime.xml /app/share/mime/packages/ai.storyteller.filmcraft.xml
+      - install -Dm755 target/release/filmcraft-cli /app/bin/revolution-cli
+      - install -Dm644 packaging/linux/io.github.dawgon2.Revolution.desktop /app/share/applications/io.github.dawgon2.Revolution.desktop
+      - install -Dm644 packaging/linux/io.github.dawgon2.Revolution.mime.xml /app/share/mime/packages/io.github.dawgon2.Revolution.xml
       - mkdir -p /app/share/icons && cp -R assets/app-icon/hicolor /app/share/icons/
       - >-
         version=$(awk '/^\[/{p=($0=="[workspace.package]");next} p&&$1=="version"{gsub(/[" ]/,"",$3);print $3;exit}' Cargo.toml);
         install -d /app/share/metainfo;
         sed -e "s/@VERSION@/$version/" -e "s/@DATE@/$(date -u +%Y-%m-%d)/"
-        packaging/linux/ai.storyteller.filmcraft.metainfo.xml.in > /app/share/metainfo/ai.storyteller.filmcraft.metainfo.xml
+        packaging/linux/io.github.dawgon2.Revolution.metainfo.xml.in > /app/share/metainfo/io.github.dawgon2.Revolution.metainfo.xml
     sources:
       - type: dir
         path: ../../..

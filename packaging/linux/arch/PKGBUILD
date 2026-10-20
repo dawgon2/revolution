@@ -1,22 +1,23 @@
-# Arch Linux / CachyOS package for FilmCraft, built from this source tree (LINUX-PLAN L2.9).
+# Arch Linux / CachyOS package for Revolution (the FilmCraft fork), built from this source tree
+# (LINUX-PLAN L2.9; Revolution names, FORK-PLAN §1a.107: programs revolution / revolution-cli).
 #
 #   cd packaging/linux/arch && makepkg -si
 #
 # Builds from the checkout two levels up (no download). For an AUR-style package, replace the
-# `_src` lines with a `source=("git+https://github.com/storytold/filmcraft.git#tag=v$pkgver")`.
-# The fork adds the split package `filmcraft-kde-thumbnailer` (Dolphin thumbnails of projects,
-# fork/kde-thumbnailer, FORK-PLAN §1a.46): delete `package_filmcraft-kde-thumbnailer`, its name in
+# `_src` lines with a `source=("git+https://github.com/dawgon2/revolution.git#tag=revolution-$pkgver")`.
+# The fork adds the split package `revolution-kde-thumbnailer` (Dolphin thumbnails of projects,
+# fork/kde-thumbnailer, FORK-PLAN §1a.46): delete `package_revolution-kde-thumbnailer`, its name in
 # `pkgname` and its build lines to drop it.
 
-pkgbase=filmcraft
-pkgname=(filmcraft filmcraft-kde-thumbnailer)
-# Keep in step with `[workspace.package] version` in Cargo.toml (a static value: a `pkgver()`
-# function would make makepkg rewrite this tracked file on every build).
-pkgver=0.6.0
+pkgbase=revolution
+pkgname=(revolution revolution-kde-thumbnailer)
+# Revolution's release version (tag `revolution-<pkgver>`; the workspace version stays upstream's).
+# A static value: a `pkgver()` function would make makepkg rewrite this tracked file on every build.
+pkgver=0.1.3
 pkgrel=1
-pkgdesc='Open-source, native video editor: edit video, color and sound'
+pkgdesc='Revolution: open-source, native video editor based on FilmCraft: edit video, color and sound'
 arch=('x86_64' 'aarch64')
-url='https://getartcraft.com/apps/filmcraft'
+url='https://github.com/dawgon2/revolution'
 license=('MIT OR Apache-2.0')
 makedepends=('cargo' 'cmake' 'extra-cmake-modules' 'kio' 'qt6-base')
 checkdepends=('python')
@@ -34,18 +35,18 @@ build() {
   cd "$(_src)"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR="$srcdir/target"
+  export FILMCRAFT_RELEASE_TAG="revolution-$pkgver"
   cargo build --frozen --release -p filmcraft -p filmcraft-cli
-  cmake -S fork/kde-thumbnailer -B "$srcdir/kde-thumbnailer" -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+  cmake -S fork/kde-thumbnailer -B "$srcdir/kde-thumbnailer" -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DFILMCRAFT_CLI=revolution-cli
   cmake --build "$srcdir/kde-thumbnailer"
 }
 
 check() {
   cd "$(_src)"
-  grep -qx "version = \"$pkgver\"" Cargo.toml || { echo "pkgver $pkgver is not the workspace version" >&2; return 1; }
   python3 packaging/linux/test_install.py
 }
 
-package_filmcraft() {
+package_revolution() {
   depends=('gcc-libs' 'glibc' 'libxkbcommon' 'vulkan-icd-loader' 'alsa-lib' 'hicolor-icon-theme' 'shared-mime-info' 'desktop-file-utils')
   optdepends=(
     'xdg-desktop-portal-kde: KDE file dialogs, accent colour and inhibit on Plasma'
@@ -55,13 +56,13 @@ package_filmcraft() {
     'intel-media-driver: hardware video decoding on Intel'
     'wayland: native Wayland window'
     'libx11: X11 fallback'
-    'filmcraft-kde-thumbnailer: project thumbnails in Dolphin'
+    'revolution-kde-thumbnailer: project thumbnails in Dolphin'
     'ffmpeg: fork only: proxies and fallback decoding through the system ffmpeg'
   )
-  local src app=ai.storyteller.filmcraft
+  local src app=io.github.dawgon2.Revolution
   src="$(_src)"
-  install -Dm755 "$srcdir/target/release/filmcraft" "$pkgdir/usr/bin/filmcraft"
-  install -Dm755 "$srcdir/target/release/filmcraft-cli" "$pkgdir/usr/bin/filmcraft-cli"
+  install -Dm755 "$srcdir/target/release/filmcraft" "$pkgdir/usr/bin/revolution"
+  install -Dm755 "$srcdir/target/release/filmcraft-cli" "$pkgdir/usr/bin/revolution-cli"
   install -Dm644 "$src/packaging/linux/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
   install -Dm644 "$src/packaging/linux/$app.mime.xml" "$pkgdir/usr/share/mime/packages/$app.xml"
   install -Dm644 "$src/packaging/linux/$app.thumbnailer" "$pkgdir/usr/share/thumbnailers/$app.thumbnailer"
@@ -75,10 +76,10 @@ package_filmcraft() {
   install -Dm644 "$src/LICENSE-APACHE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
 }
 
-package_filmcraft-kde-thumbnailer() {
-  pkgdesc='Dolphin thumbnails of FilmCraft projects (KIO plugin; FilmCraft fork)'
+package_revolution-kde-thumbnailer() {
+  pkgdesc='Dolphin thumbnails of Revolution projects (KIO plugin)'
   license=('MIT')
-  depends=('filmcraft' 'kio' 'qt6-base')
+  depends=('revolution' 'kio' 'qt6-base')
   DESTDIR="$pkgdir" cmake --install "$srcdir/kde-thumbnailer"
   install -Dm644 "$(_src)/LICENSE-MIT" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
 }

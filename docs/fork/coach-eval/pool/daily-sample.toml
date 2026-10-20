@@ -118,9 +118,8 @@ ids = [
   "pool-cr7-vignette-moving",
   "pool-cr7-skin-plastic",
   # creative-8
-  "pool-cr8-bars",
-  "pool-cr8-bars-pro",
-  "pool-cr8-bars-reframe",
+  "pool-cr8-bilingual",
+  "pool-cr8-roomtone-none",
   # creative-9
   "pool-cr9-reuse",
   "pool-cr9-golden-fake",
@@ -167,6 +166,8 @@ ids = [
   "feat-nvl-order",
   # feature-nvenc-presets
   "feat-nvp-map",
+  # feature-pm-window-icon
+  "feat-pmw-cant-read",
   # feature-project-package-newer
   "feat-pn-format-vs-project",
   # feature-project-package-trim

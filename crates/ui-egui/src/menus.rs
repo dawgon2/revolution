@@ -268,6 +268,14 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             return crate::panels::frame_export::open(app, ctx, &params);
         }
     }
+    // STORAGE-PLAN S2: File ▸ Remote Locations… browses a server; Save of a project opened from
+    // one saves it there (with its lock, kept versions and conflict copies)
+    if id == "remote.show" {
+        return crate::panels::remote_browser::open(app, ctx, params.get("id").and_then(Value::as_str));
+    }
+    if id == "file.save" && app.session.remote_project.is_some() {
+        return app.session.execute("remote.saveProject", json!({})).map_err(|e| e.to_string());
+    }
     // fork RS2: the Project Manager home screen (dialogs and pickers for the `projects.*` commands)
     if let Some(r) = crate::panels::home::route(app, id, &params) {
         return r;

@@ -98,16 +98,28 @@ pub struct Release {
     pub notes: String,
     /// Seconds since 1970 (UTC).
     pub published: u64,
-    /// The Linux build (`<tag>-linux-x86_64.tar.gz`), if the release has one.
+    /// The Linux build for this processor (`<tag>-linux-x86_64.tar.gz`), if the release has one.
     pub tarball: Option<Asset>,
+    /// The AppImage for this processor (`<tag>-linux-x86_64.AppImage`, FORK-PLAN §1a.107), if any.
+    pub appimage: Option<Asset>,
     /// The `SHA256SUMS` file, if the release has one.
     pub sums: Option<Asset>,
 }
 
-/// The name of a release's Linux tarball (`revolution-0.1-linux-x86_64.tar.gz`; fork rebrand,
-/// FORK-PLAN §1a.103: the tag already names the app).
+/// The processor name in release file names: `x86_64` or `aarch64` (FORK-PLAN §1a.107).
+pub fn linux_arch() -> &'static str {
+    std::env::consts::ARCH
+}
+
+/// The name of a release's Linux tarball for this processor (`revolution-0.1-linux-x86_64.tar.gz`;
+/// fork rebrand, FORK-PLAN §1a.103: the tag already names the app).
 pub fn tarball_name(tag: &str) -> String {
-    format!("{tag}-linux-x86_64.tar.gz")
+    format!("{tag}-linux-{}.tar.gz", linux_arch())
+}
+
+/// The name of a release's AppImage for this processor (`revolution-0.1.3-linux-x86_64.AppImage`).
+pub fn appimage_name(tag: &str) -> String {
+    format!("{tag}-linux-{}.AppImage", linux_arch())
 }
 
 /// Parses GitHub's release list, keeping the channel's published releases (drafts, pre-releases,
@@ -146,6 +158,7 @@ pub fn parse_releases(body: &[u8], ch: &Channel) -> std::result::Result<Vec<Rele
                 published,
                 // releases published before the fork rebrand named it `filmcraft-<tag>-…`
                 tarball: asset(&tarball_name(tag)).or_else(|| asset(&format!("filmcraft-{}", tarball_name(tag)))),
+                appimage: asset(&appimage_name(tag)),
                 sums: asset("SHA256SUMS"),
             })
         })
@@ -377,7 +390,8 @@ impl Updater {
         }
         let rel = self.status.latest.clone().ok_or("there is no update to install: check first")?;
         let layout = self.layout.clone()?;
-        let job = Arc::new(Mutex::new(InstallJob { total: rel.tarball.as_ref().map(|t| t.size).unwrap_or(0), ..Default::default() }));
+        let file = if layout.appimage.is_some() { rel.appimage.as_ref() } else { rel.tarball.as_ref() };
+        let job = Arc::new(Mutex::new(InstallJob { total: file.map(|t| t.size).unwrap_or(0), ..Default::default() }));
         let (j2, fetch) = (job.clone(), self.fetch.clone());
         let run = move || {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -410,8 +424,12 @@ impl Updater {
         match r {
             Ok(dir) => {
                 self.status.install = "installed".into();
-                self.status.installed =
-                    crate::update_install::program_in(&dir).unwrap_or_else(|| dir.join(crate::update_install::PROGRAMS[0])).to_string_lossy().into_owned();
+                // an AppImage update returns the AppImage itself, a builds update its folder
+                self.status.installed = if dir.is_file() {
+                    dir.to_string_lossy().into_owned()
+                } else {
+                    crate::update_install::program_in(&dir).unwrap_or_else(|| dir.join(crate::update_install::PROGRAMS[0])).to_string_lossy().into_owned()
+                };
                 Some(dir)
             }
             Err(e) => {
@@ -512,7 +530,10 @@ impl Session {
         }
         if let Ok(l) = &self.updater.layout {
             let mut next = self.prefs.clone();
-            next.update.previous = l.current.to_string_lossy().into_owned();
+            next.update.previous = match &l.appimage {
+                Some(app) => crate::update_install::previous_appimage(app).to_string_lossy().into_owned(),
+                None => l.current.to_string_lossy().into_owned(),
+            };
             if let Err(e) = self.set_prefs(next) {
                 log::warn!("saving the previous build: {e}");
             }
@@ -580,10 +601,27 @@ fn rollback_cmd(s: &mut Session, _: &Value) -> Result<Value> {
     if s.prefs.update.previous.is_empty() {
         return Err(bad(CMD, "no earlier build to go back to"));
     }
-    let builds = match &s.updater.layout {
-        Ok(l) => l.builds.clone(),
+    let (builds, appimage) = match &s.updater.layout {
+        Ok(l) => (l.builds.clone(), l.appimage.clone()),
         Err(e) => return Err(bad(CMD, e.clone())),
     };
+    if let Some(app) = appimage {
+        // the AppImage the update replaced was kept as `<file>.previous`: move it back
+        if prev != crate::update_install::previous_appimage(&app) || !prev.is_file() {
+            return Err(bad(CMD, format!("the earlier AppImage isn't there any more ({})", prev.display())));
+        }
+        std::fs::rename(&prev, &app).map_err(|e| bad(CMD, format!("switching back: {e}")))?;
+        let mut next = s.prefs.clone();
+        next.update.previous.clear();
+        if let Err(e) = s.set_prefs(next) {
+            log::warn!("saving the update state: {e}");
+        }
+        let mut v = s.update_status();
+        if let Some(o) = v.as_object_mut() {
+            o.insert("rolledBack".into(), json!(app.to_string_lossy()));
+        }
+        return Ok(v);
+    }
     let program = crate::update_install::program_in(&prev);
     let Some(program) = program.filter(|_| prev.parent() == Some(builds.as_path())) else {
         return Err(bad(CMD, format!("the earlier build isn't there any more ({})", prev.display())));

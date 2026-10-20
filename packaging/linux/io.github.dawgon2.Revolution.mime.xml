@@ -6,7 +6,7 @@
     <comment>FilmCraft project</comment>
     <sub-class-of type="application/json"/>
     <generic-icon name="video-x-generic"/>
-    <icon name="ai.storyteller.filmcraft"/>
+    <icon name="io.github.dawgon2.Revolution"/>
     <!-- globs match case-insensitively: Film.FCPROJ too -->
     <glob pattern="*.fcproj"/>
   </mime-type>

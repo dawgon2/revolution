@@ -11,7 +11,8 @@
 #     of crates; anything still needed is rebuilt on the next build
 #   - bench media in target/fork-bench/bench-* (video files only; tables / logs / json stay);
 #     folders named keep-* are kept whole
-#   - target/tmp/*, /tmp/filmcraft-bench-* and /tmp/filmcraft-* test folders older than a day
+#   - target/tmp/*, /tmp/filmcraft-* test folders older than a day, /var/tmp/revolution-* release
+#     build trees (run after the release is published)
 #   - ~/Apps/filmcraft-builds: release-staging, and builds that are neither `latest`, a tag in
 #     this repo, nor among the 3 newest
 #   - clean git worktrees under .claude/worktrees whose branch is merged into hevc-vaapi and that
@@ -47,7 +48,7 @@ drop "build artifacts untouched for 7 days" "${stale[@]}"
 mapfile -t media < <(find target/fork-bench -path 'target/fork-bench/keep-*' -prune -o -type f \
   \( -iname '*.mov' -o -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.hevc' -o -iname '*.h264' -o -iname '*.mxf' -o -iname '*.y4m' -o -iname '*.raw' \) -print 2>/dev/null)
 drop "bench media (results kept)" "${media[@]}"
-mapfile -t tmp < <(find target/tmp -mindepth 1 -maxdepth 1 2>/dev/null; find /tmp -maxdepth 1 -name 'filmcraft-*' -user "$(id -u)" -mmin +1440 2>/dev/null)
+mapfile -t tmp < <(find target/tmp -mindepth 1 -maxdepth 1 2>/dev/null; find /tmp -maxdepth 1 -name 'filmcraft-*' -user "$(id -u)" -mmin +1440 2>/dev/null; find /var/tmp -maxdepth 1 -name 'revolution-*' -user "$(id -u)" 2>/dev/null)
 drop "temporary folders" "${tmp[@]}"
 
 if [ -d "$BUILDS" ]; then
@@ -59,7 +60,7 @@ if [ -d "$BUILDS" ]; then
     b="${b%/}"; n="$(basename "$b")"
     [ "$n" = release-staging ] && { old+=("$b"); continue; }
     [ "$(readlink -f "$b")" = "$latest" ] && continue
-    printf '%s\n' "${tags[@]}" | grep -qxF -e "$n" -e "fork-$n" && continue
+    printf '%s\n' "${tags[@]}" | grep -qxF -e "$n" -e "fork-$n" -e "revolution-$n" && continue
     printf '%s\n' "${newest[@]}" | grep -qxF "$b" && continue
     old+=("$b")
   done

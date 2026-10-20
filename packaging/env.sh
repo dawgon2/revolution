@@ -3,7 +3,9 @@
 #
 # Exports:
 #   ROOT                    workspace root
-#   VERSION                 [workspace.package] version from Cargo.toml (override: FILMCRAFT_VERSION)
+#   VERSION                 FILMCRAFT_VERSION, else <ver> of FILMCRAFT_RELEASE_TAG=revolution-<ver>,
+#                           else [workspace.package] version from Cargo.toml
+#   RELEASE_NAME            release file prefix: FILMCRAFT_RELEASE_TAG, else revolution-<VERSION>
 #   DIST                    output directory for release artifacts (default: $ROOT/dist/release)
 #   FILMCRAFT_BUILD_SHA    git commit baked into the binaries (see crates/engine/src/build_info.rs)
 #   FILMCRAFT_BUILD_DATE   UTC build date, YYYY-MM-DD
@@ -21,7 +23,21 @@ workspace_version() {
   ' "$ROOT/Cargo.toml"
 }
 
-VERSION="${FILMCRAFT_VERSION:-$(workspace_version)}"
+# Fork (FORK-PLAN §1a.107): Revolution's release tag `revolution-<ver>` (FILMCRAFT_RELEASE_TAG, also
+# baked into the binaries for the updater) names the package version; the workspace version stays
+# upstream's.
+case "${FILMCRAFT_RELEASE_TAG:-}" in
+  revolution-?*) RELEASE_VERSION="${FILMCRAFT_RELEASE_TAG#revolution-}" ;;
+  *) RELEASE_VERSION="" ;;
+esac
+VERSION="${FILMCRAFT_VERSION:-${RELEASE_VERSION:-$(workspace_version)}}"
+# Every release file is named after the tag (revolution-0.2-linux-x86_64.deb even though the
+# package inside says 0.2.0), so the updater finds each format by one rule.
+case "${FILMCRAFT_RELEASE_TAG:-}" in
+  revolution-?*) RELEASE_NAME="$FILMCRAFT_RELEASE_TAG" ;;
+  *) RELEASE_NAME="revolution-$VERSION" ;;
+esac
+export RELEASE_NAME
 if [ -z "$VERSION" ]; then
   echo "error: could not read [workspace.package] version from $ROOT/Cargo.toml" >&2
   exit 1

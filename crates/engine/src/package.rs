@@ -1,4 +1,4 @@
-//! Project packages (STORAGE-PLAN S1 item 5): one folder (or `.fcpackage` file) holding a project
+//! Project packages (STORAGE-PLAN S1 item 5): one folder (or `.revpkg` file; older `.fcpackage` files still open) holding a project
 //! and everything it needs, with a manifest so the receiver can check nothing is missing or
 //! damaged.
 //!
@@ -285,10 +285,18 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The file extension of a one-file package.
-pub const EXT: &str = "fcpackage";
+/// The file extension of a one-file package (FORK-PLAN §1a.104: Revolution packages).
+pub const EXT: &str = "revpkg";
 
-/// Writes the package folder `dir` as one `.fcpackage` file: a zip with every file **stored**
+/// The extension packages had before 0.1.3; still opened.
+pub const LEGACY_EXT: &str = "fcpackage";
+
+/// Whether `path` names a one-file package (`.revpkg`, or an older `.fcpackage`), any case.
+pub fn is_package_file(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case(EXT) || e.eq_ignore_ascii_case(LEGACY_EXT))
+}
+
+/// Writes the package folder `dir` as one `.revpkg` file: a zip with every file **stored**
 /// (camera media doesn't compress, and stored entries can be read back without inflating), the
 /// manifest first. Written to `out.part` and renamed; a failure removes it.
 pub fn zip_folder(dir: &Path, out: &Path, cancel: &dyn Fn() -> bool) -> Result<u64, String> {
@@ -322,7 +330,7 @@ pub fn zip_folder(dir: &Path, out: &Path, cancel: &dyn Fn() -> bool) -> Result<u
     r
 }
 
-/// The manifest inside a `.fcpackage` file (read and checked; nothing else is read).
+/// The manifest inside a `.revpkg` / `.fcpackage` file (read and checked; nothing else is read).
 pub fn read_zip_manifest(file: &Path) -> Result<Manifest, String> {
     let f = std::fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut z = zip::ZipArchive::new(std::io::BufReader::new(f)).map_err(|e| format!("not a Revolution package: {e}"))?;
@@ -332,7 +340,7 @@ pub fn read_zip_manifest(file: &Path) -> Result<Manifest, String> {
     Manifest::parse(&bytes)
 }
 
-/// Unpacks a `.fcpackage` into `to`: only the manifest and the files it lists come out (each at
+/// Unpacks a `.revpkg` / `.fcpackage` into `to`: only the manifest and the files it lists come out (each at
 /// most its listed size plus one byte, so [`verify`] then sees any difference), at safe paths
 /// inside `to`. Check the result with [`verify`].
 pub fn unzip_package(file: &Path, to: &Path, m: &Manifest, cancel: &dyn Fn() -> bool) -> Result<u64, String> {
@@ -518,17 +526,18 @@ mod tests {
         let _ = std::fs::write(d.join(MANIFEST_FILE), m.to_json());
         let out = tmp("zip-out");
         let _ = std::fs::create_dir_all(&out);
-        let file = out.join("p.fcpackage");
+        let file = out.join("p.revpkg");
         assert!(zip_folder(&d, &file, &|| false).is_ok());
-        assert!(!out.join("p.fcpackage.part").exists());
+        assert!(!out.join("p.revpkg.part").exists());
         assert_eq!(read_zip_manifest(&file).ok().as_ref(), Some(&m));
         let to = out.join("unpacked");
         assert!(unzip_package(&file, &to, &m, &|| false).is_ok());
         let r = verify(&to, &m, &|| false).unwrap_or_default();
         assert!(r.is_complete() && r.extra.is_empty(), "{r:?}");
         // not a zip / no manifest
-        let _ = std::fs::write(out.join("junk.fcpackage"), b"nope");
-        assert!(read_zip_manifest(&out.join("junk.fcpackage")).is_err());
+        let _ = std::fs::write(out.join("junk.revpkg"), b"nope");
+        assert!(read_zip_manifest(&out.join("junk.revpkg")).is_err());
+        assert!(is_package_file(Path::new("/a/B.REVPKG")) && is_package_file(Path::new("old.fcpackage")) && !is_package_file(Path::new("x.zip")));
         let _ = std::fs::remove_dir_all(d);
         let _ = std::fs::remove_dir_all(out);
     }
@@ -538,7 +547,7 @@ mod tests {
         use std::io::Write;
         let out = tmp("zip-evil");
         let _ = std::fs::create_dir_all(&out);
-        let file = out.join("evil.fcpackage");
+        let file = out.join("evil.revpkg");
         let mut m = Manifest::new("p.fcproj");
         m.entries.push(Entry { path: "p.fcproj".into(), size: 2, sha256: "0".repeat(64), role: Role::Project });
         if let Ok(f) = std::fs::File::create(&file) {

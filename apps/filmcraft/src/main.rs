@@ -49,6 +49,7 @@ mod icon_style;
 mod journal;
 #[cfg(target_os = "linux")]
 mod kdeconnect;
+mod keyring;
 mod logging;
 #[cfg(target_os = "linux")]
 mod mpris;
@@ -121,6 +122,8 @@ fn main() -> eframe::Result {
     if let Some(d) = &data_dir {
         filmcraft_engine::autosave::set_launch_data_dir(d);
     }
+    // remote locations' passwords (STORAGE-PLAN S2): the system keyring, connected on first use
+    keyring::install(data_dir.clone().or_else(default_data_dir));
     // One FilmCraft per data folder (L1.7): a second launch hands its files to the running one
     // and exits here, before the log file is opened (opening it rotates the running instance's
     // log) and before any window or decoder starts. Agents (`--control`) and `--new-instance`
@@ -216,7 +219,7 @@ fn main() -> eframe::Result {
             // Started for an agent (`--control`): open without taking the user's keyboard focus.
             .with_active(control_port.is_none())
             .with_icon(icon_style::window_icon(&prefs.appearance.app_icon))
-            // Wayland matches the window to `packaging/linux/ai.storyteller.filmcraft.desktop`.
+            // Wayland matches the window to `packaging/linux/io.github.dawgon2.Revolution.desktop`.
             .with_app_id(APP_ID),
         event_loop_builder: agent_event_loop(control_port.is_some()),
         // Settings ▸ Playback ▸ Graphics device (L2.6)

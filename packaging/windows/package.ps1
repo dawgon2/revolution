@@ -1,11 +1,14 @@
 <#
 .SYNOPSIS
-  Build, sign and package FilmCraft for Windows.
+  Build, sign and package Revolution (the FilmCraft fork) for Windows.
 
 .DESCRIPTION
   Produces, in $env:DIST (default: dist/release):
-    filmcraft-<version>-windows-<arch>.msi            per-machine installer (WiX v5)
-    filmcraft-<version>-windows-<arch>-portable.zip   filmcraft.exe + filmcraft-cli.exe + portable.txt
+    revolution-<version>-windows-<arch>.msi            per-machine installer (WiX v5)
+    revolution-<version>-windows-<arch>-portable.zip  revolution.exe + revolution-cli.exe + portable.txt
+
+  Cargo builds filmcraft.exe / filmcraft-cli.exe; they ship as revolution.exe / revolution-cli.exe.
+  Version: FILMCRAFT_VERSION, else <ver> of FILMCRAFT_RELEASE_TAG=revolution-<ver>, else Cargo.toml.
 
   The binaries link the C runtime statically (+crt-static), so neither the MSI nor the portable
   zip needs the Visual C++ redistributable. Signing is delegated to sign.ps1 (skipped with a
@@ -34,6 +37,7 @@ function Invoke-Native([string] $What, [scriptblock] $Block) {
 
 # The version lives in one place: [workspace.package] version in the root Cargo.toml.
 $Version = $env:FILMCRAFT_VERSION
+if (-not $Version -and $env:FILMCRAFT_RELEASE_TAG -match '^revolution-(.+)$') { $Version = $Matches[1] }
 if (-not $Version) {
   $inPkg = $false
   foreach ($line in Get-Content (Join-Path $Root 'Cargo.toml')) {
@@ -44,6 +48,8 @@ if (-not $Version) {
 if (-not $Version) { throw 'could not read [workspace.package] version from Cargo.toml' }
 # MSI ProductVersion is numeric (major.minor.build); pre-release tags are dropped there.
 $MsiVersion = ($Version -split '-')[0]
+# Release files are named after the tag (revolution-0.2-windows-x64.msi for version 0.2.0).
+$Name = if ($env:FILMCRAFT_RELEASE_TAG -match '^revolution-.+$') { $env:FILMCRAFT_RELEASE_TAG } else { "revolution-$Version" }
 
 $Target = switch ($Arch) { 'x64' { 'x86_64-pc-windows-msvc' } 'x86' { 'i686-pc-windows-msvc' } 'arm64' { 'aarch64-pc-windows-msvc' } }
 $Dist = if ($env:DIST) { $env:DIST } else { Join-Path $Root 'dist\release' }
@@ -53,7 +59,7 @@ New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 if (-not $env:FILMCRAFT_BUILD_SHA) { $env:FILMCRAFT_BUILD_SHA = (git -C $Root rev-parse HEAD 2>$null) }
 if (-not $env:FILMCRAFT_BUILD_DATE) { $env:FILMCRAFT_BUILD_DATE = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd') }
 
-Write-Output "FilmCraft $Version for Windows $Arch ($Target)"
+Write-Output "Revolution $Version for Windows $Arch ($Target)"
 
 if (-not $SkipBuild) {
   # Static CRT: no VC++ redistributable needed. Scoped to the target so host build scripts and
@@ -86,12 +92,13 @@ foreach ($check in @(@('filmcraft.exe', 2), @('filmcraft-cli.exe', 3))) {
 $Stage = Join-Path $TargetDir "windows-package\$Arch"
 Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
-Copy-Item (Join-Path $Bin 'filmcraft.exe'), (Join-Path $Bin 'filmcraft-cli.exe') $Stage
+Copy-Item (Join-Path $Bin 'filmcraft.exe') (Join-Path $Stage 'revolution.exe')
+Copy-Item (Join-Path $Bin 'filmcraft-cli.exe') (Join-Path $Stage 'revolution-cli.exe')
 
-& (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'filmcraft.exe') (Join-Path $Stage 'filmcraft-cli.exe')
+& (Join-Path $PSScriptRoot 'sign.ps1') (Join-Path $Stage 'revolution.exe') (Join-Path $Stage 'revolution-cli.exe')
 
 # ---- MSI ---------------------------------------------------------------------------------------
-$Msi = Join-Path $Dist "filmcraft-$Version-windows-$Arch.msi"
+$Msi = Join-Path $Dist "$Name-windows-$Arch.msi"
 Invoke-Native 'wix build' {
   wix build (Join-Path $PSScriptRoot 'filmcraft.wxs') -arch $Arch `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "IconPath=$(Join-Path $Root 'assets\app-icon\filmcraft.ico')" `
@@ -102,14 +109,14 @@ Remove-Item -Force -ErrorAction SilentlyContinue ([IO.Path]::ChangeExtension($Ms
 & (Join-Path $PSScriptRoot 'sign.ps1') $Msi
 
 # ---- portable zip ------------------------------------------------------------------------------
-$Portable = Join-Path $TargetDir "windows-package\filmcraft-$Version-windows-$Arch-portable"
+$Portable = Join-Path $TargetDir "windows-package\$Name-windows-$Arch-portable"
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
 # The marker that makes FilmCraft keep its data in .\data next to the exe instead of %APPDATA% (#139).
 Set-Content -Encoding ascii -Path (Join-Path $Portable 'portable.txt') -Value @(
-  'FilmCraft portable: preferences, presets, logs and crash recovery are kept in the data folder',
-  'next to filmcraft.exe. Delete this file to use %APPDATA%\FilmCraft instead.'
+  'Revolution portable: preferences, presets, logs and crash recovery are kept in the data folder',
+  'next to revolution.exe. Delete this file to use %APPDATA%\Revolution instead.'
 )
 foreach ($f in 'README.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE') {
   $p = Join-Path $Root $f
@@ -121,7 +128,7 @@ if ($env:CRAFT_FONTS_DIR) {
     Copy-Item $lic.FullName (Join-Path $Portable "OFL-$($lic.Directory.Name).txt")
   }
 }
-$Zip = Join-Path $Dist "filmcraft-$Version-windows-$Arch-portable.zip"
+$Zip = Join-Path $Dist "$Name-windows-$Arch-portable.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
 Compress-Archive -Path $Portable -DestinationPath $Zip
 
@@ -129,8 +136,8 @@ Compress-Archive -Path $Portable -DestinationPath $Zip
 # here; .github/workflows/windows-arm64.yml installs and runs it on ARM64 instead.
 $HostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
 if ($Arch -ne 'arm64' -or $HostArch -eq 'arm64') {
-  Invoke-Native 'filmcraft-cli --version' { & (Join-Path $Stage 'filmcraft-cli.exe') --version }
+  Invoke-Native 'revolution-cli --version' { & (Join-Path $Stage 'revolution-cli.exe') --version }
 } else {
-  Write-Output "skipping filmcraft-cli --version: an $Arch build doesn't run on this $HostArch machine"
+  Write-Output "skipping revolution-cli --version: an $Arch build doesn't run on this $HostArch machine"
 }
 Get-Item $Msi, $Zip | Format-Table Name, Length

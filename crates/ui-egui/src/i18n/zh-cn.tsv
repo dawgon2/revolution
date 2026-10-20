@@ -4095,7 +4095,7 @@
 	{n} clip(s) are back online	{n} 个剪辑已恢复在线
 	Packaging {name}	正在打包 {name}
 	Packaging {name} (about {size})	正在打包 {name}（约 {size}）
-	Revolution package (.fcpackage or manifest.json)	Revolution 包（.fcpackage 或 manifest.json）
+	Revolution package (.revpkg or manifest.json)	Revolution 包（.revpkg 或 manifest.json）
 	Package as One File…	打包为单个文件…
 	Package	打包
 	Import Package	导入项目包
@@ -4133,3 +4133,35 @@
 	Close the Project Manager to play	关闭项目管理器后再播放
 	App icon	应用图标
 	Rounded (macOS style)	圆角（macOS 风格）
+	Add Location	添加位置
+	Add a location	添加一个位置
+	Added {name}. Use Test to check it.	已添加 {name}。请用“测试”检查它。
+	Connected: {n} item(s) in the folder.	已连接：文件夹中有 {n} 项。
+	Connected: {n} item(s). This server ignores Revolution's project locks, so don't open the same project on two computers at once.	已连接：{n} 项。此服务器忽略 Revolution 的项目锁，请勿在两台电脑上同时打开同一项目。
+	Couldn't connect: the test stopped unexpectedly.	无法连接：测试意外中止。
+	Couldn't connect: {error}	无法连接：{error}
+	No remote locations yet.	还没有远程位置。
+	Passwords are kept in: {store}	密码保存在：{store}
+	Removed {name}.	已移除 {name}。
+	Test	测试
+	Testing…	正在测试…
+	Remote Locations	远程位置
+	Keep passwords in a file when no system keyring works (not encrypted)	系统密钥环不可用时将密码保存在文件中（未加密）
+	Servers Revolution connects to by itself, without mounting them: WebDAV (Nextcloud, ownCloud, Synology), SFTP (any SSH server) and S3 (MinIO, Garage, Amazon S3). Passwords and keys are kept in the system keyring, never in projects or logs.	Revolution 无需挂载即可直接连接的服务器：WebDAV（Nextcloud、ownCloud、Synology）、SFTP（任何 SSH 服务器）和 S3（MinIO、Garage、Amazon S3）。密码和密钥保存在系统密钥环中，绝不写入项目或日志。
+	Address	地址
+	Kind	类型
+	Add a server in Settings ▸ Remote Locations first.	请先在 设置 ▸ 远程位置 中添加服务器。
+	Couldn't list the folder: {error}	无法列出文件夹：{error}
+	Downloading into the media cache: the clips appear in the project when done.	正在下载到媒体缓存：完成后剪辑会出现在项目中。
+	Downloading the package…	正在下载包…
+	Imported from the remote location.	已从远程位置导入。
+	Loading…	正在加载…
+	Opened read-only: {who} has this project open. Save As to keep your changes.	以只读方式打开：{who} 正在使用此项目。请用“另存为”保留你的更改。
+	Project name	项目名称
+	Received: the project is in the Project Manager.	已接收：项目在项目管理器中。
+	Receive Package	接收包
+	Remote Locations…	远程位置…
+	Saved to {path}.	已保存到 {path}。
+	Save Project Here	将项目保存到此处
+	This folder is empty.	此文件夹为空。
+	Up	上一级

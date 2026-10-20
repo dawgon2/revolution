@@ -90,6 +90,7 @@ fn categories_follow_premiere_order() {
             "plugins",
             "timeline",
             "trim",
+            "remote",
             // fork UPD: after Premiere's categories
             "update"
         ]

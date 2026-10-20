@@ -404,7 +404,7 @@ pub fn route(app: &mut FilmcraftApp, id: &str, params: &Value) -> Option<Result<
             };
             let name = std::path::Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let id = id.to_string();
-            // `"format": "file"`: one .fcpackage file (the tile menu's Package as One File…)
+            // `"format": "file"`: one .revpkg file (the tile menu's Package as One File…)
             let format = param(params, "format").unwrap_or("folder").to_string();
             app.pick(FileDialog::Folder { at: None }, move |app, paths| match paths.into_iter().next() {
                 Some(dir) => {
@@ -422,11 +422,13 @@ pub fn route(app: &mut FilmcraftApp, id: &str, params: &Value) -> Option<Result<
                 None => Ok(Value::Null),
             })
         }
-        // one picker for both kinds: a .fcpackage file, or a package folder's manifest.json
+        // one picker for both kinds: a .revpkg (or older .fcpackage) file, or a package folder's manifest.json
         "projects.importPackage" if param(params, "path").is_none() => {
             let id = id.to_string();
-            let pick =
-                FileDialog::OpenFile { filter: tl!("Revolution package (.fcpackage or manifest.json)").into(), exts: vec!["fcpackage".into(), "json".into()] };
+            let pick = FileDialog::OpenFile {
+                filter: tl!("Revolution package (.revpkg or manifest.json)").into(),
+                exts: vec!["revpkg".into(), "fcpackage".into(), "json".into()],
+            };
             app.pick(pick, move |app, paths| match paths.into_iter().next() {
                 Some(path) => run(app, &id, json!({"path": package_pick(path), "folder": app.ui.home.folder})),
                 None => Ok(Value::Null),
@@ -1361,7 +1363,7 @@ fn dialogs(app: &mut FilmcraftApp, ctx: &egui::Context, acts: &mut Vec<Act>) {
 }
 
 /// What Import Package imports for a picked file: a package folder's `manifest.json` stands for
-/// its folder; anything else (a `.fcpackage`) is itself.
+/// its folder; anything else (a `.revpkg`) is itself.
 fn package_pick(path: String) -> String {
     let p = std::path::Path::new(&path);
     match p.parent() {

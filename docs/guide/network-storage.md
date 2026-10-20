@@ -167,7 +167,7 @@ anything went missing or got damaged on the way.
    overwritten.
 
 **Receiving a package.** On the home screen click **Import Package** (`projects.importPackage`)
-and choose either the **`.fcpackage`** file or, for a package folder, the **`manifest.json`**
+and choose either the **`.revpkg`** file (or an older `.fcpackage`) or, for a package folder, the **`manifest.json`**
 inside it; it goes into the folder of the projects list you are looking at. (Scripts: `projects.importPackage` with `path` and,
 optionally, `folder`; `projects.import` of a folder with a Revolution `manifest.json` does the
 same.)
@@ -185,9 +185,9 @@ same.)
    package format is refused).
 
 **One file instead of a folder.** `projects.package` with `"format": "file"` writes a single
-**`<project name>.fcpackage`** (a zip with every file stored as it is, so camera media isn't
+**`<project name>.revpkg`** (a zip with every file stored as it is, so camera media isn't
 recompressed and nothing is re-encoded); the folder it is made from is removed afterwards.
-`projects.importPackage` takes the `.fcpackage` file as well as a package folder: it unpacks only
+`projects.importPackage` takes the `.revpkg` file (and older `.fcpackage` files) as well as a package folder: it unpacks only
 the files the manifest lists, at safe places inside the new project folder, then checks and
 relinks them as above. Home screen: **Package as One File…** in a tile's menu
 (`projects.menu.package-file`).
@@ -214,5 +214,108 @@ files), so quality is identical.
 4. Proxies of shortened media are left out (they no longer line up); make new ones after import.
 
 The home screen doesn't offer this yet.
+
+## Remote locations: a server without mounting it
+
+> id: network-storage.remote-locations | does: saves a WebDAV, SFTP or S3 server as a remote location and keeps its password in the system keyring | resolve: (none: Resolve uses mounted shares or Blackmagic Cloud) | premiere: (none: Premiere uses mounted shares or Team Projects) | when: your projects or media are on a Nextcloud, a Linux server or a MinIO bucket | see: network-storage.drops
+
+**[Fork]** · Neither Resolve nor Premiere talks to these servers directly; you would mount them in
+the system first. Revolution connects by itself, so nothing has to be mounted and a dropped
+connection can't freeze the file manager.
+
+Why: a mounted share behaves like a local disk until the network hiccups. A remote location knows
+it is remote: it can show progress, resume, and keep two computers from overwriting each other.
+
+1. Scripts and agents: add a location with `remote.add`:
+   `kind` (`webDav` for Nextcloud / ownCloud / Synology, `sftp` for any SSH server, `s3` for MinIO,
+   Garage or Amazon S3), `name`, `url` (`https://…`, or `http://…` on a home network;
+   `sftp://host`), `user` (for S3: the access key), `root` (the folder to start in; for S3 the
+   bucket, optionally `bucket/folder`) and `secret` (the password, private key or S3 secret key).
+2. The secret goes to the **system keyring** (KWallet, GNOME Keyring or KeePassXC through the
+   freedesktop Secret Service), never into the preferences, a project file or a log.
+   `remote.list` shows where secrets are kept.
+3. Check it with `remote.test` (`{"id": …}`): it connects and lists the folder, and says why if it
+   can't.
+4. Look inside with `remote.browse` (`{"id": …, "path": "folder/inside"}`): folders first, then
+   files; names starting with a dot are hidden unless `"hidden": true`.
+5. `remote.add` with an existing `id` changes that location (leave `secret` out to keep the stored
+   one); `remote.remove` deletes it and its keyring entry.
+
+6. Bring clips in with `remote.import` (`{"id": …, "paths": ["shoot/day 1/clip.mov", …], "wait":
+   true}`): each file is downloaded into the media cache's **Remote Media** folder (a stopped
+   download continues where it stopped; a complete copy is reused) and imported into the project.
+   That folder is not cleaned automatically, so clips in use never disappear.
+
+### In the app: File ▸ Remote Locations…
+
+1. Choose **File ▸ Remote Locations…** (`remote.show`). The window shows the first saved location;
+   pick another in the list at the top (`remote.location`).
+2. Click a folder to go in, **Up** for the folder above, **Refresh** to read the folder again. Names starting
+   with a dot (lock files, kept copies) are hidden.
+3. Select clips (Ctrl / Shift for several) and click **Import**: they download into the media cache
+   in the background and appear in the project when done.
+4. Select a project file and click **Open Project**; if someone else has it open, it opens
+   read-only and the status line says who.
+5. Select a `.revpkg` and click **Receive Package**: it downloads (and continues if it stopped) and
+   then appears in the Project Manager.
+6. Type a name and click **Save Project Here** to put the open project into this folder. From then
+   on **File ▸ Save** saves it to the server (with its lock and conflict copies), and
+   quitting releases the lock.
+
+Playing remote clips without downloading them first is still to come (S2).
+
+## Send and receive a project through a server
+
+> id: network-storage.send-receive | does: packages a project as one .revpkg and uploads it to a remote location, or downloads and imports one | resolve: (none: Resolve exports a .drp and media separately) | premiere: (none: Premiere's Project Manager copies to a folder only) | when: someone else, or your other computer, should get the whole project | see: network-storage.package
+
+**[Fork]** · A package (see above) that travels through your server, so nobody has to carry a
+drive.
+
+1. Scripts and agents: `remote.sendProject` (`{"id": …, "path": "<the project file>", "folder":
+   "inbox/ana"}`; `proxies` and `trim` as for packages). It makes one `.revpkg` in the data
+   folder's outbox, uploads it as a background job (progress and Cancel in the job list; a
+   dropped connection is retried three times) and removes the local package afterwards.
+2. The upload is all-or-nothing: the server never shows half a package under its name.
+3. On the other computer: `remote.receiveProject` (`{"id": …, "path": "inbox/ana/Reel.revpkg",
+   "wait": true}`). It downloads in 8 MB pieces into the data folder's inbox; if the connection
+   drops, run it again and it **continues where it stopped**. Then the package is checked against
+   its manifest and imported with every clip relinked, as Import Project Package does.
+4. Without `"wait": true` it downloads as a job and replies with `localPackage`; import that
+   with `projects.importPackage` when the job is done.
+
+Still to come: Send Project… / Receive Project… on the home screen, and uploading without a
+local copy when the disk is nearly full.
+
+## Projects on a remote location: open, save, locks
+
+> id: network-storage.remote-projects | does: opens and saves a project on a server with a lock and conflict copies | resolve: (none: Resolve shares projects through a project server or Blackmagic Cloud) | premiere: (none: Premiere uses Productions or Team Projects) | when: you edit the same project from two computers through a server | see: network-storage.remote-locations
+
+**[Fork]** · Resolve and Premiere solve this with their own project servers. Revolution keeps a
+normal project file on your server and puts a small lock file next to it.
+
+Why: two computers saving the same file is how a day's work disappears. The lock tells the
+second computer who has the project open; a save that would overwrite someone else's work
+becomes a separate copy instead.
+
+1. Scripts and agents: open with `remote.openProject` (`{"id": …, "path": "films/cut.fcproj"}`).
+   Revolution downloads it to a working copy in its data folder (autosave and the local backup keep
+   working on that copy) and takes the lock: a hidden `.cut.fcproj.revlock` next to the project
+   with your name, computer and the time.
+2. If another computer holds the lock, the project opens **read-only** and the reply says who has
+   it (`heldBy`). To take it over (they are gone, or you agreed), open again with
+   `"takeOver": true`.
+3. Save with `remote.saveProject`: it saves the working copy, then uploads it. The copy that was on
+   the server is kept in a hidden folder next to the project (the newest 10).
+4. If someone took the project over or changed the file on the server meanwhile, your save is
+   uploaded as **`cut (conflict from <computer> <date>).fcproj`** next to it, and theirs stays as it
+   is. Open both and copy over what you need.
+5. `remote.saveProjectAs` (`{"id": …, "path": …}`) puts the open project on a location (it refuses
+   to replace an existing file unless `"overwrite": true`, and then keeps the old copy).
+6. `remote.closeProject` releases the lock. A computer that crashed with the project open leaves
+   its lock behind: `remote.unlock` removes it. `remote.projectStatus` shows what is open and whether
+   it is read-only.
+7. Some servers (nginx's WebDAV module, older MinIO / Garage) ignore the "create only if nothing is
+   there" request locks rely on. Settings ▸ Remote Locations ▸ Test checks this and warns: on such a
+   server don't open one project on two computers at once.
 
 **Still to write (S1):** the rest of project packages: written as each S1 step lands.

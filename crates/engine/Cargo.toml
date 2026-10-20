@@ -13,6 +13,8 @@ workspace = true
 default = []
 # Speech-to-text with Whisper (candle, CPU). Off by default and in wasm builds.
 whisper = ["filmcraft-speech/whisper"]
+# Remote locations over the network (WebDAV / S3 / SFTP backends, STORAGE-PLAN S2).
+remote-net = ["filmcraft-remote/net", "filmcraft-remote/sftp"]
 # Speech-model downloads over HTTPS.
 speech-download = ["filmcraft-speech/download"]
 # Natural voices for Text to Speech: Kokoro-82M on candle (CPU) and their download.
@@ -53,6 +55,7 @@ filmcraft-format = { workspace = true }
 filmcraft-interchange = { workspace = true }
 filmcraft-captions = { workspace = true }
 filmcraft-speech = { workspace = true }
+filmcraft-remote = { workspace = true }
 filmcraft-tts = { workspace = true }
 filmcraft-llm = { workspace = true }
 filmcraft-isobmff = { workspace = true }

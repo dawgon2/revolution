@@ -53,22 +53,22 @@ jobs:
           if grep -oE '<Icon Id="[^"]*"' packaging/windows/filmcraft.wxs | grep -vE '\.(ico|exe)"$'; then
             echo "::error::Icon Id must end in .ico or .exe"; exit 1
           fi
-          desktop-file-validate packaging/linux/ai.storyteller.filmcraft.desktop
-          sed -e 's/@VERSION@/0.0.0/' -e 's/@DATE@/2026-01-01/' packaging/linux/ai.storyteller.filmcraft.metainfo.xml.in >"$RUNNER_TEMP/ai.storyteller.filmcraft.metainfo.xml"
-          appstreamcli validate --no-net --explain "$RUNNER_TEMP/ai.storyteller.filmcraft.metainfo.xml"
+          desktop-file-validate packaging/linux/io.github.dawgon2.Revolution.desktop
+          sed -e 's/@VERSION@/0.0.0/' -e 's/@DATE@/2026-01-01/' packaging/linux/io.github.dawgon2.Revolution.metainfo.xml.in >"$RUNNER_TEMP/io.github.dawgon2.Revolution.metainfo.xml"
+          appstreamcli validate --no-net --explain "$RUNNER_TEMP/io.github.dawgon2.Revolution.metainfo.xml"
           python3 - <<'EOF'
           import yaml
-          src = yaml.safe_load(open("packaging/linux/flatpak/ai.storyteller.filmcraft.yml"))
-          bundle = yaml.safe_load(open("packaging/linux/flatpak/ai.storyteller.filmcraft.bundle.yml"))
+          src = yaml.safe_load(open("packaging/linux/flatpak/io.github.dawgon2.Revolution.yml"))
+          bundle = yaml.safe_load(open("packaging/linux/flatpak/io.github.dawgon2.Revolution.bundle.yml"))
           for m in (src, bundle):
-              assert m["id"] == "ai.storyteller.filmcraft" and m["command"] == "filmcraft", m["id"]
+              assert m["id"] == "io.github.dawgon2.Revolution" and m["command"] == "revolution", m["id"]
           for key in ("runtime", "runtime-version", "sdk", "finish-args"):
               assert src[key] == bundle[key], f"Flatpak manifests disagree on {key}: {src[key]} vs {bundle[key]}"
           # Both install the app and the CLI/MCP server (#346).
           import re
           def programs(m):
               return {p for c in m["modules"][0]["build-commands"] for p in re.findall(r"/app/bin/([\w.-]+)", c)}
-          assert programs(src) == programs(bundle) == {"filmcraft", "filmcraft-cli"}, f"Flatpak manifests install {programs(src)} vs {programs(bundle)}"
+          assert programs(src) == programs(bundle) == {"revolution", "revolution-cli"}, f"Flatpak manifests install {programs(src)} vs {programs(bundle)}"
           print("Flatpak manifests ok")
           EOF
       - name: FreeBSD package layout (stub binaries)

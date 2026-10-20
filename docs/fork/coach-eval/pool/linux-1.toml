@@ -22,9 +22,9 @@ style = "pro"
 [[question]]
 id = "pool-l1-flatpak-control"
 kind = "tweak"
-q = "the --control agent port doesn't work in the Flatpak"
+q = "does the Flatpak have network access?"
 sources = ["linux.install"]
-must = ["the Flatpak has no network: flatpak override --user --share=network ai.storyteller.filmcraft"]
+must = ["yes, unlike upstream's Flatpak (update check, model downloads, sharing); flatpak override --user --unshare=network io.github.dawgon2.Revolution takes it away"]
 must_not = []
 style = "pro"
 

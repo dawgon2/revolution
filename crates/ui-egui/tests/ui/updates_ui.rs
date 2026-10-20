@@ -64,7 +64,7 @@ fn builds(root: &Path) -> Layout {
     std::fs::create_dir_all(&current).unwrap();
     std::fs::write(current.join("filmcraft"), b"old").unwrap();
     std::os::unix::fs::symlink(&current, b.join("latest")).unwrap();
-    Layout { builds: b, current }
+    Layout { builds: b, current, appimage: None }
 }
 
 struct Driver {

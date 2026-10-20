@@ -1,6 +1,6 @@
 //! `filmcraft-cli thumbnail <file> <size> <out.png>`: a small picture of a project or a media file
 //! for file managers (LINUX-PLAN L2.2). The freedesktop `.thumbnailer`
-//! (`packaging/linux/ai.storyteller.filmcraft.thumbnailer`, GNOME Files, Nemo, Thunar…) and the
+//! (`packaging/linux/io.github.dawgon2.Revolution.thumbnailer`, GNOME Files, Nemo, Thunar…) and the
 //! fork's KDE / Dolphin plugin (`fork/kde-thumbnailer/`) both run it.
 //!
 //! A project (`.fcproj`) shows its active sequence; a video or picture file shows itself. The

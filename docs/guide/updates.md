@@ -62,9 +62,13 @@ Why it is safe to click **Update**:
 **Restart Now** closes Revolution as usual (it asks about unsaved work first) and then starts
 the new build.
 
-If this copy of Revolution wasn't installed by the build procedure (for example a Flatpak, or a
-build run from a source folder), the window offers **Open the Release Page**
-({ui:update.releasePage}) instead of **Update**, and says why.
+**An AppImage does this too** (from 0.1.3): **Update** downloads the release's AppImage for your
+processor, checks it and puts it where the old file was; the old one is kept beside it as
+`<name>.AppImage.previous`, which **Roll back** moves back.
+
+Other installs offer **Open the Release Page** ({ui:update.releasePage}) instead and say what to
+do: the `.deb` / `.rpm` or Arch package through your package manager, a newer `.flatpak`, a newer
+Windows `.msi` (or portable `.zip`), or a fresh build of a source folder ([install](install.md)).
 
 ## Settings ▸ Updates: turn the check on or off, check now
 

@@ -2,7 +2,7 @@
 //! manager, or starting FilmCraft again, hands the files to the window that is already open
 //! instead of starting a second app on the same auto-save and settings.
 //!
-//! The first instance owns a session D-Bus name (`ai.storyteller.filmcraft` for the default data
+//! The first instance owns a session D-Bus name (`io.github.dawgon2.Revolution` for the default data
 //! folder; another data folder gets its own name, so the fork's `--data-dir` launcher and a
 //! packaged install don't meet) and serves `ai.storyteller.filmcraft.Instance.Open(files,
 //! activation_token)` at `/ai/storyteller/filmcraft`. A later launch finds the name taken, calls

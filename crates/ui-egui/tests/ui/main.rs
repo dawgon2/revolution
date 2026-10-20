@@ -54,6 +54,7 @@ mod playback_clock_ui;
 mod project_panel_ui;
 mod projects_ui;
 mod remix_ui;
+mod remote_ui;
 mod robustness_ui;
 mod scopes_footer;
 mod scripted;

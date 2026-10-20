@@ -1,0 +1,345 @@
+# Revolution release pipeline (fork, FORK-PLAN §1a.107 Phase PKG). Upstream's release.yml (push
+# to `release`, signed installers, FilmCraft names) is left as it is; Revolution releases run here.
+#
+# A pushed tag `revolution-<version>` (on the public dawgon2/revolution `fork` snapshot) builds every
+# format, smoke-tests each one, and creates the GitHub release (or adds the assets to the release of
+# that tag if it already exists) with one SHA256SUMS:
+#
+#   <tag>-linux-<arch>.tar.gz                    portable folder (what the in-app updater installs)
+#   <tag>-linux-<arch>.AppImage (+ .zsync), .deb, .rpm, .flatpak
+#   <tag>-windows-<arch>.msi, <tag>-windows-<arch>-portable.zip
+#   for <arch> x86_64 / aarch64 (Linux) and x64 / arm64 (Windows). Windows builds are unsigned.
+#
+# workflow_dispatch is a dry run: it builds and tests the formats (optionally x86_64 / x64 only)
+# and keeps them as workflow artifacts; it publishes only with `publish` set and an existing tag.
+# Release notes: docs/fork/releases/<tag>.md when present (also the portable tarball's NOTES.md).
+# Nothing here uses a secret other than the workflow's own GITHUB_TOKEN.
+name: Revolution release
+
+on:
+  push:
+    tags: ['revolution-*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. revolution-0.1.3 (a dry run may use any revolution-<semver>)"
+        type: string
+        required: true
+      only_x64:
+        description: "Build only x86_64 Linux and x64 Windows (quicker dry run)"
+        type: boolean
+        default: false
+      only_arm:
+        description: "Build only aarch64 Linux and arm64 Windows (dry run of the ARM half)"
+        type: boolean
+        default: false
+      publish:
+        description: "Create / update the GitHub release of an existing tag"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: revolution-release-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  FILMCRAFT_BUILD_SHA: ${{ github.sha }}
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      date: ${{ steps.v.outputs.date }}
+      publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      ref: ${{ steps.v.outputs.ref }}
+      linux: ${{ steps.v.outputs.linux }}
+      windows: ${{ steps.v.outputs.windows }}
+    steps:
+      - id: v
+        name: Resolve tag and matrices
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          ONLY_X64: ${{ inputs.only_x64 }}
+          ONLY_ARM: ${{ inputs.only_arm }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ "$EVENT" = push ]; then tag="$REF_NAME"; publish=true; else tag="$INPUT_TAG"; publish="${PUBLISH:-false}"; fi
+          # A published release is built from the tag's own commit; a dry run from the branch it ran on.
+          if [ "$publish" = true ]; then ref="refs/tags/$tag"; else ref="$GITHUB_SHA"; fi
+          v="${tag#revolution-}"
+          if [ "$v" = "$tag" ] || ! printf '%s' "$v" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?(-[0-9a-z-]+(\.[0-9a-z-]+)*)?$'; then
+            echo "::error::'$tag' is not a tag like revolution-0.1.3 or revolution-0.2"
+            exit 1
+          fi
+          # nfpm / MSI want three numbers: revolution-0.2 is version 0.2.0.
+          core="${v%%-*}"
+          case "$core" in *.*.*) ;; *) v="$core.0${v#"$core"}" ;; esac
+          linux='[{"arch":"x86_64","runner":"ubuntu-22.04","deb":"amd64","fp":"ubuntu-24.04","fedora":"fedora:43","debian":"debian:12"},{"arch":"aarch64","runner":"ubuntu-22.04-arm","deb":"arm64","fp":"ubuntu-24.04-arm","fedora":"fedora:43","debian":"debian:12"}]'
+          windows='[{"arch":"x64","test":"windows-latest"},{"arch":"arm64","test":"windows-11-arm"}]'
+          if [ "$ONLY_X64" = true ]; then
+            linux="$(printf '%s' "$linux" | jq -c '[.[0]]')"
+            windows="$(printf '%s' "$windows" | jq -c '[.[0]]')"
+          elif [ "$ONLY_ARM" = true ]; then
+            linux="$(printf '%s' "$linux" | jq -c '[.[1]]')"
+            windows="$(printf '%s' "$windows" | jq -c '[.[1]]')"
+          fi
+          if [ "$publish" = true ] && { [ "$ONLY_X64" = true ] || [ "$ONLY_ARM" = true ]; }; then
+            echo "::error::a published release needs every architecture (no only_x64 / only_arm)"
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$v"
+            echo "date=$(date -u +%Y-%m-%d)"
+            echo "publish=$publish"
+            echo "ref=$ref"
+            case "$v" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac
+            echo "linux=$linux"
+            echo "windows=$windows"
+          } >>"$GITHUB_OUTPUT"
+          echo "### Revolution $tag (version $v, \`${GITHUB_SHA::9}\`, publish: $publish)" >>"$GITHUB_STEP_SUMMARY"
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: version
+    # Ubuntu 22.04 (glibc 2.35), so the binaries run on Ubuntu 22.04+, Debian 12+, Fedora 36+.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.version.outputs.linux) }}
+    env:
+      FILMCRAFT_RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      FILMCRAFT_VERSION: ${{ needs.version.outputs.version }}
+      FILMCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
+      NFPM_VERSION: 2.47.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: abb83316d96aa59c1cf64784289e378fe9fa5695 # bump deliberately
+          path: craft-fonts
+      - name: Install build and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libasound2-dev \
+            desktop-file-utils appstream python3-yaml zsync
+          curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
+          sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: revolution-linux-${{ matrix.arch }}
+      - name: Build and package (portable tarball, FHS tarball, AppImage, deb, rpm)
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
+        run: |
+          notes="docs/fork/releases/$FILMCRAFT_RELEASE_TAG.md"
+          if [ -f "$notes" ]; then export REVOLUTION_NOTES="$PWD/$notes"; fi
+          packaging/linux/package.sh
+      - name: Check the packages
+        run: |
+          set -x
+          ls -l dist/release
+          dpkg-deb --info dist/release/*.deb
+          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/bin/revolution$'
+          dpkg-deb --contents dist/release/*.deb | grep -E 'usr/share/applications/io\.github\.dawgon2\.Revolution\.desktop$'
+          tar -tzf "dist/release/$FILMCRAFT_RELEASE_TAG-linux-${{ matrix.arch }}.tar.gz" | grep -Fx "$FILMCRAFT_RELEASE_TAG/revolution"
+          ldd target/release/filmcraft
+          for appimage in dist/release/*.AppImage; do
+            chmod +x "$appimage"
+            APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
+            "$appimage" --appimage-updateinformation | grep -F 'gh-releases-zsync|'
+            test -s "$appimage.zsync"
+          done
+      - name: Install and start the .deb on Debian and the .rpm on Fedora (containers)
+        run: |
+          smoke='revolution-cli --version && revolution-cli --demo render --seconds 1 --out /tmp/frame.png && test -s /tmp/frame.png && test -x /usr/bin/revolution'
+          docker run --rm -v "$PWD/dist/release:/dist:ro" "${{ matrix.debian }}" sh -euxc \
+            "apt-get update && apt-get install -y /dist/*.deb && $smoke"
+          docker run --rm -v "$PWD/dist/release:/dist:ro" "${{ matrix.fedora }}" sh -euxc \
+            "dnf install -y /dist/*.rpm && $smoke"
+      - name: Portable tarball and AppImage start (headless render)
+        run: |
+          d="$RUNNER_TEMP/portable"; mkdir -p "$d"
+          tar -xzf "dist/release/$FILMCRAFT_RELEASE_TAG-linux-${{ matrix.arch }}.tar.gz" -C "$d"
+          "$d/$FILMCRAFT_RELEASE_TAG/revolution-cli" --demo render --seconds 1 --out "$RUNNER_TEMP/p.png"
+          test -s "$RUNNER_TEMP/p.png"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    needs: [version, linux]
+    # Repackages the Linux job's FHS tarball (the same binaries); 24.04 for flatpak-builder 1.4.
+    runs-on: ${{ matrix.fp }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.version.outputs.linux) }}
+    env:
+      FILMCRAFT_RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      FILMCRAFT_VERSION: ${{ needs.version.outputs.version }}
+      FILMCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/linux
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-common
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build, install and start the Flatpak bundle
+        run: packaging/linux/flatpak-bundle.sh "dist/linux/$FILMCRAFT_RELEASE_TAG-linux-${{ matrix.arch }}-fhs.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-flatpak-${{ matrix.arch }}
+          path: dist/release/*.flatpak
+          if-no-files-found: error
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: version
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.version.outputs.windows) }}
+    env:
+      FILMCRAFT_RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      FILMCRAFT_VERSION: ${{ needs.version.outputs.version }}
+      FILMCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: abb83316d96aa59c1cf64784289e378fe9fa5695 # bump deliberately
+          path: craft-fonts
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: revolution-windows-${{ matrix.arch }}
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build and package (unsigned MSI + portable zip)
+        shell: pwsh
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
+        run: ./packaging/windows/package.ps1 -Arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  windows-install:
+    name: Windows ${{ matrix.arch }} install test
+    needs: [version, windows]
+    runs-on: ${{ matrix.test }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.version.outputs.windows) }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: dist
+      - name: Install the MSI, start the CLI (version + headless render), uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', 'install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
+          $dir = Join-Path $env:ProgramFiles 'Revolution'
+          foreach ($exe in 'revolution.exe', 'revolution-cli.exe') {
+            if (-not (Test-Path (Join-Path $dir $exe))) { throw "$exe not installed in $dir" }
+          }
+          $cli = Join-Path $dir 'revolution-cli.exe'
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "revolution-cli --version exited $LASTEXITCODE" }
+          $png = Join-Path $env:RUNNER_TEMP 'frame.png'
+          & $cli --demo render --seconds 1 --out $png
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $png)) { throw "revolution-cli render failed ($LASTEXITCODE)" }
+          $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
+          if (Test-Path (Join-Path $dir 'revolution.exe')) { throw 'uninstall left revolution.exe behind' }
+          Write-Output 'ok installed, ran, uninstalled'
+
+  release:
+    name: GitHub release
+    needs: [version, linux, flatpak, windows, windows-install]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+          sparse-checkout: docs/fork/releases
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        working-directory: artifacts
+        run: |
+          # The FHS tarball only feeds the Flatpak job; users get the portable one.
+          rm -f -- *-fhs.tar.gz
+          sha256sum -- * | tee SHA256SUMS
+      - name: Create the release, or add the assets to it
+        working-directory: artifacts
+        run: |
+          gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null || { echo "::error::tag $TAG does not exist"; exit 1; }
+          notes="../docs/fork/releases/$TAG.md"
+          pre=(); if [ "$PRERELEASE" = true ]; then pre=(--prerelease); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber -- *
+          elif [ -f "$notes" ]; then
+            gh release create "$TAG" --verify-tag "${pre[@]}" --title "Revolution ${TAG#revolution-}" --notes-file "$notes" -- *
+          else
+            gh release create "$TAG" --verify-tag "${pre[@]}" --title "Revolution ${TAG#revolution-}" --notes "Revolution ${TAG#revolution-}" -- *
+          fi
+          { echo "Release **$TAG**:"; echo; sed 's/^/    /' SHA256SUMS; } >>"$GITHUB_STEP_SUMMARY"

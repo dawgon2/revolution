@@ -905,7 +905,7 @@ fn package_relink_ignores_paths_that_only_end_like_an_entry() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A one-file `.fcpackage`: written, the folder it came from removed, and imported back with
+/// A one-file `.revpkg` (an older `.fcpackage` name still imports): written, the folder it came from removed, and imported back with
 /// every clip relinked to the unpacked copies.
 #[test]
 fn a_one_file_package_round_trips() {
@@ -923,7 +923,7 @@ fn a_one_file_package_round_trips() {
     let out = dir.join("Out");
     let r =
         s.execute("projects.package", json!({"path": proj.to_string_lossy(), "destination": out.to_string_lossy(), "format": "file", "wait": true})).unwrap();
-    let file = out.join("Reel.fcpackage");
+    let file = out.join("Reel.revpkg");
     assert_eq!(r["package"], json!(file.to_string_lossy()), "{r}");
     assert!(file.is_file() && !out.join("Reel package").exists(), "one file, no folder left");
     assert!(
@@ -931,6 +931,10 @@ fn a_one_file_package_round_trips() {
         "never over an existing package"
     );
     std::fs::remove_dir_all(dir.join("Shoot")).unwrap();
+    // a package made before 0.1.3 had the old extension: it still opens
+    let legacy = out.join("Reel.fcpackage");
+    std::fs::rename(&file, &legacy).unwrap();
+    let file = legacy;
     let r = s.execute("projects.importPackage", json!({"path": file.to_string_lossy(), "wait": true})).unwrap();
     let to = PathBuf::from(r["path"].as_str().unwrap());
     assert!(s.jobs.last().unwrap().progress.error.lock().unwrap().is_none());

@@ -11,10 +11,10 @@ Status: **written** (install, workflow, X-M5 import, hardware path).
 There are two ways to get this fork. Both give the same program; the ready-made build is quicker,
 building from source gets you the newest work between releases.
 
-**A ready-made build (Linux, x86-64).** Every finished phase of the fork is published as a
-release with a `.tar.gz` file and notes saying what is new.
+**A ready-made build.** Every release has notes saying what is new and a package for each
+common system ([install](install.md) compares them). The quickest start on Linux:
 
-1. Download the `filmcraft-fork-<phase>-linux-x86_64.tar.gz` file of the newest release.
+1. Download `revolution-<version>-linux-x86_64.tar.gz` of the newest release.
 2. Unpack it into a folder of your own (no administrator rights needed).
 3. Start the Revolution program in that folder. Nothing is installed system-wide; to remove
    Revolution, delete the folder.
@@ -39,8 +39,8 @@ make a project ([projects](projects.md#opening-the-project-manager)). The workfl
 or Premiere: page layout, names and keyboard) is chosen in the next section; you can change it at
 any time.
 
-Where this differs: Resolve and Premiere come with installers and accounts; Revolution has no
-installer, no sign-in and no licence key.
+Where this differs: Resolve and Premiere come with installers and accounts; Revolution has
+installers too (or none, with the portable folder), but no sign-in and no licence key.
 
 ## Choose your workflow: Premiere or Resolve
 

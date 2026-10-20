@@ -344,6 +344,8 @@ pub struct FilmcraftApp {
     pub update_next_auto: f64,
     /// The update window was closed after installing (until restart).
     pub update_closed: bool,
+    /// `remote.import` jobs whose clips are imported when they finish (STORAGE-PLAN S2).
+    pub pending_remote_imports: Vec<(u64, serde_json::Value)>,
     /// Restart Now: the build to start once this one has closed.
     pub restart_into: Option<std::path::PathBuf>,
     /// The native file dialog the host is showing ([`Self::pick`]).
@@ -825,6 +827,7 @@ impl FilmcraftApp {
             share: Default::default(),
             update_next_auto: 0.0,
             update_closed: false,
+            pending_remote_imports: Vec::new(),
             restart_into: None,
             native_dialog: None,
             auto,
@@ -1050,6 +1053,7 @@ impl FilmcraftApp {
     /// play after rendering, audio device).
     pub fn apply_prefs(&mut self, ctx: &egui::Context) {
         self.apply_ui_scale(ctx);
+        filmcraft_engine::remote::apply_prefs(&self.session.prefs.remote);
         // Appearance Mode ▸ Sync with system: follow the system while running. The host reports
         // changes as they happen (no polling) and wakes the UI only when the value changes.
         // The same for Use the system accent color and Animations ▸ Sync with system.
@@ -2577,6 +2581,8 @@ impl eframe::App for FilmcraftApp {
     }
 
     fn on_exit(&mut self) {
+        // a project opened from a remote location gives its lock back (STORAGE-PLAN S2)
+        let _ = self.session.execute("remote.closeProject", serde_json::json!({}));
         // taskbar progress, inhibitors and the single-instance name go first (`desktop`)
         if let Some(host) = self.hooks.desktop.as_mut() {
             host.shutdown();

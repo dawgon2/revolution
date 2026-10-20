@@ -1323,6 +1323,18 @@ static CATEGORIES: &[Category] = &[
             b("trim.dynamicRippleUpdates", "Update timeline dynamically during ripple edits.", false),
         ],
     },
+    // STORAGE-PLAN S2: servers used without mounting them; secrets in the system keyring
+    Category {
+        id: "remote",
+        title: "Remote Locations",
+        rows: &[
+            Row::Note(
+                "Servers Revolution connects to by itself, without mounting them: WebDAV (Nextcloud, ownCloud, Synology), SFTP (any SSH server) and S3 (MinIO, Garage, Amazon S3). Passwords and keys are kept in the system keyring, never in projects or logs.",
+            ),
+            Row::Custom("remoteLocations"),
+            b("remote.secretsInFile", "Keep passwords in a file when no system keyring works (not encrypted)", false),
+        ],
+    },
     // fork UPD (FORK-PLAN §1a.77): builds without an update channel show "doesn't check"
     Category {
         id: "update",

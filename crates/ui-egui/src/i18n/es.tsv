@@ -4101,7 +4101,7 @@
 	{n} clip(s) are back online	{n} clip(s) vuelven a estar en línea
 	Packaging {name}	Empaquetando {name}
 	Packaging {name} (about {size})	Empaquetando {name} (unos {size})
-	Revolution package (.fcpackage or manifest.json)	Paquete de Revolution (.fcpackage o manifest.json)
+	Revolution package (.revpkg or manifest.json)	Paquete de Revolution (.revpkg o manifest.json)
 	Package as One File…	Empaquetar en un solo archivo…
 	Package	Empaquetar
 	Import Package	Importar paquete
@@ -4139,3 +4139,35 @@
 	Close the Project Manager to play	Cierra el Administrador de proyectos para reproducir
 	App icon	Icono de la aplicación
 	Rounded (macOS style)	Redondeado (estilo macOS)
+	Add Location	Añadir ubicación
+	Add a location	Añadir una ubicación
+	Added {name}. Use Test to check it.	Se añadió {name}. Usa Probar para comprobarla.
+	Connected: {n} item(s) in the folder.	Conectado: {n} elemento(s) en la carpeta.
+	Connected: {n} item(s). This server ignores Revolution's project locks, so don't open the same project on two computers at once.	Conectado: {n} elemento(s). Este servidor ignora los bloqueos de proyecto de Revolution, así que no abras el mismo proyecto en dos ordenadores a la vez.
+	Couldn't connect: the test stopped unexpectedly.	No se pudo conectar: la prueba se detuvo de forma inesperada.
+	Couldn't connect: {error}	No se pudo conectar: {error}
+	No remote locations yet.	Aún no hay ubicaciones remotas.
+	Passwords are kept in: {store}	Las contraseñas se guardan en: {store}
+	Removed {name}.	Se quitó {name}.
+	Test	Probar
+	Testing…	Probando…
+	Remote Locations	Ubicaciones remotas
+	Keep passwords in a file when no system keyring works (not encrypted)	Guardar las contraseñas en un archivo si no funciona ningún llavero del sistema (sin cifrar)
+	Servers Revolution connects to by itself, without mounting them: WebDAV (Nextcloud, ownCloud, Synology), SFTP (any SSH server) and S3 (MinIO, Garage, Amazon S3). Passwords and keys are kept in the system keyring, never in projects or logs.	Servidores a los que Revolution se conecta por sí mismo, sin montarlos: WebDAV (Nextcloud, ownCloud, Synology), SFTP (cualquier servidor SSH) y S3 (MinIO, Garage, Amazon S3). Las contraseñas y claves se guardan en el llavero del sistema, nunca en proyectos ni registros.
+	Address	Dirección
+	Kind	Tipo
+	Add a server in Settings ▸ Remote Locations first.	Primero añade un servidor en Ajustes ▸ Ubicaciones remotas.
+	Couldn't list the folder: {error}	No se pudo mostrar la carpeta: {error}
+	Downloading into the media cache: the clips appear in the project when done.	Descargando en la caché de medios: los clips aparecerán en el proyecto al terminar.
+	Downloading the package…	Descargando el paquete…
+	Imported from the remote location.	Importado desde la ubicación remota.
+	Loading…	Cargando…
+	Opened read-only: {who} has this project open. Save As to keep your changes.	Abierto en solo lectura: {who} tiene este proyecto abierto. Usa Guardar como para conservar tus cambios.
+	Project name	Nombre del proyecto
+	Received: the project is in the Project Manager.	Recibido: el proyecto está en el Administrador de proyectos.
+	Receive Package	Recibir paquete
+	Remote Locations…	Ubicaciones remotas…
+	Saved to {path}.	Guardado en {path}.
+	Save Project Here	Guardar proyecto aquí
+	This folder is empty.	Esta carpeta está vacía.
+	Up	Subir

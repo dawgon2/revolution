@@ -1413,7 +1413,7 @@ fn package_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     if folder.exists() && !dry {
         return Err(bad(CMD, format!("{} already exists", folder.display())));
     }
-    // `format: "file"`: one `<name>.fcpackage` (the folder is made, zipped and removed)
+    // `format: "file"`: one `<name>.revpkg` (the folder is made, zipped and removed)
     let file = match str_p(p, "format").unwrap_or("folder") {
         "folder" => None,
         "file" => Some(Path::new(dest).join(format!("{name}.{}", crate::package::EXT))),
@@ -1508,7 +1508,7 @@ fn import_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let dir = folder_of(s, CMD, p)?;
     std::fs::create_dir_all(&dir).map_err(|e| other(format!("{}: {e}", dir.display())))?;
     let meta = std::fs::metadata(&path).map_err(|e| other(format!("{}: {e}", path.display())))?;
-    if meta.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case(crate::package::EXT)) {
+    if meta.is_file() && crate::package::is_package_file(&path) {
         let m = crate::package::read_zip_manifest(&path).map_err(|e| bad(CMD, e))?;
         return import_package_file(s, p, &path, &dir, m);
     }
@@ -1753,7 +1753,7 @@ pub(crate) fn relink_package(root: &Path, m: &crate::package::Manifest) -> std::
     Ok(n)
 }
 
-/// A `.fcpackage` file comes in: unpacked into a new folder of the projects list (only the
+/// A `.revpkg` (or older `.fcpackage`) file comes in: unpacked into a new folder of the projects list (only the
 /// files its manifest lists), checked, and relinked; on any failure the folder is removed.
 fn import_package_file(s: &mut Session, p: &Value, file: &Path, dir: &Path, m: crate::package::Manifest) -> Result<Value> {
     const CMD: &str = "projects.import";

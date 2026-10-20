@@ -75,8 +75,8 @@ jobs:
           $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
           $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', 'install.log' -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 60; throw "msiexec /i exited $($p.ExitCode)" }
-          $dir = Join-Path $env:ProgramFiles 'FilmCraft'
-          foreach ($exe in 'filmcraft.exe', 'filmcraft-cli.exe') {
+          $dir = Join-Path $env:ProgramFiles 'Revolution'
+          foreach ($exe in 'revolution.exe', 'revolution-cli.exe') {
             $path = Join-Path $dir $exe
             if (-not (Test-Path $path)) { throw "$exe not installed in $dir" }
             $bytes = [System.IO.File]::ReadAllBytes($path)
@@ -85,11 +85,11 @@ jobs:
             Write-Output "ok $path (ARM64)"
           }
           # The installed CLI runs natively on ARM64.
-          $cli = Join-Path $dir 'filmcraft-cli.exe'
+          $cli = Join-Path $dir 'revolution-cli.exe'
           $out = & $cli --version 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 0) { Write-Output $out; throw "filmcraft-cli --version exited $LASTEXITCODE" }
-          Write-Output "ok filmcraft-cli --version: $($out.Trim())"
+          if ($LASTEXITCODE -ne 0) { Write-Output $out; throw "revolution-cli --version exited $LASTEXITCODE" }
+          Write-Output "ok revolution-cli --version: $($out.Trim())"
           $p = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
-          if (Test-Path (Join-Path $dir 'filmcraft.exe')) { throw 'uninstall left filmcraft.exe behind' }
+          if (Test-Path (Join-Path $dir 'revolution.exe')) { throw 'uninstall left revolution.exe behind' }
           Write-Output 'ok uninstalled'

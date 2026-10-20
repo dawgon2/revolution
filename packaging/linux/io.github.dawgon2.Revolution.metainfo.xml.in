@@ -2,26 +2,27 @@
 <!-- AppStream metadata (software centres, Flathub). Template: package.sh and the Flatpak
      manifest substitute @VERSION@ and @DATE@ from Cargo.toml and the build date. -->
 <component type="desktop-application">
-  <id>ai.storyteller.filmcraft</id>
+  <id>io.github.dawgon2.Revolution</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT OR Apache-2.0</project_license>
   <name>Revolution</name>
   <summary>Edit video, color and sound</summary>
-  <developer id="ai.storyteller">
-    <name>Learning Machines LLC</name>
+  <developer id="io.github.dawgon2">
+    <name>dawgon2</name>
   </developer>
   <description>
     <p>
-      Revolution is a video editor based on FilmCraft. Edit video, color and sound
+      Revolution is an open-source video editor for Linux and Windows, based on FilmCraft. Cut on a
+      timeline with source and program monitors, grade colour with nodes, wheels, curves and scopes,
+      composite with keys and masks, mix sound with loudness meters, and export with hardware encoding.
     </p>
   </description>
-  <launchable type="desktop-id">ai.storyteller.filmcraft.desktop</launchable>
-  <icon type="stock">ai.storyteller.filmcraft</icon>
+  <launchable type="desktop-id">io.github.dawgon2.Revolution.desktop</launchable>
+  <icon type="stock">io.github.dawgon2.Revolution</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
-  <url type="homepage">https://getartcraft.com/apps/filmcraft</url>
-  <url type="bugtracker">https://github.com/storytold/filmcraft/issues</url>
-  <url type="help">https://github.com/storytold/filmcraft</url>
-  <url type="contact">https://discord.gg/artcraft</url>
+  <url type="homepage">https://github.com/dawgon2/revolution</url>
+  <url type="bugtracker">https://github.com/dawgon2/revolution/issues</url>
+  <url type="help">https://github.com/dawgon2/revolution/tree/fork/docs/guide</url>
   <categories>
     <category>AudioVideo</category>
     <category>Video</category>
@@ -37,7 +38,7 @@
   <screenshots>
     <screenshot type="default">
       <caption>Color workspace: a documentary cut with Lumetri Color, scopes, captions and loudness meters</caption>
-      <image>https://raw.githubusercontent.com/storytold/filmcraft/main/docs/images/filmcraft-hero.png</image>
+      <image>https://raw.githubusercontent.com/dawgon2/revolution/fork/docs/images/filmcraft-hero.png</image>
     </screenshot>
   </screenshots>
   <branding>
@@ -53,7 +54,8 @@
     <control>tablet</control>
   </supports>
   <provides>
-    <binary>filmcraft</binary>
+    <binary>revolution</binary>
+    <binary>revolution-cli</binary>
   </provides>
   <content_rating type="oars-1.1"/>
   <releases>

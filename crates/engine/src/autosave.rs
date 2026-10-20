@@ -204,6 +204,8 @@ pub struct Preferences {
     pub workflow_auto_theme: String,
     /// Update check (fork UPD): once a day, on by default; the first prompt says what it sends.
     pub update: crate::update::UpdatePrefs,
+    /// Settings ▸ Remote locations (STORAGE-PLAN S2); never holds a secret.
+    pub remote: crate::remote::RemotePrefs,
     /// Fork RS1: this file (or its absence) asks for the one-time switch to Resolve, which the
     /// session performs through `set_workflow` once the keyboard presets are loaded. Never saved.
     #[serde(skip)]
@@ -241,6 +243,7 @@ impl Default for Preferences {
             workflow_return_theme: String::new(),
             workflow_auto_theme: String::new(),
             update: Default::default(),
+            remote: Default::default(),
             pending_resolve_migration: false,
         }
     }

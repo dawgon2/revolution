@@ -3620,7 +3620,7 @@
 	{n} clip(s) are back online	{n} clip(s) de nouveau en ligne
 	Packaging {name}	Empaquetage de {name}
 	Packaging {name} (about {size})	Empaquetage de {name} (environ {size})
-	Revolution package (.fcpackage or manifest.json)	Paquet Revolution (.fcpackage ou manifest.json)
+	Revolution package (.revpkg or manifest.json)	Paquet Revolution (.revpkg ou manifest.json)
 	Package as One File…	Empaqueter en un seul fichier…
 	Package	Empaqueter
 	Import Package	Importer un paquet

@@ -45,6 +45,7 @@ filmcraft-text = { path = "crates/text" }
 filmcraft-captions = { path = "crates/captions" }
 filmcraft-speech = { path = "crates/speech" }
 filmcraft-llm = { path = "crates/llm" }
+filmcraft-remote = { path = "crates/remote" }
 filmcraft-ml = { path = "crates/ml" }
 filmcraft-tts = { path = "crates/tts" }
 filmcraft-voice = { path = "crates/voice" }

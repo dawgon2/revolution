@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   echo 'Usage: ./install.sh [--prefix /absolute/path]'
-  echo 'Installs FilmCraft and its desktop integration into ~/.local by default.'
+  echo 'Installs Revolution and its desktop integration into ~/.local by default.'
   echo 'For all users: sudo ./install.sh --prefix /usr/local'
 }
 fail() { echo "error: $*" >&2; exit 1; }
@@ -25,15 +25,15 @@ prefix="$(realpath -m -- "$prefix")"
 [ "$prefix" != / ] || fail 'use /usr/local or a user directory, not /'
 source_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
 case "$prefix/" in "$source_dir/"*) fail 'choose an installation prefix outside the extracted tarball' ;; esac
-app_id=ai.storyteller.filmcraft
-for binary in filmcraft filmcraft-cli; do
+app_id=io.github.dawgon2.Revolution
+for binary in revolution revolution-cli; do
   [ -f "$source_dir/bin/$binary" ] || fail "missing bin/$binary; extract the complete tarball first"
 done
 [ -f "$source_dir/share/applications/$app_id.desktop" ] || fail 'missing desktop entry; extract the complete tarball first'
 
 mkdir -p -- "$prefix/bin" "$prefix/share"
-install -m755 -- "$source_dir/bin/filmcraft" "$prefix/bin/filmcraft"
-install -m755 -- "$source_dir/bin/filmcraft-cli" "$prefix/bin/filmcraft-cli"
+install -m755 -- "$source_dir/bin/revolution" "$prefix/bin/revolution"
+install -m755 -- "$source_dir/bin/revolution-cli" "$prefix/bin/revolution-cli"
 cp -R -- "$source_dir/share/." "$prefix/share/"
 
 # Use an absolute path so launching from the application menu does not depend on PATH.
@@ -55,11 +55,11 @@ rewrite_exec() {
     esac
   done <"$3"
 }
-rewrite_exec filmcraft "$prefix/bin/filmcraft" "$source_dir/share/applications/$app_id.desktop" >"$prefix/share/applications/$app_id.desktop"
+rewrite_exec revolution "$prefix/bin/revolution" "$source_dir/share/applications/$app_id.desktop" >"$prefix/share/applications/$app_id.desktop"
 # The thumbnailer runs without our PATH (GNOME runs it in a sandbox): absolute path too.
 thumbnailer="share/thumbnailers/$app_id.thumbnailer"
 if [ -f "$source_dir/$thumbnailer" ]; then
-  rewrite_exec filmcraft-cli "$prefix/bin/filmcraft-cli" "$source_dir/$thumbnailer" >"$prefix/$thumbnailer"
+  rewrite_exec revolution-cli "$prefix/bin/revolution-cli" "$source_dir/$thumbnailer" >"$prefix/$thumbnailer"
 fi
 
 # Cache tools are optional; installing binaries must also work on minimal systems.
@@ -72,7 +72,7 @@ fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -q -t -f "$prefix/share/icons/hicolor" || echo 'warning: icon cache refresh failed' >&2
 fi
-printf 'Installed FilmCraft in %s\nLaunch it from the application menu or run "%s/bin/filmcraft".\n' "$prefix" "$prefix"
+printf 'Installed Revolution in %s\nLaunch it from the application menu or run "%s/bin/revolution".\n' "$prefix" "$prefix"
 case ":${PATH:-}:" in
   *":$prefix/bin:"*) ;;
   *) printf 'For terminal commands, add %s/bin to your PATH.\n' "$prefix" ;;

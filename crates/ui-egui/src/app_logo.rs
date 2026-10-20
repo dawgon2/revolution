@@ -9,7 +9,7 @@
 use egui::{Color32, Context, Painter, Rect, TextureHandle, TextureId, pos2};
 
 /// The macOS-style icon: the tile is 824 / 1024 of the picture, centred in a transparent margin.
-const PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.filmcraft.png");
+const PNG: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/io.github.dawgon2.Revolution.png");
 
 /// How much of the picture's side the tile itself covers (Apple's grid).
 pub const TILE_FRACTION: f32 = 824.0 / 1024.0;

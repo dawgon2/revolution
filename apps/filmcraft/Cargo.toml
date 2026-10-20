@@ -23,9 +23,10 @@ neural-voices = ["filmcraft-engine/neural-voices"]
 voice-isolation = ["filmcraft-engine/voice-isolation"]
 
 [dependencies]
-filmcraft-engine = { workspace = true, features = ["fork-resolve-default", "fork-inbox", "fork-update"] } # FORK-ONLY (RS1, AI5 inbox, UPD)
+filmcraft-engine = { workspace = true, features = ["fork-resolve-default", "fork-inbox", "fork-update", "remote-net"] } # FORK-ONLY (RS1, AI5 inbox, UPD); remote-net: S2
 filmcraft-export = { workspace = true }
 filmcraft-project = { workspace = true }
+filmcraft-remote = { workspace = true }
 filmcraft-render = { workspace = true }
 filmcraft-time = { workspace = true }
 filmcraft-gpu = { workspace = true }

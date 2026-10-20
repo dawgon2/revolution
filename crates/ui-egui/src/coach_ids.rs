@@ -65,7 +65,7 @@ pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "projectDialog.field.*", "projectDialog.preset.*", "projectDialog.up.*", "projectSettings.*.*", "projectSettings.scratch.*",
     "projectSettings.scratch.*.browse", "projectSettings.scratch.*.same", "projectSettings.tab.*", "projects.crumb.*",
     "projects.folder.*", "projects.menu.*", "projects.other.*", "projects.sidebar.*", "projects.sort.*", "projects.tile.*", "properties.*.*", "proxies.preset.*",
-    "quickExport.preset.*", "recovery.item.*", "reference.display.*", "reference.scope.*", "savePreset.keyframes.*", "scopes.menu.*",
+    "quickExport.preset.*", "recovery.item.*", "reference.display.*", "reference.scope.*", "savePreset.keyframes.*", "remote.*", "remote.entry.**", "remote.location.*", "scopes.menu.*",
     "scopes.menu.brightness.*", "scopes.menu.colorSpace.*", "scopes.menu.paradeType.*", "scopes.menu.preset.*", "scopes.menu.scale.*",
     "scopes.menu.targets.*", "scopes.menu.waveformType.*", "sequenceSettings.*", "sequenceSettings.channelFormat.option.*",
     "sequenceSettings.sampleRate.option.*", "sequenceSettings.tab.*", "sequenceSettings.timebase.option.*/*", "sequenceSettings.tracks.*",

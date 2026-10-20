@@ -52,6 +52,146 @@ pub struct SettingsDraft {
     /// GPUs reported by the host (Playback page, Graphics device; L2.6).
     #[serde(default)]
     pub gpus: Option<Vec<crate::graphics_device::GpuChoice>>,
+    /// Remote Locations page: the Add form (its password is never serialised or printed).
+    #[serde(default)]
+    pub remote: RemoteDraft,
+}
+
+/// Settings ▸ Remote Locations ▸ Add (STORAGE-PLAN S2).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RemoteDraft {
+    /// `webDav` | `sftp` | `s3`.
+    pub kind: String,
+    pub name: String,
+    pub url: String,
+    pub user: String,
+    pub root: String,
+    pub region: String,
+    #[serde(skip)]
+    pub secret: SecretText,
+}
+
+/// A typed password: kept out of `ui.inspect` and `Debug`.
+#[derive(Clone, Default)]
+pub struct SecretText(pub String);
+
+impl std::fmt::Debug for SecretText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() { "\"\"" } else { "\"<hidden>\"" })
+    }
+}
+
+/// Results of Settings ▸ Remote Locations ▸ Test, by location id (the check runs on its own
+/// thread so a slow server never freezes the dialog).
+static REMOTE_CHECKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+
+fn remote_checks() -> std::sync::MutexGuard<'static, std::collections::HashMap<String, String>> {
+    REMOTE_CHECKS.get_or_init(Default::default).lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Settings ▸ Remote Locations: the saved servers (Test / Remove) and the Add form.
+fn remote_rows(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft) {
+    let t = app.tokens;
+    let locations = app.session.prefs.remote.locations.clone();
+    if locations.is_empty() {
+        note(ui, &t, tl!("No remote locations yet."));
+    }
+    for loc in &locations {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&loc.name).size(13.0).strong());
+            ui.label(RichText::new(&loc.url).size(12.0).color(t.text_dim));
+            if button(app, ui, &format!("settings.remote.test.{}", loc.id), tl!("Test"), false) {
+                remote_checks().insert(loc.id.clone(), tl!("Testing…").to_string());
+                let (loc, ctx) = (loc.clone(), ui.ctx().clone());
+                std::thread::spawn(move || {
+                    let line = match std::panic::catch_unwind(|| filmcraft_engine::remote::check(&loc)) {
+                        Ok(Ok(r)) if r.safe_locking => tlf!("Connected: {n} item(s) in the folder.", n = r.entries),
+                        Ok(Ok(r)) => tlf!(
+                            "Connected: {n} item(s). This server ignores Revolution's project locks, so don't open the same project on two computers at once.",
+                            n = r.entries
+                        ),
+                        Ok(Err(e)) => tlf!("Couldn't connect: {error}", error = e),
+                        Err(_) => tl!("Couldn't connect: the test stopped unexpectedly.").to_string(),
+                    };
+                    remote_checks().insert(loc.id.clone(), line);
+                    ctx.request_repaint();
+                });
+            }
+            if button(app, ui, &format!("settings.remote.remove.{}", loc.id), tl!("Remove"), false) {
+                d.message = match app.session.execute("remote.remove", json!({"id": loc.id})) {
+                    Ok(_) => tlf!("Removed {name}.", name = loc.name),
+                    Err(e) => e.to_string(),
+                };
+                remote_checks().remove(&loc.id);
+            }
+        });
+        let status = remote_checks().get(&loc.id).cloned();
+        if let Some(status) = status {
+            note(ui, &t, &status);
+        }
+    }
+    group(ui, &t, tl!("Add a location"), |ui| {
+        let r = &mut d.remote;
+        if r.kind.is_empty() {
+            r.kind = "webDav".into();
+        }
+        let kinds = static_opts(&[("webDav", "WebDAV (Nextcloud, ownCloud, Synology)"), ("sftp", "SFTP (SSH server)"), ("s3", "S3 (MinIO, Garage, Amazon)")]);
+        ui.horizontal(|ui| {
+            field_label(ui, "Kind");
+            let cur = r.kind.clone();
+            if let Some(k) = combo(app, ui, "remote.add.kind", &cur, &kinds, 300.0) {
+                r.kind = k;
+            }
+        });
+        let s3 = r.kind == "s3";
+        let fields: [(&str, &str, &str, &mut String); 5] = [
+            ("name", "Name", "Home NAS", &mut r.name),
+            ("url", "Address", if r.kind == "sftp" { "sftp://server.local" } else { "https://server.local/remote.php/dav/files/me/" }, &mut r.url),
+            ("user", if s3 { "Access key" } else { "User name" }, "", &mut r.user),
+            ("root", if s3 { "Bucket / folder" } else { "Folder" }, "", &mut r.root),
+            ("region", "Region (S3)", "us-east-1", &mut r.region),
+        ];
+        for (key, label, hint, value) in fields {
+            if key == "region" && !s3 {
+                continue;
+            }
+            ui.horizontal(|ui| {
+                field_label(ui, label);
+                let e = ui.add_sized(vec2(300.0, 22.0), egui::TextEdit::singleline(value).hint_text(hint));
+                app.auto.add(&format!("settings.remote.add.{key}"), e.rect, label);
+            });
+        }
+        ui.horizontal(|ui| {
+            field_label(
+                ui,
+                if s3 {
+                    "Secret key"
+                } else if r.kind == "sftp" {
+                    "Password or private key"
+                } else {
+                    "Password"
+                },
+            );
+            let e = ui.add_sized(vec2(300.0, 22.0), egui::TextEdit::singleline(&mut r.secret.0).password(true));
+            app.auto.add("settings.remote.add.secret", e.rect, "Password");
+        });
+    });
+    if button(app, ui, "settings.remote.add", tl!("Add Location"), true) {
+        let r = &d.remote;
+        let mut p = json!({"kind": r.kind, "name": r.name, "url": r.url, "user": r.user, "root": r.root, "region": r.region});
+        if !r.secret.0.is_empty() {
+            p["secret"] = json!(r.secret.0);
+        }
+        d.message = match app.session.execute("remote.add", p) {
+            Ok(v) => {
+                d.remote = RemoteDraft { kind: d.remote.kind.clone(), ..Default::default() };
+                tlf!("Added {name}. Use Test to check it.", name = v["location"]["name"].as_str().unwrap_or(""))
+            }
+            Err(e) => e.to_string(),
+        };
+    }
+    note(ui, &t, &tlf!("Passwords are kept in: {store}", store = filmcraft_engine::remote::secret_store_name()));
 }
 
 /// Open the dialog on a category page.
@@ -744,6 +884,7 @@ fn custom(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft, name: &str
         }
         "renderCacheInfo" => render_cache_rows(app, ui),
         "updateInfo" => update_rows(app, ui),
+        "remoteLocations" => remote_rows(app, ui, d),
         "outputMapping" => {
             let ch = d.devices.as_ref().map(|x| x.output_channels).unwrap_or(0);
             let l = get(&d.values, "audioHardware.mapLeft").as_u64().unwrap_or(0) + 1;

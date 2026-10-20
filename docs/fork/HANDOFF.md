@@ -5,10 +5,97 @@ newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), t
 [`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (Q51 answered, **Q52** FYI, **Q53 owed**), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
 
-## Exact next step (2026-10-20, live): runner resumes: PKG → S2 (release 0.1.3) → REF → C2 → AI2 → A3 (publish 0.2), then stop
+## S2 progress (scheduled runs from 2026-10-20 08:33 EDT)
 
-**State:** `revolution-wip` (XPS, `xps-1`) merged into `hevc-vaapi`. **Revolution 0.1.1 is published**
-(dawgon2/revolution, 2026-10-18 23:29 EDT). §1a numbering: XPS decisions **105**, Music **106**, packaging **107**,
+S2 steps (STORAGE-PLAN §"Phase S2"), status:
+- **1a ✓** new crate `crates/remote` (`filmcraft-remote`, L2, `xtask layers` row): `RemoteStore` trait (list / stat /
+  read_range / write (all-or-nothing) / create_new (atomic, lock primitive) / rename / delete / make_dir / read_all),
+  checked `RemotePath`, `lock` (`.<name>.revlock`: holder / machine / session / since; acquire / take_over / release /
+  still_ours), `MemoryStore` (drop-connection simulation), `Location` (no secrets: keyring key `revolution-remote:<id>`).
+  No network deps yet: backends go behind a `net` feature (wasm check stays clean, like speech's `download`).
+- 1b WebDAV backend, 1c S3 backend (SigV4, multipart), 1d SFTP (russh; user-level sshd on a high port for its test),
+  each tested against an in-process test server (no podman / docker on this PC: real-server containers owed, Q55).
+- **2a ✓** `filmcraft_remote::secrets` (`SecretStore`, `MemorySecrets`, opt-in `FileSecrets` 0600, process-wide `install` / `store`); app `keyring.rs`: freedesktop Secret Service over zbus (KWallet ksecretd / GNOME Keyring), `LazyKeyring` installed at start-up (connects on first use); real round trip passed (`cargo test -p filmcraft --bin filmcraft keyring -- --ignored`).
+- **2b-engine ✓** `crates/engine/src/remote.rs`: `RemotePrefs` (`prefs.remote`: locations, `secretsInFile`), `remote.list / add (also edit) / remove / test / browse`, `connect()` (feature `remote-net` → `filmcraft-remote/net`), secrets only in the store (test checks prefs + replies); guide network-storage.remote-locations.
+- **2b-ui ✓** Settings ▸ Remote Locations (category `remote`): list with Test (own thread, `remote::check` incl. a lock-safety probe: servers ignoring `If-None-Match` get a warning) / Remove, Add form (`SettingsDraft.remote`, password never serialised / Debug), `remote.secretsInFile` → `WithFileFallback` (keyring first; `<data>/remote/secrets.json` 0600 only if allowed); es + zh-cn strings; UI test `remote_ui`. Merged **1b WebDAV** (+ review fixes).
+- **6a ✓** one-file packages are `.revpkg` (`package::EXT`; `LEGACY_EXT` `.fcpackage` still imports, `is_package_file`); picker, guide, eval pool rows updated. **1c S3 merged**, **1e** app + CLI enable `remote-net`.
+- **4 ✓** `engine/src/remote_project.rs`: `remote.openProject` (working copy under the data folder, lock; held → read-only, `takeOver`), `remote.saveProject` (still ours + unchanged etag → previous server copy to `.<name>.versions/` (10 kept), upload, put back on failure; else conflict copy `<stem> (conflict from <machine> <date>)`), `saveProjectAs`, `closeProject`, `unlock`, `projectStatus`; `Session.remote_project`; 3 tests (two machines, versions cap + dropped upload, hostile paths); guide network-storage.remote-projects. UI (File menu items, read-only banner, release on quit) still owed.
+- **1d ✓** SFTP merged (russh 0.52.1 pinned, Q56; TOFU `<data>/remote/known_hosts`), in `remote-net`; all three backends live in the app + CLI.
+- **6b ✓** `engine/src/remote_transfer.rs`: `remote.sendProject` (package → outbox → upload job, 3 tries, size verified, outbox removed), `remote.receiveProject` (8 MiB ranges into `inbox/<loc>/<name>.part`, resumes from its length, retries a dropped range, then `projects.importPackage`); test with a pre-existing partial download + dropped range; guide network-storage.send-receive. Streaming upload without a local copy: owed.
+- **3a ✓** `remote.import` (job; `<media cache>/Remote Media/<loc>/<path>`, resumable `.part`, complete copies reused, then `file.import`), test.
+- **3b + 4-UI ✓** `ui-egui/src/panels/remote_browser.rs`: File ▸ Remote Locations… (`remote.show`): location picker, folders (listing on a thread), Import (job → `file.import` when done), Open Project (read-only status), Receive Package (job → `projects.importPackage`), Save Project Here; File ▸ Save of a remote project → `remote.saveProject`; quitting → `remote.closeProject`; UI test `browse_save_open_and_import_through_the_remote_browser` (+ screenshot checked); `remote::test_stores` now doc-hidden pub for UI tests.
+- **3c** provisional (Q57): download first, no streaming. **Acceptance test** `no_credential_in_any_written_file` ✓; shared test keyring.
+- next: home-screen Send Project… / Receive (optional), acceptance + ci + tag `storage-2` + build + release 0.1.3, UI for remote projects (File menu, read-only banner, release lock on quit), 6b Send / Receive Project (`remote.sendProject` / `receiveProject`, S3 multipart resume), then acceptance; 3 Media panel browse / import / link; 4 remote open / save / lock /
+  conflict copies / versions; 5 `remote.*` commands; 6 Send / Receive Project (`.revpkg` rename); then acceptance,
+  ci, tag `storage-2`, build, release notes `docs/fork/releases/revolution-0.1.3.md`, publish 0.1.3, cleanup.
+
+## Exact next step (2026-10-20 08:31 EDT, scheduled run): PKG done (`pkg-1`); next **Phase S2** (STORAGE-PLAN.md), then publish Revolution 0.1.3
+
+**State:** Phase PKG accepted and tagged `pkg-1` (local build `~/Apps/filmcraft-builds/pkg-1`, `latest` → it; not
+published: §1a.109 (d)). CI dry runs on the private repo, both green: x86_64 / x64 (run 39410795808) and ARM
+(run 39416613775): every asset built and smoke-tested, incl. .deb on debian:12, .rpm on fedora:43, Flatpak in its
+sandbox, MSI install / run / uninstall on windows-latest and windows-11-arm. `cargo xtask ci`: 4299 / 4300 (one
+coach_ui timing test under load, 3 / 3 alone, untouched); fmt / clippy / layers / assets / wasm green. Cleanup freed
+16.5 GB. Q54 FYI (Flatpak network; Actions minutes on the private repo).
+
+**Next: S2** from its first item (STORAGE-PLAN §"Phase S2": `RemoteStore` trait with WebDAV / SFTP / S3 backends,
+`.fcpackage` → `.revpkg`, …; read the whole S2 section first). Then **S2's closing run publishes Revolution 0.1.3**
+(PKG + S2, §1a.109 (d)): write `docs/fork/releases/revolution-0.1.3.md` (notes for both phases; the workflow uses it
+as release notes and NOTES.md), ci, tag `s2-…` per the plan + build, then `publish-snapshot.sh` → public `fork` +
+tag `revolution-0.1.3` → the public repo's `revolution-release.yml` builds and releases every format (watch it with
+`gh run watch -R dawgon2/revolution`; it creates the release, or adds assets to an existing one). No Dell scrubbed
+tarball needed any more. Then REF → C2 → AI2 → A3 (publish 0.2) → `.fork-paused`.
+
+**PKG details** (for reference): see the section below.
+
+## Was: Exact next step (2026-10-20 07:00, scheduled run): Phase PKG in progress: steps 1–5 committed; next step 6 (CI dry run), then 7 (acceptance), then S2
+
+**PKG plan (FORK-PLAN §1a.107), with status:**
+1. ✓ Identity: packaged files renamed `ai.storyteller.filmcraft.*` → `io.github.dawgon2.Revolution.*` (desktop,
+   metainfo, mime, thumbnailer, Flatpak manifests, hicolor icons + attributions); programs ship as
+   `revolution` / `revolution-cli` (cargo still builds `filmcraft` / `filmcraft-cli`); metainfo / nfpm / PKGBUILD /
+   WiX (new UpgradeCode, `Program Files\Revolution`) / package.ps1 rebranded; Flatpak gets `--share=network` (Q54).
+   Internals unchanged: D-Bus interface `ai.storyteller.filmcraft.Instance`, MIME `application/x-filmcraft-project`,
+   MPRIS `org.mpris.MediaPlayer2.filmcraft`, upstream's `release.yml` (not used by the fork), macOS Info.plist.
+2. ✓ Names / versions: `packaging/env.sh` takes the version from `FILMCRAFT_RELEASE_TAG=revolution-<v>` and exports
+   `RELEASE_NAME` (= the tag): every asset is `<tag>-linux-<arch>.{tar.gz,AppImage,deb,rpm,flatpak}` /
+   `<tag>-windows-<arch>{.msi,-portable.zip}`; the package-internal version pads `0.2` → `0.2.0`. package.sh's
+   `portable` format = the updater's layout (`<tag>/revolution`, NOTES.md from `$REVOLUTION_NOTES`); its FHS tarball
+   is now `<tag>-linux-<arch>-fhs.tar.gz` (feeds the Flatpak job, not published). `test_install.py` 9 tests.
+3. ✓ Workflow `.github/workflows/revolution-release.yml`: tag `revolution-*` (or workflow_dispatch: `tag`, `only_x64`,
+   `publish`) → Linux x86_64 + aarch64 (Ubuntu 22.04: package.sh, deb into debian:12 and rpm into fedora:43
+   containers, `revolution-cli --version` + `--demo render` there and from the portable tarball, AppImage
+   `--version`), Flatpak both arches (installs + runs the CLI in the sandbox), Windows x64 + arm64 (unsigned MSI +
+   zip; install / run / uninstall on windows-latest / windows-11-arm), release job (`--prerelease` for `-rc` tags,
+   one `SHA256SUMS`, notes from `docs/fork/releases/<tag>.md` if present, uploads to an existing release with
+   `--clobber`). Published runs build from the tag's commit. Opus review: 8 findings, all fixed.
+4. ✓ Updater (`crates/engine/src/update*.rs`): assets for this processor (`linux_arch()`); an AppImage replaces
+   itself (`$APPIMAGE` trusted only when the exe is inside `$APPDIR`; old file kept as `<file>.previous`, Roll back
+   moves it back; stale `.*.AppImage.part` removed); deb / rpm / pacman (`/usr/bin`, `/usr/local/bin`, `/opt`,
+   `~/.local/bin`), Flatpak, Windows MSI / portable each get a "how to update" message. Tests: engine lib
+   `update` + `coach` 127 green.
+5. ✓ Guide: new `docs/guide/install.md` (one section per format; in `GUIDE_PAGES` + `NOT_INDEXED`), updates.md,
+   linux.md (Flatpak id / network), getting-started.md; compositor.basics gained the "one comp in many places"
+   sentence (ai_pool retrieval sat at its floor 969 on a 0.015 tie; now 969 again with the page). coach-eval
+   `pool-l1-flatpak-control` reworded (network now granted).
+6. **Next: CI dry run** on the private repo (Actions minutes, Q54): push, then
+   `gh workflow run revolution-release.yml -R dawgon2/filmcraft-fork --ref hevc-vaapi -f tag=revolution-0.1.3 -f only_x64=true`
+   (publish false), watch with `gh run watch` / `gh run view --log-failed` (≈ 40–60 min), fix what fails. aarch64 /
+   arm64 first run on the public repo with the 0.1.3 release (S2's closing run), or a second dispatch without
+   `only_x64` if the first is clean.
+7. Acceptance (§1a.107 (e)): every asset produced by the dry run; ci for the touched crates (done per step) + the
+   full `cargo xtask ci` at the end; tag `pkg-1`, local build per §1a.9 (no publish: §1a.109 (d), 0.1.3 is published
+   by S2's closing run); cleanup.sh; HANDOFF rewritten for S2.
+
+**Publish procedure change for 0.1.3 (S2's closing run):** after `publish-snapshot.sh` pushes the `fork` snapshot and
+the public tag `revolution-0.1.3`, the public repo's workflow builds and releases everything; write the release notes
+first to `docs/fork/releases/revolution-0.1.3.md` (they ride along in the snapshot). The Dell scrubbed tarball is no
+longer needed (CI runners have no personal paths; still run the snapshot scan).
+
+## Was: Exact next step (2026-10-20, live): runner resumes: PKG → S2 (release 0.1.3) → REF → C2 → AI2 → A3 (publish 0.2), then stop
+
+**State:** `revolution-wip` (XPS, `xps-1`) merged into `hevc-vaapi`. **Revolution 0.1.2 is published** (2026-10-20
+06:16 EDT: the §1a.108 work; 0.1.1 on 2026-10-18). Local build `revolution-0.1.2` (`latest`). §1a numbering: XPS decisions **105**, Music **106**, packaging **107**,
 logo / Project Manager / app icon **108** (done this session), cleanup + PKG2 + run order + models **109**.
 **Next: Phase PKG** (§1a.107): Windows MSI (x64 + arm64), .deb, .rpm, AppImage, Flatpak for x86_64 and aarch64
 from upstream's `release.yml` + `packaging/linux/*` under the Revolution names (rename the packaged icon / desktop /
@@ -247,7 +334,7 @@ RX 6700 XT outside `run.sh`. Real-model evals: ~1 s per case on the GPU.
 
 **Owner, live 2026-10-16 ~13:35 (FORK-PLAN §1a.98): Q45 (a)**: search by meaning with one small openly licensed embedding model (runner downloads it; licence + revision + SHA-256 logged), kept only if creative coverage (138 / 608 today) rises without lookup loss; do it with / before the assistant tune (§1a.97) so the tune trains on the new search's prompts. **The rejected picture tune `tuned/qwen3-vl-4b-look-v1` and `text-q4k.gguf` / `text-own-q4k.gguf` were deleted** (owner's yes, disk cleanup; re-make the q4k files with the converter if a test needs them).
 
-**Dell lane FEATURE-POOL (2026-10-16 21:20 EDT; SKILL.md §9, standing):** rows S1.1–S1.5, AI5, AI4, the S1.5 trim row, search by meaning, the S1.5 newer-FilmCraft import row, UPD (`feature-updates`, 14 / 12; no coach questions: Ask the coach skips updates.md) the four XPS rows (`feature-gpu-rule` 11 + 1 coach / 10, `feature-nvenc-presets` 4 / 5, `feature-nvenc-linux` 8 / 6, `feature-nvdec-order` 4 / 3) and XPS d (`feature-battery-igpu` 8 + 1 coach / 8, 21:45 run) done: 147 held-out (+ 16 coach) / 141 pairs in `pool/feature-*` (no creative families: none were honest for status / storage / hand-over / GPU features); 9 spot checks on the Dell all as written (9: trimmed package of fixture pt.fcproj; none possible for the XPS rows: one GPU, no NVIDIA). Floors: coach 142, recall@5 969, creative coverage 559. XPS d: the guide doesn't say whether the battery step applies on Windows / macOS or how fast FilmCraft notices unplugging, so nothing asks. FYI for the guide: the XPS GPU text now outranks color.coach.assistant for `feat-pl-igpu-speed` ("only Intel graphics, how long does a picture look take"), which misses retrieval since XPS a; and "what does power saving integrated gpu do" lands on hardware.switches in Ask the coach, not linux.gpu. Queue empty after XPS c. Newer-FilmCraft import (`feature-project-package-newer`, 3 + 1 / 3): `feat-pk-newer-version` updated from "refused"; the guide doesn't say whether the package must be imported again after updating FilmCraft, so nothing asks. FYI for the guide: `file.projectManager` (Media Management…) also takes `trim`, but the guide only documents `projects.package`'s; and the trim dry-run estimate runs under the real size (447 KB vs 569 KB on a 2 s cut: keyframe lead-in). Search by meaning done from `color.coach.assistant-search` (7 held-out + 1 coach / 6 pairs; no spot check: the model isn't on the Dell). FYI for the guide: it doesn't say how the embedding model gets onto the computer, or that without it the Assistant keeps the word search (the code does), so no question asks either; the section's own `when` phrase "can the Assistant understand other wordings" finds nothing in Ask the coach (`feat-asr-c-meaning`, kept as a miss). Owner read: `pool/FEATURE-READ.md` (35 pairs), FYI Q52. FYI for the guide: `projects.importPackage` with an absolute `folder` nests it under the projects root (`~/Videos/FilmCraft Projects/home/…`): safe, but the guide could say `folder` is a projects-list folder name. Retrieval misses kept as real tests: `feat-ns3-message`, `feat-ns4-read-back`, `feat-pk-collect-files`, `feat-as-frame`, `feat-asr-resolve`.
+**Dell lane FEATURE-POOL (2026-10-16 21:20 EDT; SKILL.md §9, standing):** rows S1.1–S1.5, AI5, AI4, the S1.5 trim row, search by meaning, the S1.5 newer-FilmCraft import row, UPD (`feature-updates`, 14 / 12; no coach questions: Ask the coach skips updates.md) the four XPS rows (`feature-gpu-rule` 11 + 1 coach / 10, `feature-nvenc-presets` 4 / 5, `feature-nvenc-linux` 8 / 6, `feature-nvdec-order` 4 / 3) and XPS d (`feature-battery-igpu` 8 + 1 coach / 8, 21:45 run) done: 147 held-out (+ 16 coach) / 141 pairs in `pool/feature-*` (no creative families: none were honest for status / storage / hand-over / GPU features); 9 spot checks on the Dell all as written (9: trimmed package of fixture pt.fcproj; none possible for the XPS rows: one GPU, no NVIDIA). Floors: coach 142, recall@5 969, creative coverage 559. XPS d: the guide doesn't say whether the battery step applies on Windows / macOS or how fast FilmCraft notices unplugging, so nothing asks. FYI for the guide: the XPS GPU text now outranks color.coach.assistant for `feat-pl-igpu-speed` ("only Intel graphics, how long does a picture look take"), which misses retrieval since XPS a; and "what does power saving integrated gpu do" lands on hardware.switches in Ask the coach, not linux.gpu. Queue empty after XPS c. Newer-FilmCraft import (`feature-project-package-newer`, 3 + 1 / 3): `feat-pk-newer-version` updated from "refused"; the guide doesn't say whether the package must be imported again after updating FilmCraft, so nothing asks. FYI for the guide: `file.projectManager` (Media Management…) also takes `trim`, but the guide only documents `projects.package`'s; and the trim dry-run estimate runs under the real size (447 KB vs 569 KB on a 2 s cut: keyframe lead-in). Search by meaning done from `color.coach.assistant-search` (7 held-out + 1 coach / 6 pairs; no spot check: the model isn't on the Dell). FYI for the guide: it doesn't say how the embedding model gets onto the computer, or that without it the Assistant keeps the word search (the code does), so no question asks either; the section's own `when` phrase "can the Assistant understand other wordings" finds nothing in Ask the coach (`feat-asr-c-meaning`, kept as a miss). Owner read: `pool/FEATURE-READ.md` (35 pairs), FYI Q52. FYI for the guide: `projects.importPackage` with an absolute `folder` nests it under the projects root (`~/Videos/FilmCraft Projects/home/…`): safe, but the guide could say `folder` is a projects-list folder name. Retrieval misses kept as real tests: `feat-ns3-message`, `feat-ns4-read-back`, `feat-pk-collect-files`, `feat-as-frame`, `feat-asr-resolve`. **2026-10-20 06:55:** §1a.108 row done (`feature-pm-window-icon`, 13 + 2 coach / 9; floors recall@5 982, creative 560, coach 142). FYI for the guide: both coach questions miss ("why isn't the Project Manager full screen", projects.window's own `when` phrase, lands on projects.what; "change the app icon to square" lands on pages.md); and the older AI-POOL pairs in `training-pairs.jsonl` / `linux-1.jsonl` still call the Project Manager "a full-window screen", which reads oddly now it opens windowed (the main runner's guide wording `projects.what` may want the same touch). Queue empty.
 
 **Owner, live 2026-10-16 ~04:20 (FORK-PLAN §1a.96): mode floor LEAN** (where the line says MINIMAL, work LEAN; MINIMAL only near the real limits, §1a.53). **Q41 answered:** the owner has read the training pairs, so AI4 item 5 tunes may use them. **AI4 item 3 (picture-model tune), owner ~04:30 / 04:35: no X-M5 footage yet.** Train on synthetic frames + downloaded openly licensed footage by others (download approved: CC0 / CC-BY / CC-BY-SA / PD, licence + source logged per file in `coach-eval/VISION-SOURCES.md`, ≤ 20 GB under `~/.local/share/filmcraft-fork/training-footage/`, never in git). **Log footage required** (F-Log2 first, other logs too; synthetic F-Log2 from open scene-referred footage if scarce). Build `coach-eval/VISION-READ.md` (30–50 frames + labels) and tell the owner (Q44), but **do the tune regardless of the review** (not a gate; later corrections → fix labels, re-tune). Keep-if-better rule stays. `ai-4` after the tune, then AI5.
 

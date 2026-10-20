@@ -13,7 +13,8 @@ Why: every way of installing gives you the same editor, but they differ in what 
 reach on your computer and in how it gets updated. None is the one right choice.
 
 - **Your distribution's package** (Arch / CachyOS: `packaging/linux/arch/PKGBUILD` with
-  `makepkg -si`; Debian / Ubuntu / Fedora: the release's `.deb` / `.rpm`). Runs like any other
+  `makepkg -si`; Debian / Ubuntu / Fedora: the release's `.deb` / `.rpm`; steps for each in
+  [install](install.md)). Runs like any other
   program: it sees every drive and folder you can, logs go to the system journal, and it uses
   the system's own video drivers. Good if you mostly use one machine and want it to feel native.
   Updates come when you rebuild or install the newer package.
@@ -21,15 +22,16 @@ reach on your computer and in how it gets updated. None is the one right choice.
   any distribution, with its own copy of the system libraries and video drivers: hardware
   decoding, audio, media keys, notifications and KDE Connect work inside it, and it may eject a
   camera card. It can read and write your home folder and external drives (`/media`,
-  `/run/media`, `/mnt`); footage anywhere else on the system isn't visible. It has no network,
-  so the `--control` agent port only works after
-  `flatpak override --user --share=network ai.storyteller.filmcraft`. Logs go to the log file
-  only (no journal): `~/.var/app/ai.storyteller.filmcraft/.local/state/filmcraft/Logs/`. Good if
+  `/run/media`, `/mnt`); footage anywhere else on the system isn't visible. Unlike upstream
+  FilmCraft's Flatpak it has network access, for the update check, model downloads and sharing an
+  answer as a GitHub issue (to take it away: `flatpak override --user --unshare=network
+  io.github.dawgon2.Revolution`). Logs go to the log file only (no journal):
+  `~/.var/app/io.github.dawgon2.Revolution/.local/state/filmcraft/Logs/`. Good if
   you want it isolated, or your distribution has no package. The shared runtime is a few hundred
   MB the first time.
-- **The tarball or AppImage.** Unpack (or mark the AppImage executable) and run; nothing goes
-  system-wide (the tarball's `install.sh` needs no sudo for its default place). Good for trying
-  a release, or keeping two versions side by side.
+- **The portable folder or AppImage.** Unpack (or mark the AppImage executable) and run;
+  nothing goes system-wide. Good for trying a release, or keeping two versions side by side; the
+  portable folder is also the one the in-app updater replaces by itself.
 
 ## Where Revolution keeps its files
 

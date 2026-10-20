@@ -24,7 +24,7 @@ whisper = ["filmcraft-engine/whisper", "filmcraft-engine/speech-download"]
 voice-isolation = ["filmcraft-engine/voice-isolation"]
 
 [dependencies]
-filmcraft-engine = { workspace = true, features = ["fork-resolve-default", "fork-inbox"] } # FORK-ONLY (RS1, AI5 inbox)
+filmcraft-engine = { workspace = true, features = ["fork-resolve-default", "fork-inbox", "remote-net"] } # FORK-ONLY (RS1, AI5 inbox); remote-net: S2
 filmcraft-export = { workspace = true }
 filmcraft-project = { workspace = true }
 filmcraft-render = { workspace = true }

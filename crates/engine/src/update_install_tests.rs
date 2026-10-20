@@ -63,6 +63,7 @@ fn release(tarball: &[u8]) -> Release {
             url: format!("{URL}filmcraft-fork-next-1-linux-x86_64.tar.gz"),
             size: tarball.len() as u64,
         }),
+        appimage: None,
         sums: Some(Asset { name: "SHA256SUMS".into(), url: format!("{URL}SHA256SUMS"), size: 100 }),
     }
 }
@@ -115,7 +116,7 @@ fn builds(name: &str) -> Layout {
     std::fs::create_dir_all(&current).unwrap();
     std::fs::write(current.join("filmcraft"), b"old").unwrap();
     std::os::unix::fs::symlink(&current, root.join(LATEST)).unwrap();
-    Layout { builds: root, current }
+    Layout { builds: root, current, appimage: None }
 }
 
 fn latest(l: &Layout) -> PathBuf {
@@ -146,7 +147,7 @@ fn only_builds_with_a_latest_link_update_themselves() {
     let l = builds("layout");
     assert_eq!(
         layout(&l.current.join("filmcraft")).unwrap(),
-        Layout { builds: std::fs::canonicalize(&l.builds).unwrap(), current: std::fs::canonicalize(&l.current).unwrap() }
+        Layout { builds: std::fs::canonicalize(&l.builds).unwrap(), current: std::fs::canonicalize(&l.current).unwrap(), appimage: None }
     );
     std::fs::remove_file(l.builds.join(LATEST)).unwrap();
     assert!(layout(&l.current.join("filmcraft")).unwrap_err().contains("release page"));
@@ -298,4 +299,120 @@ fn an_installed_update_isnt_installed_twice_and_leftovers_go() {
     assert!(u.start_install().unwrap_err().contains("restart"));
     assert!(!l.builds.join(".fork-old-1.part").exists() && !l.builds.join(".fork-old-1.unpack").exists());
     assert!(l.builds.join(".keep-me").exists());
+}
+
+/// PKG (FORK-PLAN §1a.107 (d)): an AppImage at `<dir>/Revolution.AppImage` holding "old".
+fn appimage_dir(name: &str) -> (PathBuf, Layout) {
+    let root = crate::media_test_util::tmp_dir(&format!("update-appimage-{name}"));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let app = root.join("Revolution.AppImage");
+    std::fs::write(&app, b"old").unwrap();
+    let mnt = root.join("mnt");
+    std::fs::create_dir_all(mnt.join("usr/bin")).unwrap();
+    std::fs::write(mnt.join("usr/bin/revolution"), b"").unwrap();
+    let l = layout_in(&mnt.join("usr/bin/revolution"), false, Some(&app), Some(&mnt), None).unwrap();
+    // a leftover download of an interrupted update goes with the next one
+    std::fs::write(root.join(".fork-old-1.AppImage.part"), b"x").unwrap();
+    (std::fs::canonicalize(&app).unwrap(), l)
+}
+
+/// A release offering `body` as this processor's AppImage, and a server whose SHA256SUMS lists
+/// `sums_for` for it.
+fn appimage_release(body: &[u8], sums_for: &[u8]) -> (Release, Server) {
+    let name = format!("fork-next-1-linux-{}.AppImage", crate::update::linux_arch());
+    let rel = Release { appimage: Some(Asset { name: name.clone(), url: format!("{URL}{name}"), size: body.len() as u64 }), tarball: None, ..release(b"") };
+    let sums = format!("{}  {name}\n", sha(sums_for));
+    let files = HashMap::from([(format!("{URL}{name}"), body.to_vec()), (format!("{URL}SHA256SUMS"), sums.into_bytes())]);
+    (rel, Server { files, cut: None })
+}
+
+#[test]
+fn an_appimage_updates_in_place_keeps_the_old_one_and_rolls_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let (app, l) = appimage_dir("good");
+    assert_eq!(l.appimage.as_deref(), Some(app.as_path()));
+    let (rel, server) = appimage_release(b"new appimage", b"new appimage");
+    let mut s = crate::Session::new(Arc::new(crate::FsServices));
+    s.updater = Updater::new(Some(CH), Arc::new(server), Current { tag: Some("fork-storage-1".into()), built: Some(1) });
+    s.updater.set_layout(Ok(l));
+    s.updater.status.latest = Some(rel);
+    s.updater.status.state = "available".into();
+    let v = s.execute("app.update.install", json!({"wait": true})).unwrap();
+    assert_eq!(v["install"], "installed", "{v}");
+    assert_eq!(v["installed"], app.to_string_lossy().as_ref());
+    assert_eq!(std::fs::read(&app).unwrap(), b"new appimage");
+    assert_eq!(std::fs::metadata(&app).unwrap().permissions().mode() & 0o777, 0o755);
+    let prev = previous_appimage(&app);
+    assert_eq!(std::fs::read(&prev).unwrap(), b"old");
+    assert_eq!(s.prefs.update.previous, prev.to_string_lossy());
+    assert!(!app.with_file_name(".fork-next-1.AppImage.part").exists());
+    assert!(!app.with_file_name(".fork-old-1.AppImage.part").exists(), "old leftovers are removed");
+    let v = s.execute("app.update.rollback", json!({})).unwrap();
+    assert_eq!(v["rolledBack"], app.to_string_lossy().as_ref());
+    assert_eq!(std::fs::read(&app).unwrap(), b"old");
+    assert!(!prev.exists());
+    assert!(s.execute("app.update.rollback", json!({})).is_err(), "nothing left to go back to");
+}
+
+#[test]
+fn a_failed_appimage_update_leaves_the_running_one_untouched() {
+    let body = b"new appimage".as_slice();
+    let (good, _) = appimage_release(body, body);
+    let cases: Vec<(&str, Release, Server)> = vec![
+        ("bad checksum", good.clone(), appimage_release(body, b"other").1),
+        ("interrupted", good.clone(), Server { cut: Some(4), ..appimage_release(body, body).1 }),
+        ("size differs", Release { appimage: good.appimage.clone().map(|a| Asset { size: 3, ..a }), ..good.clone() }, appimage_release(body, body).1),
+        ("no AppImage", Release { appimage: None, ..good.clone() }, appimage_release(body, body).1),
+        ("no sums", Release { sums: None, ..good.clone() }, appimage_release(body, body).1),
+        (
+            "too large",
+            Release { appimage: good.appimage.clone().map(|a| Asset { size: MAX_TARBALL_BYTES + 1, ..a }), ..good.clone() },
+            appimage_release(body, body).1,
+        ),
+    ];
+    for (i, (what, rel, server)) in cases.into_iter().enumerate() {
+        let (app, l) = appimage_dir(&format!("fail-{i}"));
+        let r = install(&server, &rel, "fork-", &l, &mut |_, _| true);
+        assert!(r.is_err(), "{what}: {r:?}");
+        assert_eq!(std::fs::read(&app).unwrap(), b"old", "{what}");
+        let mut names: Vec<_> = std::fs::read_dir(app.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        let left = names.iter().filter(|n| *n != "mnt" && !n.starts_with(".fork-old-1")).count();
+        assert_eq!(left, 1, "{what}: only the AppImage is left: {names:?}");
+    }
+}
+
+#[test]
+fn packages_and_installers_say_how_they_update() {
+    assert!(layout_in(Path::new("/x"), true, None, None, None).unwrap_err().contains(".flatpak"));
+    let home = Some(Path::new("/home/u"));
+    for exe in ["/usr/bin/revolution", "/usr/local/bin/revolution", "/opt/revolution/revolution", "/home/u/.local/bin/revolution"] {
+        assert!(packaged_install(Path::new(exe), home).is_some_and(|w| w.contains("package manager")), "{exe}");
+    }
+    assert_eq!(packaged_install(Path::new("/home/u/Apps/revolution-0.1.3/revolution"), home), None);
+    // an empty $APPIMAGE is no AppImage; a missing one is an error, not a builds-folder update
+    assert!(layout_in(Path::new("/nonexistent/revolution"), false, Some(Path::new("")), Some(Path::new("/")), None).is_err());
+    assert!(layout_in(Path::new("/"), false, Some(Path::new("/nonexistent/R.AppImage")), Some(Path::new("/")), None).unwrap_err().contains("AppImage"));
+}
+
+/// `$APPIMAGE` inherited from another program's AppImage (a terminal run as one) must never make
+/// the update replace that program's file.
+#[test]
+fn an_inherited_appimage_variable_is_not_ours() {
+    let l = builds("inherited");
+    let other = l.builds.join("Terminal.AppImage");
+    std::fs::write(&other, b"someone else").unwrap();
+    let exe = l.current.join("filmcraft");
+    for appdir in [None, Some(Path::new("/tmp/.mount_TermXYZ")), Some(Path::new(""))] {
+        let got = layout_in(&exe, false, Some(&other), appdir, None).unwrap();
+        assert_eq!(got.appimage, None, "{appdir:?}");
+    }
+}
+
+#[test]
+fn release_files_are_named_for_this_processor() {
+    let arch = crate::update::linux_arch();
+    assert_eq!(crate::update::tarball_name("revolution-0.2"), format!("revolution-0.2-linux-{arch}.tar.gz"));
+    assert_eq!(crate::update::appimage_name("revolution-0.2"), format!("revolution-0.2-linux-{arch}.AppImage"));
 }

@@ -979,3 +979,50 @@ UPD on refuse to install a release without it (they still show the "Update avail
 
 **Addition 2026-10-16 20:45 (UPD accepted):** `update-1` (tag 71937dc9, build `~/Apps/filmcraft-builds/update-1/`) joins the
 owed publish list: same steps, plus its `SHA256SUMS` asset. Not retried by the runner while this question is open.
+
+## Q54 (2026-10-20, PKG): two packaging choices (FYI, choices made, never blocks)
+
+1. **The Flatpak gets network access** (`--share=network`). Upstream FilmCraft's Flatpak has none, but
+   Revolution's update check, the assistant's model downloads and "share as a GitHub issue" need it.
+   Options: (a) grant it (chosen; the `--control` port still listens on 127.0.0.1 only), (b) no network,
+   the user adds it with `flatpak override`. Reverse: delete the `--share=network` line in both
+   `packaging/linux/flatpak/io.github.dawgon2.Revolution*.yml` and the linux.md / install.md sentences.
+2. **The PKG dry run uses GitHub Actions minutes on the private `dawgon2/filmcraft-fork`** (a manual
+   `workflow_dispatch` of `.github/workflows/revolution-release.yml`, x86_64 / x64 only, roughly 2 h of
+   billed minutes: Windows counts double). Real releases run on the public `dawgon2/revolution`, where
+   Actions are free. Note: the private repo also runs upstream's scheduled `Windows ARM64` (≈ 48 min a day)
+   and `FreeBSD` (failing every night) workflows; you may want to disable those two there
+   (Actions ▸ the workflow ▸ ⋯ ▸ Disable workflow). Nothing is changed for you.
+
+## Q55 (2026-10-20, S2): no container runtime for the real-server tests (FYI, choice made, never blocks)
+
+STORAGE-PLAN S2's acceptance says "against local test servers (Nextcloud or another WebDAV server, OpenSSH, MinIO, in
+containers)". This PC has neither podman nor docker (installing one needs sudo). **Choice for now:** WebDAV and S3 are
+tested against small in-process test servers written for the tests (they follow the published protocols: RFC 4918
+WebDAV, the S3 REST API with Signature V4), and SFTP against the system's own `sshd` started as a normal user on a
+high port with a throw-away key. If you want the real servers too: `sudo pacman -S podman`, then the runner adds
+`tools/fork/remote-servers.sh` (Nextcloud / MinIO containers) and runs the same tests against them. Nothing else waits on it.
+
+## Q56 (2026-10-20, S2.1d): SFTP needs an older SSH library to stay pure Rust (FYI, choice made, never blocks)
+
+The pure-Rust SSH library `russh` requires `ring` or `aws-lc-rs` (C / assembly crypto) from version 0.53 on; the
+fork's rule is pure Rust, no C crypto (the workspace already uses RustCrypto for TLS for the same reason). Options:
+- **(a) pin `russh = "=0.52.1"`** (the last RustCrypto-only release) — chosen. Trade-off: no newer russh fixes; its
+  `rsa` dependency has a known timing weakness (RUSTSEC-2023-0071) that matters only when you sign in with an RSA key,
+  so the app recommends ed25519 keys (`Sftp::key_warning()` shows a hint for RSA keys).
+- (b) take the current russh with `ring` (C / assembly code in the product).
+- (c) no SFTP until a RustCrypto-only russh exists (WebDAV and S3 only).
+Reverse: (b) bump the version in `crates/remote/Cargo.toml` and enable russh's `ring` feature; (c) drop
+`"filmcraft-remote/sftp"` from `remote-net` in `crates/engine/Cargo.toml`. Tested against the system `sshd` started
+as a normal user (password, ed25519 and RSA keys, changed host key refused).
+
+## Q57 (2026-10-20, S2.3): remote clips are downloaded before they play (FYI, provisional choice, never blocks)
+
+STORAGE-PLAN S2 item 3 says "or link remote media and stream with read-ahead when the connection is fast enough".
+**Choice for now:** clips from a remote location are always downloaded into the media cache's Remote Media folder
+first (`remote.import`, resumable, in the background) and the project uses the local copy, the same idea S1 uses for
+shares (6.2K over Wi-Fi stutters; a dropped server takes a streamed clip with it). Streaming (`remote:` media
+references read through ranged requests with read-ahead) touches every decoder's file access and is left for later
+(STORAGE-PLAN keeps it listed; Phase 7's soak covers network drops). Options: (a) download first (chosen);
+(b) stream with read-ahead (≈ 10–20 h); (c) both, with a setting. Reverse: nothing to undo; (b) adds a
+`MediaRef::Remote` and a read-ahead reader in `crates/remote`.
