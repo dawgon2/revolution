@@ -490,10 +490,32 @@ fn sleep_cancellable(d: Duration, cancel: &AtomicBool) {
     }
 }
 
+/// Drops a network prefix length people copy from `ip addr` (`<lan-address>/24:46261` →
+/// `<lan-address>:46261`): a `/` followed by 1–3 digits.
+pub(crate) fn without_prefix_length(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '/' {
+            let mut digits = 0;
+            while digits < 3 && chars.peek().is_some_and(char::is_ascii_digit) {
+                chars.next();
+                digits += 1;
+            }
+            if digits > 0 {
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Turns a typed address into socket addresses (asking the receiver for its port when none
 /// was typed).
 fn resolve_address(text: &str, channel: u8, probe_port: u16) -> Result<Vec<SocketAddr>> {
-    let text = text.trim();
+    let cleaned = without_prefix_length(text.trim());
+    let text = cleaned.as_str();
     let bad = || NearbyError::NotFound(format!("Couldn't find the computer \"{}\".", wire::truncate_bytes(text, 64)));
     if text.is_empty() || text.len() > MAX_ADDRESS_LEN {
         return Err(bad());

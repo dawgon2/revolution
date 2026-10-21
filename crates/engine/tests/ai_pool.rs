@@ -17,8 +17,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Keyword-coach pool questions that must pass (measured; may only go up, AI-PLAN AI-POOL; 144 with
-/// feature-rs4-cut-page).
-const POOL_COACH_FLOOR: usize = 144;
+/// feature-rs4-cut-page, 146 with feature-rs4-inspector, 148 with feature-ai2-branch-notes).
+const POOL_COACH_FLOOR: usize = 148;
 /// Advanced pool questions with an expected source in retrieval's top 5 (measured; only up, except
 /// 904 → 903 when FEATURE-POOL dropped `feat-pk-trim-gap`, a hit made untrue by package trimming;
 /// 911 with feature-project-package-trim; 917 with feature-assistant-search; 920 with
@@ -29,8 +29,10 @@ const POOL_COACH_FLOOR: usize = 144;
 /// 980 with S2's remote-location sections: none of them is in the two misses' top 5, the corpus change
 /// only flips two near-ties, `pool-e2-through-edits` (10.074 vs 10.115) and `pool-p1-proxy-cache`
 /// (15.696 vs 15.724)); 984 with feature-tarball-menu-entry; 997 with feature-rs4-cut-page; 1007 with
-/// feature-rs4-edit-toolbar; 1018 with feature-rs4-resolve-edits.
-const POOL_RETRIEVAL_FLOOR: usize = 1018;
+/// feature-rs4-edit-toolbar; 1018 with feature-rs4-resolve-edits; 1017 measured 2026-10-21 (C2b's mixer
+/// guide text and §1a.116's F-Log section joined the corpus; no questions changed); 1015 with the RS4.2
+/// Inspector section (pages.inspector); 1029 with feature-rs4-inspector; 1038 with feature-ai2-branch-notes.
+const POOL_RETRIEVAL_FLOOR: usize = 1038;
 /// Token-set similarity at or above which a training question counts as a near-copy of a test one.
 const NEAR_COPY: f64 = 0.7;
 
@@ -505,7 +507,9 @@ struct WithOrigin {
 /// 558 measured 2026-10-20 (REF's reference-look page; no creative items added, corpus statistics only).
 /// 555 measured 2026-10-20 (C2.5: the node guide's new parallel / layer / outside / key-mixer sections now
 /// share the slots that `practice.node-trees.*` and a few neighbours used to fill; no creative items added).
-const CREATIVE_COVERAGE_FLOOR: usize = 555;
+/// 554 measured 2026-10-21 (C2b's mixer guide text and §1a.116's F-Log section; corpus statistics only);
+/// 552 with the RS4.2 Inspector section (pages.inspector).
+const CREATIVE_COVERAGE_FLOOR: usize = 552;
 
 /// AI-PLAN AI4 item 5c: a creative question needs a section for each sub-task, not one best match,
 /// so it is scored by how many of its plan's sections the model is sent (coverage), apart from the

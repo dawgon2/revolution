@@ -34,7 +34,7 @@ There are three kinds:
 2. Go to a frame where the thing to follow is clearly visible and move the layer onto it
    (**Motion ▸ Position**, or drag it in the Program monitor). What gets followed is the detail in
    a small box (120 × 120 pixels) around the layer's **Position**, in the shot below.
-3. In **Effect Controls** (the **Inspector** in the Resolve workflow), on Motion's **Attach to
+3. In **Effect Controls** (**Keyframes** in the Resolve workflow; the **Inspector**'s Transform has the same row), on Motion's **Attach to
    Track** row, pick what to follow with the wrench menu: **Position** (the default),
    **Position & Rotation**, or **Position, Scale & Rotation**.
 4. Click **▶▶** (forward) or **◀◀** (backward); the single arrows do one frame. Each run is one
@@ -58,7 +58,7 @@ step, so if the track is lost the blur is still there to place by hand.
 1. Put the shot with the screen on **Video 1** and the picture you want on the screen on
    **Video 2**, above it, over the same frames.
 2. Apply **Corner Pin** (Effects ▸ Video Effects ▸ Distort) to the clip on Video 2.
-3. Go to a frame where the screen is clearly visible. In **Effect Controls** (the **Inspector** in
+3. Go to a frame where the screen is clearly visible. In **Effect Controls** (**Keyframes** in
    the Resolve workflow), set **Upper Left**, **Upper Right**, **Lower Left** and **Lower Right**
    to the screen's four corners. The picture now sits on the screen in this frame.
 4. On Corner Pin's **Track Surface** row, click **▶▶** (track forward) or **◀◀** (track backward);

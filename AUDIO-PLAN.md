@@ -88,6 +88,22 @@ FORK-PLAN §1a.76).**
 - Done means: a guide page with options and trade-offs (beginner vs pro), a coach lesson, and the
   UI looked at on screen in both workflows.
 
+**A3 audit (2026-10-21, scheduled run): most of the mixer already exists, A3 fills gaps.** Exists:
+track inserts (`Track.effects`, 5 slots pre / post fader, `mixer.addInsert` / `setInsert` / `removeInsert`, Mix
+inserts), submixes + sends (`mixer.addSubmix`, `mixer.addSend`, output routing with a no-feedback rule, 5.1),
+static clip gain (`TrackItem.gain_db`, `clip.audioGain`) and the Volume rubber band on timeline clips
+(`panels/timeline_volume.rs`), strip meters with peak hold and a clip light (`panels/mixer.rs`), the Audio Meters
+panel with M / S / I LUFS and dBTP. Gaps, in build order:
+1. **Meter reset:** click a strip's meter / clip light (mixer and Audio Meters) to clear peak hold and clip; UI test.
+2. **Track-header meters:** a thin always-visible meter on each audio track header in the timeline (same levels
+   as the mixer strip), red at clipping; UI test.
+3. **Drag an effect onto a track:** dropping an audio effect from the Effects panel on a track header or a mixer
+   strip adds it as the first free insert (`mixer.addInsert`); selecting a track header shows its inserts in
+   Effect Controls / Inspector with the same controls as a clip's.
+4. **"Send to…"** on a track header's context menu: pick a bus or "New bus…" (`mixer.addSubmix` + `mixer.addSend`).
+5. **Done-means:** guide page (options + trade-offs, beginner vs pro), a coach lesson, screenshots in both workflows.
+6. Voice Isolation quality (below).
+
 **Voice Isolation quality (owner, 2026-10-15; OWNER-QUESTIONS Q30):** an amount / attenuation
 limit (default lowered for mild noise, and clean speech left alone); re-measure on recordings of
 the owner's own voice in a quiet room if they're in `~/.local/share/filmcraft-fork/voice-test/`

@@ -7,10 +7,9 @@ owner = ["owner-1-order", "owner-2-qualifier", "how-light-blue-natural"]
 
 ids = [
   # audio-1
-  "pool-a1-limiter-master",
-  "pool-a1-vi-sync",
-  "pool-a1-types",
-  "pool-a1-write-overwrote",
+  "pool-a1-vo-record",
+  "pool-a1-pre-post",
+  "pool-a1-remix-refused",
   # chains-1
   "pool-ch1-screen-export",
   # color-1
@@ -128,6 +127,9 @@ ids = [
   # export-1
   "pool-x1-queue",
   "pool-x1-preset-team",
+  # feature-ai2-branch-notes
+  "feat-bn-serial-grade",
+  "feat-bn-outside-resolve",
   # feature-assistant-picture-look
   "feat-pl-remove",
   # feature-assistant-search
@@ -173,6 +175,8 @@ ids = [
   # feature-rs4-edit-toolbar
   "feat-etb-badge-lit",
   "feat-etb-bins",
+  # feature-rs4-inspector
+  "feat-in-keyframes-name",
   # feature-rs4-resolve-edits
   "feat-re-replace-vs-ripple",
   # feature-tarball-menu-entry
@@ -209,11 +213,9 @@ ids = [
   # practice-3
   "pool-r3-faded-banding",
   # practice-4
-  "pool-r4-cut-motion",
-  "pool-r4-lcut-sync",
+  "pool-r4-too-tight",
   # practice-5
-  "pool-r5-music-level",
-  "pool-r5-rumble",
+  "pool-r5-thin-voice",
   # practice-6
   "pool-r6-vertical",
   # practice-7

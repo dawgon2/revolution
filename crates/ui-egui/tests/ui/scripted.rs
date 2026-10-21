@@ -30,6 +30,9 @@ impl Driver {
     /// `render`: with a wgpu renderer so `Harness::render` can take screenshots (needs a GPU).
     fn demo_with(render: bool) -> Self {
         let mut session = Session::default();
+        // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+        // RS4 Edit page has its own toolbar
+        session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session).with_control(rx);

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>Revolution</short>
+  <description>Revolution video editor: receive a project from a nearby computer (TCP 47821) and let computers find each other (UDP 47820). Revolution listens only while its Receive window is open.</description>
+  <port protocol="tcp" port="47821"/>
+  <port protocol="udp" port="47820"/>
+</service>

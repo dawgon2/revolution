@@ -64,6 +64,9 @@ right-click menu).
 
 ## Smaller things
 
+- **Fujifilm F-Log / F-Log2 clips are recognised on import** (from the camera's own metadata), so
+  colour management picks the right input transform without Interpret Footage. Clips imported before
+  keep what they had.
 - The portable download (tarball, also what the updater installs) now adds its own menu entry and
   icon, so everyone gets the new icon, not only the packages.
 - Every release page starts with direct download links, the x86_64 Linux and Windows x64 files first.

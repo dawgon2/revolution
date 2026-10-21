@@ -251,6 +251,33 @@ fn resolve_toolbar_toggles_panels_and_page_layouts_save_like_workspaces() {
 }
 
 #[test]
+fn resolve_edit_toolbar_tools_toggles_and_zoom_work_by_automation_id() {
+    use filmcraft_ui_egui::state::Tool;
+    let mut d = Driver::demo(Workflow::Resolve);
+    d.click("page.edit");
+    // RS4's timeline toolbar replaces the Tools panel on the Resolve Edit page
+    assert!(d.has("timeline.rtool.selection") && !d.has("tools.selection"), "{:?}", d.ids("timeline.r"));
+    for (id, want) in [("timeline.rtool.blade", Tool::Razor), ("timeline.rtool.trim", Tool::Ripple), ("timeline.rtool.selection", Tool::Selection)] {
+        d.click(id);
+        assert_eq!(d.harness.state().ui.tool, want, "{id}");
+    }
+    let snap = d.harness.state().session.state.snapping;
+    d.click("timeline.rtoggle.snap");
+    assert_eq!(d.harness.state().session.state.snapping, !snap, "Snapping toggles");
+    d.click("timeline.rtoggle.snap");
+    assert_eq!(d.harness.state().session.state.snapping, snap, "and back");
+    let linked = d.harness.state().session.state.linked_selection;
+    d.click("timeline.rtoggle.linked");
+    assert_eq!(d.harness.state().session.state.linked_selection, !linked, "Linked Selection toggles");
+    let pps = d.harness.state().ui.timeline.pps;
+    d.click("timeline.rzoom.in");
+    let zoomed = d.harness.state().ui.timeline.pps;
+    assert!(zoomed > pps, "Zoom In: {pps} → {zoomed}");
+    d.click("timeline.rzoom.out");
+    assert!(d.harness.state().ui.timeline.pps < zoomed, "Zoom Out");
+}
+
+#[test]
 fn premiere_keeps_its_header_workspaces_and_export_mode() {
     let mut d = Driver::demo(Workflow::Premiere);
     for id in ["header.home", "header.mode.edit", "header.mode.export", "header.workspaces", "header.quickExport"] {

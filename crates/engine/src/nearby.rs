@@ -19,6 +19,10 @@ use serde_json::{Value, json};
 use crate::commands::{CommandSpec, always, bad};
 use crate::{Result, Session};
 
+/// The receiver's standard TCP port (FORK-PLAN §1a.118), named by the packaged firewall
+/// descriptions; the same as `filmcraft_remote::nearby::DEFAULT_PORT` (a test checks).
+pub const DEFAULT_PORT: u16 = 47821;
+
 /// What the receive job shares with the commands (and the UI through `nearby.status`).
 #[derive(Clone, Debug, Default)]
 pub struct NearbyShared {
@@ -104,11 +108,31 @@ mod net {
         o
     }
 
-    fn publish(n: &Nearby, rx: &Receiver) {
+    /// Starts listening on `opts.port`; when that port is taken (another program, or a second
+    /// Revolution receiving), on any free port instead, with a line saying so.
+    fn start_receiver(opts: &ReceiverOptions) -> std::result::Result<(Receiver, Option<String>), NearbyError> {
+        match Receiver::start(opts.clone()) {
+            Ok(rx) => Ok((rx, None)),
+            Err(e) if opts.port != 0 => {
+                let any = ReceiverOptions { port: 0, ..opts.clone() };
+                let rx = Receiver::start(any).map_err(|_| e)?;
+                let line = format!(
+                    "Port {} is in use, so this computer listens on port {} instead. A firewall rule for port {} won't cover it.",
+                    opts.port,
+                    rx.port(),
+                    opts.port
+                );
+                Ok((rx, Some(line)))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn publish(n: &Nearby, rx: &Receiver, moved: Option<String>) {
         let mut g = n.lock().unwrap_or_else(PoisonError::into_inner);
         g.code = rx.code().to_string();
         g.port = rx.port();
-        g.warnings = rx.warnings().to_vec();
+        g.warnings = moved.into_iter().chain(rx.warnings().iter().cloned()).collect();
         g.offer = None;
         g.decision = None;
     }
@@ -128,8 +152,11 @@ mod net {
                 Ok(o) => o,
                 Err(NearbyError::WrongCode) if renewals < MAX_RENEWALS => {
                     renewals = renewals.saturating_add(1);
-                    rx = Receiver::start(opts.clone()).map_err(|e| e.to_string())?;
-                    publish(n, &rx);
+                    // the old one lets go of its (fixed) port first
+                    drop(rx);
+                    let (fresh, moved) = start_receiver(&opts).map_err(|e| e.to_string())?;
+                    rx = fresh;
+                    publish(n, &rx, moved);
                     set(n, |g| g.note = "Someone tried a wrong code. Here is a new one.".into());
                     continue;
                 }
@@ -199,18 +226,22 @@ mod net {
         }
         let mut opts = options(p);
         if p.get("port").is_none() {
-            opts.port = s.prefs.remote.nearby_port;
+            // 0 in Settings = the standard port the packaged firewall rules name
+            opts.port = match s.prefs.remote.nearby_port {
+                0 => super::DEFAULT_PORT,
+                port => port,
+            };
         }
-        let rx = Receiver::start(opts.clone()).map_err(|e| bad(CMD, e.to_string()))?;
+        let (rx, moved) = start_receiver(&opts).map_err(|e| bad(CMD, e.to_string()))?;
         let inbox = data_folder(s).join("remote").join("inbox").join("nearby");
         std::fs::create_dir_all(&inbox).map_err(|e| bad(CMD, format!("{}: {e}", inbox.display())))?;
         let job = new_job(s, "Receive from a nearby computer".into());
         let n = s.nearby.clone();
         *n.lock().unwrap_or_else(PoisonError::into_inner) = super::NearbyShared { job: Some(job.id), ..Default::default() };
-        publish(&n, &rx);
+        publish(&n, &rx, moved);
         let code = rx.code().to_string();
         let port = rx.port();
-        let warnings = rx.warnings().to_vec();
+        let warnings = n.lock().unwrap_or_else(PoisonError::into_inner).warnings.clone();
         let run = {
             let (job, n) = (job.clone(), n.clone());
             move || {

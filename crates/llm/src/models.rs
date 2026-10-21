@@ -120,6 +120,13 @@ macro_rules! hf {
     };
 }
 
+/// A fine-tune published as a release asset of the fork: `<FORK_RELEASES><tag>/<name>`.
+macro_rules! fork_release {
+    ($tag:literal, $name:literal, $sha:literal, $size:expr) => {
+        ModelFile { name: $name, url: concat!("https://github.com/dawgon2/revolution/releases/download/", $tag, "/", $name), sha256: $sha, size: $size }
+    };
+}
+
 /// A file with no download URL yet (a locally built model, see [`ModelInfo::is_local`]).
 macro_rules! local {
     ($name:literal, $sha:literal, $size:expr) => {
@@ -240,34 +247,57 @@ static CATALOGUE: &[ModelInfo] = &[
         ],
     },
     // The fork's fine-tuned explainers (GRADE-PLAN G2.11b, docs/fork/TRAINING.md): LoRA
-    // fine-tunes of the bases above, merged and quantized by `llm_quantize`. Local files until
-    // the owner publishes a release on dawgon2/filmcraft-cachyos (`is_local`: no URL, so no
-    // download); the checksums pin the files of the test training run (2026-10-11).
+    // fine-tunes of the bases above, merged and quantized by `llm_quantize`, published as
+    // releases `explainer-<name>` of the fork (FORK_RELEASES; the 135M "fast" tune is still a
+    // local file: `is_local`, no URL, no download); the checksums pin the published files.
     ModelInfo {
         id: "filmcraft-explainer-qwen05-v1-q8",
         name: "Revolution explainer, Qwen2.5 0.5B tuned (8-bit)",
         family: Family::Qwen25,
-        description: "Qwen2.5-0.5B-Instruct (revision 7ae5576) fine-tuned by the fork to explain grade nodes in the checked grammar. 97 % of the held-out cases pass the fact checker. Local file until published.",
+        description: "Qwen2.5-0.5B-Instruct (revision 7ae5576) fine-tuned by the fork to explain grade nodes in the checked grammar. 97 % of the held-out cases pass the fact checker.",
         license: APACHE,
         license_url: APACHE_URL,
         author: "Qwen team, Alibaba Cloud (base); Revolution fork (fine-tune)",
         source: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct",
         weights: "qwen05-v1-q8_0.gguf",
         tokenizer: "tokenizer.json",
-        files: &[local!("qwen05-v1-q8_0.gguf", "938c99fc943189bb1a4060024f9bb63ad710acd865a8c854ab2e5720da35729a", 525137152), QWEN_TOKENIZER],
+        files: &[
+            fork_release!("explainer-qwen05-v1", "qwen05-v1-q8_0.gguf", "938c99fc943189bb1a4060024f9bb63ad710acd865a8c854ab2e5720da35729a", 525137152),
+            QWEN_TOKENIZER,
+        ],
     },
     ModelInfo {
         id: "filmcraft-explainer-smol360-v1-q8",
         name: "Revolution explainer, SmolLM2 360M tuned (8-bit)",
         family: Family::SmolLm2,
-        description: "SmolLM2-360M-Instruct (revision a10cc15) fine-tuned by the fork to explain grade nodes in the checked grammar. 94 % of the held-out cases pass the fact checker. Local file until published.",
+        description: "SmolLM2-360M-Instruct (revision a10cc15) fine-tuned by the fork to explain grade nodes in the checked grammar. 94 % of the held-out cases pass the fact checker.",
         license: APACHE,
         license_url: APACHE_URL,
         author: "Hugging Face (base); Revolution fork (fine-tune)",
         source: "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct",
         weights: "smol360-v1-q8_0.gguf",
         tokenizer: "tokenizer.json",
-        files: &[local!("smol360-v1-q8_0.gguf", "aa7b76d762774d7ce0d34f825e788dd87cb3bb2fa35174a14e3513c63a5f19f0", 384636128), SMOL_TOKENIZER],
+        files: &[
+            fork_release!("explainer-smol360-v1", "smol360-v1-q8_0.gguf", "aa7b76d762774d7ce0d34f825e788dd87cb3bb2fa35174a14e3513c63a5f19f0", 384636128),
+            SMOL_TOKENIZER,
+        ],
+    },
+    // fork AI2: trained on node lines, comp-graph lines and branch-node notes as well
+    ModelInfo {
+        id: "filmcraft-explainer-smol360-v3-q8",
+        name: "Revolution explainer, SmolLM2 360M tuned v3 (8-bit)",
+        family: Family::SmolLm2,
+        description: "SmolLM2-360M-Instruct (revision a10cc15) fine-tuned by the fork to explain grade nodes, compositor nodes and node-tree branches in the checked grammar: 36 / 36, 38 / 40 and 12 / 13 held-out node cases, 32 / 32 comp lines and 20 / 20 branch notes pass the fact checker.",
+        license: APACHE,
+        license_url: APACHE_URL,
+        author: "Hugging Face (base); Revolution fork (fine-tune)",
+        source: "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct",
+        weights: "smol360-v3-q8_0.gguf",
+        tokenizer: "tokenizer.json",
+        files: &[
+            fork_release!("explainer-smol360-v3", "smol360-v3-q8_0.gguf", "d3be2df8e19d5b94615e450489cd29c124c1cc91323f01b06ee4bb627256e8cd", 384636128),
+            SMOL_TOKENIZER,
+        ],
     },
     // fork AI1.4: the "fast" option for slower PCs (about half the 360M tune's time per answer);
     // chosen in Settings, never automatically (not in TUNED_PREFERENCE)
@@ -311,9 +341,11 @@ static CATALOGUE: &[ModelInfo] = &[
 /// The default model: **provisional until the 30-case evaluation** (GRADE-PLAN.md item 11).
 pub const DEFAULT_MODEL: &str = "qwen2.5-0.5b-instruct-q4km";
 
-/// The fine-tuned explainers in order of preference (best first: 35/36 then 34/36 held-out
-/// cases in the test training run). [`automatic`] uses the first one installed.
-pub const TUNED_PREFERENCE: &[&str] = &["filmcraft-explainer-qwen05-v1-q8", "filmcraft-explainer-smol360-v1-q8"];
+/// The fine-tuned explainers in order of preference (best first). [`automatic`] uses the first one
+/// installed. Fork AI2: `smol360-v3` first, the only tune trained on comp lines and branch notes
+/// (32 / 32 and 20 / 20 where v1 passes 6 and 2; one case short of v1 / v2 on held-out set 3:
+/// provisional, OWNER-QUESTIONS Q61); then AI1's qwen05-v1 (35 / 36) and smol360-v1 (34 / 36).
+pub const TUNED_PREFERENCE: &[&str] = &["filmcraft-explainer-smol360-v3-q8", "filmcraft-explainer-qwen05-v1-q8", "filmcraft-explainer-smol360-v1-q8"];
 
 /// The model used when the user hasn't chosen one: the best fine-tuned explainer installed in
 /// `models_dir`, else [`DEFAULT_MODEL`]. Only checks file sizes (cheap enough per request).
@@ -494,7 +526,7 @@ mod tests {
 
     #[test]
     fn catalogue_is_pinned_checksummed_and_licensed() {
-        assert_eq!(catalogue().len(), 8);
+        assert_eq!(catalogue().len(), 9);
         assert!(!find(DEFAULT_MODEL).is_some_and(ModelInfo::is_local), "the default must be downloadable");
         assert!(find(DEFAULT_MODEL).is_some());
         let mut ids = std::collections::HashSet::new();
@@ -537,11 +569,12 @@ mod tests {
     }
 
     #[test]
-    fn tuned_models_are_local_and_run_without_repeat_penalty() {
+    fn tuned_models_are_published_or_local_and_run_without_repeat_penalty() {
         let tuned: Vec<_> = catalogue().iter().filter(|m| m.is_tuned()).collect();
-        assert_eq!(tuned.len(), 3);
+        assert_eq!(tuned.len(), 4);
         for m in tuned {
-            assert!(m.is_local(), "{}", m.id);
+            // the automatic choices download from the fork's releases; only the "fast" tune is local
+            assert_eq!(m.is_local(), !TUNED_PREFERENCE.contains(&m.id), "{}", m.id);
             assert_eq!(m.recommended_options().repeat_penalty, 1.0);
             assert!(m.description.contains("fine-tuned"));
         }
@@ -569,8 +602,10 @@ mod tests {
         assert_eq!(id(None), Some(DEFAULT_MODEL));
         assert_eq!(id(Some(&dir)), Some(DEFAULT_MODEL), "nothing installed");
         let tuned: Vec<_> = TUNED_PREFERENCE.iter().filter_map(|t| find(t)).collect();
-        assert_eq!(tuned.len(), 2);
+        assert_eq!(tuned.len(), 3);
         assert!(tuned.iter().all(|m| m.is_tuned()));
+        fake_install(&dir, tuned[2]);
+        assert_eq!(id(Some(&dir)), Some(tuned[2].id));
         fake_install(&dir, tuned[1]);
         assert_eq!(id(Some(&dir)), Some(tuned[1].id));
         fake_install(&dir, tuned[0]);

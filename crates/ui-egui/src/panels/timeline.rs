@@ -1281,6 +1281,8 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
     let tg = app.session.targeting();
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut vo_action = None;
+    // A3.2: levels of the playing mix, the same the mixer strips show
+    let meters = if rows.iter().any(|r| r.kind == TrackKind::Audio) { super::mixer::poll_meters(app, ui) } else { Default::default() };
     for r in rows {
         let Some(tr) = seq.track(r.track) else { continue };
         let clip_rect = if r.kind == TrackKind::Video { vclip } else { aclip };
@@ -1417,6 +1419,25 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         if resp.double_clicked() {
             let h = if r.kind == TrackKind::Video { &mut app.ui.timeline.video_track_h } else { &mut app.ui.timeline.audio_track_h };
             *h = if *h < 50.0 { 64.0 } else { 30.0 };
+        }
+        // A3.2: a thin always-visible meter at the audio header's right edge (the loudest channel),
+        // clip light on top latched like the mixer's; click it to reset
+        if r.kind == TrackKind::Audio && hrect.height() >= 14.0 {
+            let mr = Rect::from_min_max(pos2(hrect.max.x - 5.0, hrect.min.y + 2.0), pos2(hrect.max.x - 1.5, hrect.max.y - 2.0));
+            let m = meters.get(&r.track.0).map(|v| super::mixer::loudest(v)).unwrap_or([-90.0; 2]);
+            let clipped = super::mixer::clip_latched(ui.ctx(), r.track.0);
+            p.rect_filled(mr, 0.0, t.meter_bg);
+            let bar = Rect::from_min_max(pos2(mr.min.x, mr.min.y + 4.0), mr.max);
+            crate::widgets::meter_bar(&p, bar, m[0], m[1], t);
+            let light = Rect::from_min_size(mr.min, vec2(mr.width(), 3.0));
+            p.rect_filled(light, 0.0, if clipped || m[1] >= -0.1 { Color32::from_rgb(0xe3, 0x48, 0x50) } else { t.meter_clip_off });
+            let hit = mr.expand2(vec2(0.5, 0.0)).intersect(visible);
+            if hit.height() > 0.0
+                && ui.interact(hit, tid(("hdrMeter", r.track.0)), Sense::click()).on_hover_text(tl!("Click to reset peak hold and clip light")).clicked()
+            {
+                super::mixer::reset_meter(ui.ctx(), r.track.0);
+            }
+            app.auto.add(&format!("timeline.track.{label}.meter"), mr, &format!("Meter {:.1} dB{}", m[0], if clipped { ", clipped" } else { "" }));
         }
     }
     // column separator

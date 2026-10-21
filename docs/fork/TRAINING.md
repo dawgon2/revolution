@@ -68,6 +68,9 @@ Where things go: data, logs, eval outputs and scores in `~/Apps/filmcraft-train/
 - **eval / score**: the 36 held-out cases, greedy, 80 tokens, repeat penalty 1.0 (run.sh's
   `REPEAT_PENALTY` default; the tuned models' `ModelInfo::recommended_options`, which the app uses
   too); each answer checked by `check_explanation_labeled(facts, None, Some(1), text)`.
+- **all sets (AI2)**: `tools/explainer-train/score-sets.sh <name>` evaluates and scores the
+  quantized model on sets 1–3 (node lines), 4 (comp lines, `comp_traindata --dump-cases`) and 5
+  (branch notes) into `$RUNS/<name>/sets/`; `SETS="4 5"` picks a subset.
 
 ## First test training (2026-10-11)
 
@@ -222,6 +225,15 @@ penalty 1.0; sets 2 and 3 not deduped against data-v1; synthetic prompts):
 Within a few cases of the 360M tune at half the time, so it is catalogued as
 `filmcraft-explainer-smol135-v1-q8` ("fast"), not in `TUNED_PREFERENCE` (picked only by the user).
 (zsh note: write `"id=${G}:llama"` for `llm_eval --local`; `$G:l…` is a zsh modifier.)
+
+## smol360-v3 (fork AI2, 2026-10-21)
+
+**Data:** `data-v3` (`explain_traindata --grades 3400 --per-grade 2 --seed 3 --subtle 0.12 --branch-grades 1200`
+plus `comp_traindata --comps 800 --seed 3`; 11 383 train / 686 val). **Train:** `TRAIN_ARGS="--epochs 2"`
+on the RX 6700 XT, early stop by patience after about 94 min. **Scores** (`score-sets.sh`, Q8_0):
+set 1 36 / 36, set 2 38 / 40, set 3 12 / 13, set 4 (comp) 32 / 32, set 5 (branch) 20 / 20; mean 1.27 s per
+answer on set 1. For comparison v1: 34 / 37 / 13 / 6 / 2, v2: 33 / 36 / 13 on sets 1–3. Shipped first in
+`TUNED_PREFERENCE` (provisional, OWNER-QUESTIONS Q61).
 
 ## Converter validation
 

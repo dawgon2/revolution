@@ -1334,7 +1334,7 @@ static CATEGORIES: &[Category] = &[
             Row::Custom("remoteLocations"),
             b("remote.secretsInFile", "Keep passwords in a file when no system keyring works (not encrypted)", false),
             // S2b (ADR 0008): one port to open in a strict firewall instead of a new one each time
-            f("remote.nearbyPort", "Port for receiving from a nearby computer (0 = any free port)", int(0.0, 65535.0, ""), true),
+            f("remote.nearbyPort", "Port for receiving from a nearby computer (0 = the standard port, 47821)", int(0.0, 65535.0, ""), true),
         ],
     },
     // fork UPD (FORK-PLAN §1a.77): builds without an update channel show "doesn't check"

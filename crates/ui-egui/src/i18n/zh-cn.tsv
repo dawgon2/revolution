@@ -4290,4 +4290,7 @@
 	{computer} wants to send {package} ({size})	{computer} 想发送 {package}（{size}）
 	Accept	接受
 	Decline	拒绝
-	Port for receiving from a nearby computer (0 = any free port)	从附近电脑接收所用的端口（0 = 任意空闲端口）
+	Port for receiving from a nearby computer (0 = the standard port, 47821)	从附近电脑接收所用的端口（0 = 标准端口 47821）
+	The other computer can't connect? Allow Revolution in this computer's firewall once:	另一台电脑无法连接？请在本机防火墙中允许 Revolution（只需一次）：
+	If Windows asks, allow Revolution on private networks.	如果 Windows 询问，请允许 Revolution 访问专用网络。
+	Click to reset peak hold and clip light	单击以重置峰值保持和削波指示灯

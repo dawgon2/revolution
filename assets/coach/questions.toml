@@ -174,7 +174,8 @@ ask = "how do I add a lens flare?"
 ask = "how do I make a freeze frame?"
 
 [[offtopic]]
-ask = "how do I crop a shot?"
+# (was "how do I crop a shot?": the Inspector section pages.inspector covers cropping since 2026-10-21)
+ask = "how do I burn my film to a DVD?"
 
 [[offtopic]]
 ask = "how do I speed up a clip?"

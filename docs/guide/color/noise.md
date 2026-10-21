@@ -60,8 +60,9 @@ clip without it (from the render cache once that part is rendered).
 1. Select the clip on the timeline (temporal NR is per clip and uses the neighbouring frames).
 2. Find the **Temporal NR** controls. They are the same controls in two places, so use
    whichever is open:
-   - **Effect Controls** (Premiere workflow; called **Inspector** in the Resolve workflow): the
-     **Temporal NR** section.
+   - **Effect Controls** (Premiere workflow; called **Keyframes** in the Resolve workflow): the
+     **Temporal NR** section. In the Resolve workflow the **Inspector**'s Video tab has the same
+     **Temporal NR** section (pages.inspector).
    - The Color page **Noise** tab {ui:grade.tab.noise}: the **Temporal NR (clip)** block under
      the node's spatial rows. It is headed with the clip's name because it belongs to the clip,
      whichever node is selected.
@@ -76,7 +77,7 @@ clip without it (from the render cache once that part is rendered).
 7. Pause the Program monitor on the shot and wait a moment: the paused frame renders with
    temporal noise reduction (the frame without it shows meanwhile). Each control has a reset
    button ({ui:tnr.luma.reset} and the like) and can be keyframed. In Effect Controls
-   (Inspector) the keyframes show as diamonds in the keyframe area on the control's row: click
+   (Keyframes in the Resolve workflow) the keyframes show as diamonds in the keyframe area on the control's row: click
    one to move the playhead there, drag one to move it in time (it snaps to a frame; one undo
    step, `tnr.moveKeyframe`). Change a keyframe's value at the playhead with the row's controls.
 8. The render bar marks the clip for rendering; let the render cache build it, or export.

@@ -359,10 +359,23 @@ When the other computer is not found:
 - Some networks stop computers from finding each other: guest Wi-Fi, some routers and access
   points. Type the receiver's address instead: the receive window shows it as `address:port`
   (for example `<lan-address>:51234`). Type it into **Address:** (`projects.transfer.address`) under the code, or click **Find** (`projects.transfer.find`) to list the computers waiting to receive and pick one (`projects.transfer.receiver.<n>`).
-- A firewall may be in the way. Windows Defender Firewall may ask to allow Revolution: allow it on
-  **private networks**. macOS asks once. On Linux with firewalld, open the receiving port with
-  `sudo firewall-cmd --add-port=<port>/tcp` (a fixed port is easier to open than a changing one: Settings ▸ Remote Locations ▸ **Port for receiving from a nearby computer**, `remote.nearbyPort`; 0 = any free port)
-  and, for finding computers automatically, `sudo firewall-cmd --add-port=47820/udp`.
+- A firewall may be in the way: the send then says "Couldn't reach … A firewall on the other
+  computer may be blocking it". Revolution receives on **TCP 47821** (Settings ▸ Remote Locations ▸
+  **Port for receiving from a nearby computer**, `remote.nearbyPort`; 0 = this standard port; if
+  another program has it, the receive window says which port it took instead) and computers find
+  each other on **UDP 47820**. Open **both** once on the **receiving** computer:
+  - **Linux, installed from the .deb / .rpm / Arch package:** the package brings a firewall
+    description named Revolution (like KDE Connect's) but never switches it on by itself. The
+    receive window shows the command for your firewall (`projects.transfer.firewall`): with ufw
+    `sudo ufw allow Revolution`, with firewalld
+    `sudo firewall-cmd --permanent --add-service=revolution && sudo firewall-cmd --reload`.
+  - **Linux, AppImage / portable folder / Flatpak** (or to allow only your own network):
+    `sudo ufw allow from <lan-address>/24 to any port 47821 proto tcp` and
+    `sudo ufw allow from <lan-address>/24 to any port 47820 proto udp` (use your network's numbers:
+    `ip -4 addr` shows e.g. `<lan-address>/24`, so the network is `<lan-address>/24`).
+  - **Windows** asks the first time Revolution receives: allow it on **private networks**. **macOS**
+    asks once.
+- The Address box takes `<lan-address>:47821`; a `/24` pasted from `ip addr` is ignored.
 
 If the connection drops, send again with the same code within the 10 minutes: the transfer
 **continues where it stopped**. After 10 minutes the code expires; make a new one.

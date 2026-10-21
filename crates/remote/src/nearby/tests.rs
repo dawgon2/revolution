@@ -1183,3 +1183,15 @@ fn hidden_characters_in_names_and_messages() {
     assert!(is_format_char('\u{FEFF}') && is_format_char('\u{E0041}') && !is_format_char('é'));
     assert_eq!(transfer::peer_error("bad\u{202E}thing"), NearbyError::Peer("bad?thing".into()));
 }
+
+#[test]
+fn a_prefix_length_copied_from_ip_addr_is_dropped() {
+    use super::net::without_prefix_length as w;
+    assert_eq!(w("<lan-address>/24:46261"), "<lan-address>:46261");
+    assert_eq!(w("<lan-address>/24"), "<lan-address>");
+    assert_eq!(w("[fe80::1]/64:5000"), "[fe80::1]:5000");
+    assert_eq!(w("host.local:47821"), "host.local:47821");
+    assert_eq!(w("a/b"), "a/b");
+    assert_eq!(w("/"), "/");
+    assert_eq!(w(""), "");
+}

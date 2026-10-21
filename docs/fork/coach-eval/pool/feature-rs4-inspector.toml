@@ -1,0 +1,159 @@
+# FEATURE-POOL batch feature-rs4-inspector (FEATURE-QUEUE row "RS4.2 Resolve-style Inspector (Video / Audio /
+# Effects / Transition / Image / File tabs; Transform in Resolve units, Cropping, Composite, Speed Change,
+# Stabilization, Temporal NR); Effect Controls is called Keyframes in the Resolve workflow").
+# Source: pages.md (pages.inspector, pages.panels), with effects.keyframes for interpolation and
+# getting-started.workflow for the switch. Held-out test questions, written from the guide's text only
+# (README.md beside this file). The guide gives no unit conversion beyond "Zoom 1.000 is Scale 100 %", so nothing
+# asks for other conversions; it says nothing about the Audio / Effects / Transition / Image tabs' contents
+# beyond Effects listing a clip's effects, so nothing asks what they hold.
+# No creative family. No recipe spot check: the Dell's app build predates RS4.2.
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-in-zoom-units"
+kind = "tool"
+q = "In the Inspector, Zoom shows 1.000. What is that in Premiere's Scale?"
+sources = ["pages.inspector"]
+must = ["Zoom 1.000 is the clip's own size, Scale 100 %", "2.000 is twice as big"]
+must_not = []
+style = "premiere-words"
+
+[[question]]
+id = "feat-in-position-origin"
+kind = "tool"
+q = "Where does Position 0, 0 sit in the Inspector, and which way is positive Y?"
+sources = ["pages.inspector"]
+must = ["the centre of the frame", "Y goes up"]
+must_not = ["top-left corner"]
+style = "pro"
+
+[[question]]
+id = "feat-in-rotation-direction"
+kind = "tool"
+q = "i typed rotation 10 in the inspector and it went the other way than premiere, bug?"
+sources = ["pages.inspector"]
+must = ["not a bug: Rotation Angle turns counter-clockwise in the Inspector", "Premiere's Effect Controls turns clockwise", "same setting, only the numbers shown differ"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-in-section-dot-arrow"
+kind = "tool"
+q = "What do the little dot and the arrow on an Inspector section header do?"
+sources = ["pages.inspector"]
+must = ["the dot turns the section off and on", "the arrow resets it"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-in-crop-feather"
+kind = "tool"
+q = "Can I soften the edge of a crop from the Inspector?"
+sources = ["pages.inspector"]
+must = ["yes: Cropping's Softness feathers the cut", "Crop Left, Right, Top, Bottom trim each edge"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-in-fade-opacity"
+kind = "tool"
+q = "Using Resolve's layout, where do I set a clip's opacity and blend mode?"
+sources = ["pages.inspector"]
+must = ["Video tab, Composite section", "Composite Mode and Opacity (0–100)"]
+must_not = []
+style = "resolve-words"
+
+[[question]]
+id = "feat-in-reverse"
+kind = "tool"
+q = "How do I play a clip backwards with the Inspector?"
+sources = ["pages.inspector"]
+must = ["Speed Change section, Direction Reverse", "the clip's duration follows the speed"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-in-no-keyframe-lane"
+kind = "tool"
+q = "Is there a keyframe curve editor inside the Inspector like in Resolve?"
+sources = ["pages.inspector"]
+must = ["no keyframe lane of its own", "the diamond adds or removes a keyframe at the playhead", "curves are shaped in Keyframes (Effect Controls)"]
+must_not = []
+style = "resolve-words"
+
+[[question]]
+id = "feat-in-file-tab"
+kind = "tool"
+q = "Where can I see a clip's codec and frame rate without leaving the Edit page?"
+sources = ["pages.inspector"]
+must = ["the Inspector's File tab", "name, media path, codec, resolution, frame rate, duration; sample rate and channels for sound"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-in-greyed-tab"
+kind = "tool"
+q = "Why is the Audio tab greyed out in the Inspector?"
+sources = ["pages.inspector"]
+must = ["a tab that doesn't apply to the selected clip is greyed out"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-in-stabilization-which"
+kind = "tool"
+q = "Is the Inspector's Stabilization Resolve's stabilizer?"
+sources = ["pages.inspector"]
+must = ["no: it is FilmCraft's Warp Stabilizer", "Temporal NR is the clip's own noise reduction, the same rows as in Effect Controls"]
+must_not = []
+style = "resolve-words"
+
+[[question]]
+id = "feat-in-keyframes-name"
+kind = "tool"
+q = "Where did Effect Controls go after I switched to the Resolve workflow?"
+sources = ["pages.inspector", "pages.panels"]
+must = ["it is called Keyframes in the Resolve workflow", "the Edit page toolbar shows and hides it", "the Inspector edits the same clip settings"]
+must_not = []
+style = "premiere-words"
+
+[[question]]
+id = "feat-in-switch-safe"
+kind = "tool"
+q = "If I set Position in the Inspector and then switch to the Premiere workflow, does my clip move?"
+sources = ["pages.inspector", "getting-started.workflow"]
+must = ["no: switching workflows never changes the clip", "Effect Controls shows the same setting in Premiere's units"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-in-task-push-in"
+kind = "task"
+q = "Make a slow push-in on a shot from the Inspector that eases in at the start."
+sources = ["pages.inspector", "effects.keyframes"]
+must = ["Transform Zoom: keyframe with the diamond at the start, move the playhead, set a larger Zoom and keyframe it", "set the interpolation (Ease In / Bezier) in Keyframes by right-clicking a keyframe"]
+must_not = []
+style = "beginner"
+
+# ---------- keyword-coach format ----------
+
+[[coach]]
+id = "feat-in-c-where"
+kind = "where"
+q = "where is the inspector"
+origin = "agent"
+page = "pages.md"
+heading = "The Inspector: a clip's settings in Resolve's layout"
+status = "covered"
+facts = ["Inspector", "page toolbar"]
+
+[[coach]]
+id = "feat-in-c-resolve-word"
+kind = "resolve-word"
+q = "inspector transform zoom position"
+origin = "agent"
+page = "pages.md"
+heading = "The Inspector: a clip's settings in Resolve's layout"
+status = "covered"
+facts = ["Zoom", "Position"]

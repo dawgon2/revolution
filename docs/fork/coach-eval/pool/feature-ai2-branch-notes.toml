@@ -1,0 +1,116 @@
+# FEATURE-POOL batch feature-ai2-branch-notes (FEATURE-QUEUE row "AI2 app wiring": Explain node on a parallel /
+# layer mixer, splitter, combiner or key mixer shows its branch note; a node limited by another node's selection
+# gets it as `branch` too; with AI explanations on, the local model may reword it, accepted only as one of the
+# note's fixed phrasings).
+# Source: color/nodes.md (color.nodes.explain-branches) and color/matching.md (color.matching.explainer step 4,
+# color.matching.ai "What checked means"). Held-out test questions, written from the guide's text only
+# (README.md beside this file). The general explainer and AI settings already have pool questions (color-4);
+# these ask only about branch notes. The guide doesn't list every phrasing or the `branch` field's members
+# beyond the sentence, so nothing asks for them.
+# No creative family. No recipe spot check: the Dell's app build predates AI2's app wiring.
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-bn-explain-parallel-mixer"
+kind = "tool"
+q = "What does Explain node tell me when the selected node is a parallel mixer?"
+sources = ["color.nodes.explain-branches", "color.matching.explainer"]
+must = ["its branch note: which nodes work on the same image and how their results are blended (e.g. 50 / 50)", "read from the wiring and settings, not measured"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-bn-mixer-left-out"
+kind = "tool"
+q = "Explain grade skipped my layer mixer in the per-node part, is it broken?"
+sources = ["color.nodes.explain-branches"]
+must = ["no: mixers and splitters do no grading themselves, so the per-node text leaves them out", "their branch sentences follow after it"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-bn-measured-or-not"
+kind = "tool"
+q = "Are the branch sentences measured from the frame like the node explanations, or rounded somehow?"
+sources = ["color.nodes.explain-branches"]
+must = ["not measured: read from the wiring and the settings", "so they are exact"]
+must_not = ["rounded to a sixth of a stop"]
+style = "pro"
+
+[[question]]
+id = "feat-bn-ai-wrong-share"
+kind = "tool"
+q = "With AI explanations on, could the model tell me my parallel mixer blends 70/30 when it's really 50/50?"
+sources = ["color.matching.ai"]
+must = ["no: for mixer sentences the model's text must be one of a few fixed ways of saying it", "with exactly the node names, shares, opacities and blend modes the graph has", "otherwise you see the template sentence"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-bn-agent-field"
+kind = "tool"
+q = "For an agent: where does grade.explainNode put the note about a mixer or splitter?"
+sources = ["color.matching.explainer"]
+must = ["in the `branch` field of grade.explainNode's result"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-bn-serial-grade"
+kind = "tool"
+q = "My grade is only serial nodes. Will Explain grade add branch sentences?"
+sources = ["color.nodes.explain-branches"]
+must = ["no: a serial grade has no branch sentences", "it reads exactly as before"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-bn-outside-resolve"
+kind = "tool"
+q = "Coming from Resolve: how can I check in words what an outside node is excluding?"
+sources = ["color.nodes.explain-branches"]
+must = ["Explain grade on the Match tab", "a sentence like: works on everything outside the 'Sky' node's selection"]
+must_not = []
+style = "resolve-words"
+
+[[question]]
+id = "feat-bn-key-mixer-sentence"
+kind = "tool"
+q = "what does the explainer say for a key mixer node"
+sources = ["color.nodes.explain-branches"]
+must = ["it builds one selection", "what it starts with and what it takes away"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-bn-chain-ai-wording"
+kind = "chain"
+context = [{ q = "how do I switch on plain-words explanations with a local model?", a = "Settings ▸ Color ▸ AI explanations: pick a Model (ai.select), Download it (ai.download), tick Explain nodes in plain words with a local AI model (color.ai.enabled) and click OK. Explain node then shows the model's text when it passes the check, with a small checked badge." }]
+q = "and on my layer mixer node the wording changed but the numbers didn't, is that the model?"
+sources = ["color.matching.ai", "color.nodes.explain-branches"]
+must = ["yes: the model may only choose among a few fixed wordings of the mixer's sentence", "it can never add or change a fact (names, opacity, blend mode stay the graph's)"]
+must_not = []
+style = "follow-up"
+
+# ---------- keyword-coach format ----------
+
+[[coach]]
+id = "feat-bn-c-branches"
+kind = "how"
+q = "explain branched grade mixer sentences"
+origin = "agent"
+page = "color/nodes.md"
+heading = "What the explainer says about branches"
+status = "covered"
+facts = ["Explain grade", "branch"]
+
+[[coach]]
+id = "feat-bn-c-node-mixer"
+kind = "how"
+q = "explain node on a mixer"
+origin = "agent"
+page = "color/nodes.md"
+heading = "What the explainer says about branches"
+status = "covered"
+facts = ["Explain grade", "branch"]

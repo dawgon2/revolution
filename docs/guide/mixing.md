@@ -116,3 +116,31 @@ playhead** on each track. With the same Off / Read / Latch / Touch / Write modes
 (`clipMixer.setMode`), a pass writes keyframes on the clips' **Volume** and **Panner** effects, in
 the clips' own time, so they travel with the clips when you edit. `clipMixer.set` sets one clip's
 level or pan directly.
+
+## Meters and clip lights
+
+> id: mixing.meters | does: peak meters on mixer strips and Audio Meters, with peak hold and a clip light that stays red until clicked | cmd: mixer.inspect | resolve: Fairlight meters (clip indicators reset by clicking) | premiere: Audio Meters and the mixer's clip indicators | when: checking the mix stays under full scale while it plays | see: mixing.track-mixer, practice.audio.loudness-targets
+
+**[Fork]**
+
+Every strip in the Audio Track Mixer and Audio Clip Mixer has a meter, and Window ▸ **Audio
+Meters** shows the master Mix with its loudness readout (M / S / I in LUFS, true peak in dBTP).
+Each audio track header in the timeline also has a thin meter at its right edge
+(`timeline.track.A1.meter`): the louder of the track's channels, with its own clip light, so you
+can watch levels without opening a mixer.
+The thin line above each bar is the **peak hold**: the loudest moment of the last seconds. The
+small light on top of each bar is the **clip light**: it turns red when that strip reaches 0 dBFS
+(digital full scale, the loudest level a file can hold) and **stays red** after the sound gets quieter,
+so you can see that something clipped even if you looked away.
+
+1. Play the part of the timeline you want to check.
+2. If a clip light is red, find the loud spot: lower that track's fader or the clip's volume, or
+   put a Limiter on the strip (see Track effects).
+3. Click the meter (`mixer.A1.meter` on a strip, `timeline.track.A1.meter` on a header,
+   `audioMeters.clip` on the Audio Meters panel) to
+   turn the light off and drop the peak hold to the current level, then play the spot again.
+
+Beginners: keep every light dark and the true peak under −1 dBTP for online video. Pros often let
+a submix peak hot and catch it with a limiter on the Mix; what counts is the Mix's light and its
+true peak. The clip light stays until you click it, whatever the workflow; it is one light per
+strip in the Audio Meters panel (lit for every channel at once), not one per channel.

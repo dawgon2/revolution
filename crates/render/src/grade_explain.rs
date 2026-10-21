@@ -32,7 +32,7 @@ mod branches;
 pub mod cases;
 mod check;
 
-pub use branches::explain_branches;
+pub use branches::{BranchFacts, KeyFact, KeyOp, LayerFact, branch_facts, branch_facts_by_node, check_branch_explanation, check_phrasings, explain_branches};
 pub use check::{
     FactMismatch, GRAMMAR_DOC, NOOP_PHRASES, VOCABULARY, check_explanation, check_explanation_labeled, check_grammar, check_shape, check_vocabulary,
 };

@@ -171,6 +171,54 @@ need them and takes them away again when you need the room, without hunting thro
 A button on the left of the toolbar opens its panel on the left of the page, one on the right
 opens it on the right. Hiding the last panel of a page is refused (the status bar says why).
 
+## The Inspector: a clip's settings in Resolve's layout
+
+> id: pages.inspector | does: shows and edits the selected clip's transform, crop, opacity, speed and stabilization in Resolve's units | ui: inspector.*, pageToolbar.Inspector | resolve: Inspector | premiere: Effect Controls | when: you want to move, zoom, crop, fade, speed up or stabilize one clip | see: pages.toolbar
+
+**[Resolve-style]**
+
+### Why
+
+Most changes to a single clip (make it bigger, move it, crop it, fade it, slow it down, steady a
+shaky shot) live in one place. The Inspector keeps them in short sections you can open and close,
+so the controls for one job are together and the rest are out of the way.
+
+### Steps
+
+1. Select a clip in the timeline. If the Inspector isn't on screen, click **Inspector** in the
+   page toolbar ({ui:pageToolbar.Inspector}).
+2. Pick a tab at the top: **Video** ({ui:inspector.tab.video}), **Audio**
+   ({ui:inspector.tab.audio}), **Effects**, **Transition**, **Image** or **File**
+   ({ui:inspector.tab.file}). A tab that doesn't apply to the clip is greyed out.
+3. On the Video tab, open a section by clicking its header (**Transform**
+   {ui:inspector.section.transform}, **Cropping**, **Composite**, **Speed Change**,
+   **Stabilization**, **Temporal NR**). The dot on the left of a header turns that section off and
+   on; the arrow on the right resets it.
+4. Type a value or drag in a field. In **Transform**, **Zoom** 1.000 is the clip's own size
+   (2.000 is twice as big); **Position** and **Anchor Point** count pixels from the centre of the
+   frame, with Y going up; **Rotation Angle** turns counter-clockwise. Turn the link off to set
+   Zoom X and Y apart; **Flip Image** mirrors the clip.
+5. **Cropping** trims each edge (Crop Left, Right, Top, Bottom) and **Softness** feathers the cut.
+   **Composite** sets **Composite Mode** and **Opacity** (0–100).
+6. **Speed Change** sets **Direction** (Forward / Reverse) and **Speed**; the clip's duration
+   follows.
+7. To animate a value, move the playhead and click the diamond at the end of its row: it adds a
+   keyframe there (click it again on that frame to remove it). Shape the keyframes in
+   **Keyframes** ({ui:pageToolbar.EffectControls}).
+8. The **File** tab lists the clip's name, its media's path, codec, resolution, frame rate,
+   duration and, for sound, sample rate and channels.
+
+### How it differs
+
+- **From Resolve:** our own drawing and icons; the Inspector has no keyframe lane of its own (the
+  diamonds add and remove keyframes at the playhead; curves are in Keyframes). Stabilization is
+  FilmCraft's Warp Stabilizer, and Temporal NR is the clip's own noise reduction (the same rows
+  as in Effect Controls), not Resolve's.
+- **From Premiere:** Effect Controls edits the very same settings in Premiere's units: Zoom 1.000
+  is Scale 100 %, Position counts from the top-left corner with Y going down, and Rotation turns
+  clockwise. Switching workflows never changes the clip; only the numbers shown differ. In the
+  Resolve workflow Effect Controls itself, with its keyframe lane, is called **Keyframes**.
+
 ## Deliver: render settings and the render queue
 
 > id: pages.deliver | does: render settings and a render queue on the Deliver page | ui: export.*, page.deliver | cmd: export.queue.start, file.exportMedia, page.deliver | resolve: Deliver page render settings and queue | premiere: Export mode, Adobe Media Encoder queue | when: turning the timeline into files, several at once | see: pages.what

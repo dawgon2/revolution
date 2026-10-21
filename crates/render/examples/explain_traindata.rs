@@ -24,14 +24,17 @@ use std::error::Error;
 use std::io::Write as _;
 
 use filmcraft_color::WorkingSpace;
+use filmcraft_project::dag::{Edge, Port};
+use filmcraft_project::effect::BLEND_MODES;
 use filmcraft_project::grade::{Grade, GradeNode};
+use filmcraft_project::grade::{NodeKind, SOURCE};
 use filmcraft_project::keyframe::ParamValue;
 use filmcraft_project::mask::Mask;
 use filmcraft_project::{MaskPath, Param};
 use filmcraft_render::Image;
 use filmcraft_render::grade::{GradeCtx, compile_fx, qualifier_hsl};
 use filmcraft_render::grade_explain::cases::{eval_cases, eval_cases_v2, eval_cases_v3};
-use filmcraft_render::grade_explain::{FactMismatch, NodeFacts, check_explanation_labeled, explain_node};
+use filmcraft_render::grade_explain::{BranchFacts, FactMismatch, NodeFacts, branch_facts, check_branch_explanation, check_explanation_labeled, explain_node};
 use filmcraft_time::Tick;
 
 const W: usize = 120;
@@ -925,10 +928,12 @@ struct Args {
     tries: usize,
     samples: usize,
     subtle: f64,
+    branch_grades: usize,
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
-    let mut a = Args { out_dir: std::path::PathBuf::new(), grades: 2600, per_grade: 2, seed: 1, val: 0.05, tries: 48, samples: 0, subtle: 0.0 };
+    let mut a =
+        Args { out_dir: std::path::PathBuf::new(), grades: 2600, per_grade: 2, seed: 1, val: 0.05, tries: 48, samples: 0, subtle: 0.0, branch_grades: 0 };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut v = || it.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -941,11 +946,12 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
             "--tries" => a.tries = v()?.parse::<usize>()?.clamp(1, 1000),
             "--samples" => a.samples = v()?.parse::<usize>()?.min(1000),
             "--subtle" => a.subtle = v()?.parse::<f64>()?.clamp(0.0, 1.0),
+            "--branch-grades" => a.branch_grades = v()?.parse::<usize>()?.min(1_000_000),
             other => return Err(format!("unknown argument {other}").into()),
         }
     }
     if a.out_dir.as_os_str().is_empty() {
-        return Err("usage: explain_traindata --out-dir <dir> [--grades N] [--per-grade K] [--seed S] [--val F] [--tries T] [--samples N] [--subtle F]".into());
+        return Err("usage: explain_traindata --out-dir <dir> [--grades N] [--per-grade K] [--seed S] [--val F] [--tries T] [--samples N] [--subtle F] [--branch-grades N]".into());
     }
     Ok(a)
 }
@@ -1087,6 +1093,61 @@ fn main() -> Result<(), Box<dyn Error>> {
             *stats_fam.entry(f.to_string()).or_default() += 1;
         }
     }
+    // branched grades (fork AI2): one example per branching node, its phrasings as targets
+    let (mut b_held, mut b_dup, mut b_rejected) = (0usize, 0usize, 0usize);
+    let held_branch: BTreeSet<String> =
+        branch_eval_facts().iter().filter_map(|f| serde_json::to_string(f).ok()).map(|s| filmcraft_llm::compact_facts(&s)).collect();
+    for gi in 0..args.branch_grades {
+        let (g, fam) = random_branch_grade(&mut rng);
+        let is_val = rng.chance(args.val);
+        for (ni, facts) in branch_facts(&g, Tick(0)).into_iter().enumerate() {
+            let facts_json = serde_json::to_string(&facts)?;
+            let compact = filmcraft_llm::compact_facts(&facts_json);
+            if held_branch.contains(&compact) {
+                b_held += 1;
+                continue;
+            }
+            if !seen.insert(compact) {
+                b_dup += 1;
+                continue;
+            }
+            let template = facts.sentence();
+            let (system, user) = filmcraft_llm::explain_prompt(&facts_json, &template);
+            let mut ok = facts.phrasings();
+            rng.shuffle(&mut ok);
+            for target in ok.iter().take(args.per_grade) {
+                tried += 1;
+                if let Err(e) = check_branch_explanation(&facts, target) {
+                    // a phrasing too long for the checker (many long labels): the template is shown
+                    b_rejected += 1;
+                    *reasons.entry(reason_name(&e)).or_default() += 1;
+                    continue;
+                }
+                passed += 1;
+                let line = serde_json::json!({
+                    "id": format!("b{gi}.{ni}"),
+                    "family": fam,
+                    "kind": "branch",
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                        {"role": "assistant", "content": target},
+                    ],
+                })
+                .to_string();
+                bytes += line.len() + 1;
+                if is_val {
+                    writeln!(val, "{line}")?;
+                    n_val += 1;
+                } else {
+                    writeln!(train, "{line}")?;
+                    n_train += 1;
+                }
+                *kinds.entry("branch").or_default() += 1;
+            }
+        }
+        *stats_fam.entry(fam.to_string()).or_default() += 1;
+    }
     train.flush()?;
     val.flush()?;
     let stats = serde_json::json!({
@@ -1105,6 +1166,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         "families": stats_fam,
         "subtle": args.subtle,
         "kinds": kinds,
+        "branch_grades": args.branch_grades,
+        "branch_dropped_held_out": b_held,
+        "branch_dropped_duplicate": b_dup,
+        "branch_rejected_phrasings": b_rejected,
     });
     std::fs::write(args.out_dir.join("data-stats.json"), serde_json::to_string_pretty(&stats)?)?;
     println!("{}", serde_json::to_string_pretty(&stats)?);
@@ -1120,4 +1185,111 @@ fn lowercase_first(s: &str) -> String {
         Some(f) => f.to_lowercase().collect::<String>() + c.as_str(),
         None => String::new(),
     }
+}
+
+// ---- branched grades (fork AI2 item 1) -----------------------------------------------------------
+
+/// The branch held-out set (set 5): never in the training data.
+fn branch_eval_facts() -> Vec<BranchFacts> {
+    filmcraft_render::grade_explain::cases::branch_eval_cases().into_iter().map(|c| c.facts).collect()
+}
+
+fn add_node(g: &mut Grade, rng: &mut Rng, id: u64, kind: NodeKind) {
+    let mut n = GradeNode::new(id);
+    n.kind = kind;
+    if rng.chance(0.35) {
+        n.label = rng.word(NAMES).to_string();
+    }
+    g.nodes.push(n);
+}
+
+fn set_f(g: &mut Grade, id: u64, k: &str, v: f64) {
+    if let Some(n) = g.node_mut(id) {
+        n.params.insert(k.into(), Param::new(ParamValue::Float(v)));
+    }
+}
+
+fn edge(a: u64, ap: u8, b: u64, bp: u8) -> Edge {
+    Edge::new(Port::new(a, ap), Port::new(b, bp))
+}
+
+/// A random graph grade with one kind of branching node (sometimes a second) and its family.
+fn random_branch_grade(rng: &mut Rng) -> (Grade, &'static str) {
+    let mut g = Grade::default();
+    let fam = rng.word(&["parallel", "layer", "split_combine", "key_mixer", "outside"]);
+    // 2–3 correction branches fed by the source (or the first one feeding the others)
+    let branches = 2 + rng.below(2);
+    let chained = rng.chance(0.25);
+    for b in 0..branches {
+        let id = b as u64 + 1;
+        add_node(&mut g, rng, id, NodeKind::Correction);
+        let from = if chained && b > 0 { 1 } else { SOURCE };
+        g.edges.push(edge(from, 0, id, 0));
+    }
+    let m = branches as u64 + 1;
+    match fam {
+        "parallel" | "layer" => {
+            let kind = if fam == "parallel" { NodeKind::ParallelMixer } else { NodeKind::LayerMixer };
+            add_node(&mut g, rng, m, kind);
+            for b in 0..branches {
+                g.edges.push(edge(b as u64 + 1, 0, m, b as u8));
+                if fam == "parallel" && rng.chance(0.6) {
+                    // gains in quarter steps, now and then near-equal (near-threshold shares)
+                    let v = if rng.chance(0.2) { 1.0 + rng.range(-0.02, 0.02) } else { (rng.below(9) as f64) * 0.25 };
+                    set_f(&mut g, m, &format!("mix.gain.{b}"), v);
+                }
+                if fam == "layer" && b > 0 {
+                    let op = if rng.chance(0.3) { rng.range(0.0, 1.0) } else { (rng.below(21) as f64) * 0.05 };
+                    set_f(&mut g, m, &format!("layer.opacity.{b}"), op);
+                    set_f(&mut g, m, &format!("layer.mode.{b}"), rng.below(BLEND_MODES.len()) as f64);
+                }
+            }
+        }
+        "split_combine" => {
+            add_node(&mut g, rng, m, NodeKind::Splitter);
+            add_node(&mut g, rng, m + 1, NodeKind::Combiner);
+            g.edges.push(edge(1, 0, m, 0));
+            for c in 0..3u8 {
+                // now and then a channel takes a detour through the second branch, or is left out
+                if rng.chance(0.15) {
+                    continue;
+                }
+                if c == 0 && rng.chance(0.3) {
+                    g.edges.push(edge(m, c, 2, 0));
+                    g.edges.retain(|e| !(e.to.node == 2 && e.from.node != m));
+                    g.edges.push(edge(2, 0, m + 1, c));
+                } else {
+                    g.edges.push(edge(m, c, m + 1, c));
+                }
+            }
+        }
+        "key_mixer" => {
+            add_node(&mut g, rng, m, NodeKind::KeyMixer);
+            for b in 0..branches {
+                g.edges.push(edge(b as u64 + 1, 1, m, b as u8));
+                if b > 0 {
+                    set_f(&mut g, m, &format!("kmix.mode.{b}"), rng.below(3) as f64);
+                }
+                if rng.chance(0.25) {
+                    set_f(&mut g, m, &format!("kmix.invert.{b}"), 1.0);
+                }
+            }
+            add_node(&mut g, rng, m + 1, NodeKind::Correction);
+            g.edges.push(edge(1, 0, m + 1, 0));
+            g.edges.push(edge(m, 0, m + 1, 1));
+            if rng.chance(0.4) {
+                set_f(&mut g, m + 1, "key.invert", 1.0);
+            }
+        }
+        _ => {
+            // an outside node (or one limited to another's selection)
+            add_node(&mut g, rng, m, NodeKind::Correction);
+            g.edges.push(edge(1, 0, m, 0));
+            g.edges.push(edge(1 + rng.below(branches) as u64, if rng.chance(0.8) { 1 } else { 0 }, m, 1));
+            if rng.chance(0.6) {
+                set_f(&mut g, m, "key.invert", 1.0);
+            }
+        }
+    }
+    (g, fam)
 }

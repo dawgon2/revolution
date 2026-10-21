@@ -361,6 +361,29 @@ fn explain_node(s: &mut Session, p: &Value) -> Result<Value> {
     if let (Some(o), Value::Object(extra)) = (v.as_object_mut(), ai) {
         o.extend(extra);
     }
+    // (fork AI2: a branching node, or a node limited by another's selection, also gets its branch
+    // note, model-written under the fixed-phrasing check when the AI is on; a mixer's own text is
+    // that note, since it grades nothing itself)
+    let note = filmcraft_render::grade_explain::branch_facts_by_node(&g, mt).into_iter().find(|(n, _)| *n == id).map(|(_, f)| f);
+    if let Some(f) = note {
+        let json = serde_json::to_string(&f).unwrap_or_default();
+        let mut b = crate::ai_explain::explain_fixed_fields(s, &json, f.phrasings(), &f.sentence(), bool_p(p, "wait").unwrap_or(false));
+        if let Value::Object(o) = &mut b {
+            o.insert("sentence".into(), json!(f.sentence()));
+            o.insert("facts".into(), serde_json::to_value(&f).unwrap_or(Value::Null));
+        }
+        if node.kind != filmcraft_project::grade::NodeKind::Correction
+            && let (Some(o), Value::Object(bo)) = (v.as_object_mut(), &b)
+        {
+            for k in ["sentence", "text", "source", "reason", "reasonCode", "pending", "aiKey", "partial"] {
+                match bo.get(k) {
+                    Some(x) => o.insert(k.into(), x.clone()),
+                    None => o.remove(k),
+                };
+            }
+        }
+        v["branch"] = b;
+    }
     if let Some(path) = p.get("overlay").and_then(Value::as_str) {
         let ov = filmcraft_render::grade_explain::change_overlay(&input, &output, working(s)?);
         write_png(&ov, path).map_err(|e| bad(CMD, format!("{path}: {e}")))?;

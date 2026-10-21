@@ -18,6 +18,10 @@
 //!   verified once (after the download or on first use) and remembered for the process.
 //!
 //! Results are cached per (node facts, model). Tests inject text with [`AiExplain::set_backend`].
+//!
+//! Fork AI2: a branching grade node's note and a comp node's line go the same way
+//! ([`AiExplain::request_fixed`]), checked with `check_phrasings` against the line's fixed
+//! phrasings instead.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -32,7 +36,7 @@ use serde_json::{Value, json};
 use filmcraft_llm::models as catalogue;
 /// (re-exported for [`ExplainBackend`] implementations outside the engine)
 pub use filmcraft_llm::{GenOptions, ModelInfo};
-use filmcraft_render::grade_explain::{FactMismatch, NodeFacts, check_explanation_labeled};
+use filmcraft_render::grade_explain::{FactMismatch, NodeFacts, check_explanation_labeled, check_phrasings};
 
 use crate::commands::{CommandSpec, always, bad, bool_p, str_p};
 use crate::{EngineError, Result, Session};
@@ -677,7 +681,14 @@ impl AiExplain {
     /// `label` is the node's own name (None when unnamed), `index` its 1-based position and
     /// `display` the label the template sentence starts with.
     pub fn request(&self, prefs: &AiPrefs, facts: &NodeFacts, label: Option<&str>, index: usize, display: &str, template: &str) -> Answer {
-        self.request_as(prefs, facts, label, index, display, template, false)
+        self.request_as(prefs, Claims::node(facts, label, index), display, template, false)
+    }
+
+    /// [`AiExplain::request`] for a line with a fixed set of true phrasings (a branch note, a comp
+    /// node's line; fork AI2): `facts_json` goes into the prompt, the answer is shown only when it
+    /// is one of `accept` (`check_phrasings`), and as written (it names its nodes itself).
+    pub fn request_fixed(&self, prefs: &AiPrefs, facts_json: &str, accept: Vec<String>, template: &str) -> Answer {
+        self.request_as(prefs, Claims::Fixed { facts_json: facts_json.to_string(), accept }, "", template, false)
     }
 
     /// Whether a [`AiExplain::prefetch`] would run the model now (on, a backend, a model, ready):
@@ -694,11 +705,10 @@ impl AiExplain {
     /// nobody asked for yet unwanted (a queued one skips, a running one stops at its next token).
     /// [`AiExplain::request`] for the same facts adopts a pending pre-generation.
     pub fn prefetch(&self, prefs: &AiPrefs, facts: &NodeFacts, label: Option<&str>, index: usize, display: &str, template: &str) -> Answer {
-        self.request_as(prefs, facts, label, index, display, template, true)
+        self.request_as(prefs, Claims::node(facts, label, index), display, template, true)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn request_as(&self, prefs: &AiPrefs, facts: &NodeFacts, label: Option<&str>, index: usize, display: &str, template: &str, speculative: bool) -> Answer {
+    fn request_as(&self, prefs: &AiPrefs, claims: Claims, display: &str, template: &str, speculative: bool) -> Answer {
         if !prefs.enabled {
             return Answer::Ready(Outcome::template(template, Fallback::Off, "AI explanations are off (Settings ▸ Color ▸ AI explanations)"));
         }
@@ -712,8 +722,11 @@ impl AiExplain {
         let Some(model) = resolve_model(&prefs.model, backend.models_dir().as_deref()) else {
             return Answer::Ready(Outcome::template(template, Fallback::NoModel, "no AI model is selected (Settings ▸ Color ▸ AI explanations)"));
         };
-        let facts_json = serde_json::to_string(facts).unwrap_or_default();
-        let key = hash_key(model.id, &facts_json, label, index);
+        let facts_json = claims.facts_json();
+        let key = match &claims {
+            Claims::Node { label, index, .. } => hash_key(model.id, &facts_json, label.as_deref(), *index),
+            Claims::Fixed { .. } => hash_key(model.id, &facts_json, Some("\u{0}fixed"), 0),
+        };
         match self.poll(&key) {
             // (a timeout or error is asked again)
             Some(Answer::Ready(o)) if !cacheable(&o) => {}
@@ -752,15 +765,13 @@ impl AiExplain {
         entries.insert(key.clone(), Entry::Pending { since: web_time::Instant::now(), template: template.to_string(), partial: None, speculative });
         drop(entries);
 
-        let (system, user) = filmcraft_llm::explain_prompt(&facts_json, without_label(template, display));
+        let (system, user) = filmcraft_llm::explain_prompt(&facts_json, if display.is_empty() { template } else { without_label(template, display) });
         let job = Job {
             backend,
             model: *model,
             system,
             user,
-            facts: facts.clone(),
-            label: label.map(str::to_string),
-            index,
+            claims,
             display: display.to_string(),
             template: template.to_string(),
             key: key.clone(),
@@ -817,14 +828,40 @@ impl AiExplain {
 }
 
 /// One generation on the worker thread.
+/// What an answer is checked against.
+enum Claims {
+    /// A correction node's measured facts (`check_explanation_labeled`).
+    Node { facts: Box<NodeFacts>, label: Option<String>, index: usize },
+    /// A line with fixed true phrasings (`check_phrasings`).
+    Fixed { facts_json: String, accept: Vec<String> },
+}
+
+impl Claims {
+    fn node(facts: &NodeFacts, label: Option<&str>, index: usize) -> Self {
+        Self::Node { facts: Box::new(facts.clone()), label: label.map(str::to_string), index }
+    }
+
+    fn facts_json(&self) -> String {
+        match self {
+            Self::Node { facts, .. } => serde_json::to_string(facts.as_ref()).unwrap_or_default(),
+            Self::Fixed { facts_json, .. } => facts_json.clone(),
+        }
+    }
+
+    fn check(&self, text: &str) -> std::result::Result<(), FactMismatch> {
+        match self {
+            Self::Node { facts, label, index } => check_explanation_labeled(facts, label.as_deref(), Some(*index), text),
+            Self::Fixed { accept, .. } => check_phrasings(accept, text),
+        }
+    }
+}
+
 struct Job {
     backend: Arc<dyn ExplainBackend>,
     model: ModelInfo,
     system: String,
     user: String,
-    facts: NodeFacts,
-    label: Option<String>,
-    index: usize,
+    claims: Claims,
     display: String,
     template: String,
     key: String,
@@ -890,18 +927,20 @@ impl Job {
     /// template, unless the model wrote it).
     fn checked_text(&self, text: &str) -> Option<String> {
         let text = text.trim();
-        check_explanation_labeled(&self.facts, self.label.as_deref(), Some(self.index), text).ok()?;
-        Some(if text.starts_with("Node ") { text.to_string() } else { format!("{}: {text}", self.display) })
+        self.claims.check(text).ok()?;
+        Some(self.shown(text))
+    }
+
+    /// Shown like the template: with the node's label in front, unless the model wrote it (a fixed
+    /// line names its node itself).
+    fn shown(&self, text: &str) -> String {
+        if matches!(self.claims, Claims::Fixed { .. }) || text.starts_with("Node ") { text.to_string() } else { format!("{}: {text}", self.display) }
     }
 
     fn checked(&self, text: &str) -> Outcome {
         let text = text.trim();
-        match check_explanation_labeled(&self.facts, self.label.as_deref(), Some(self.index), text) {
-            Ok(()) => {
-                // (shown like the template: with the node's label in front, unless the model wrote it)
-                let shown = if text.starts_with("Node ") { text.to_string() } else { format!("{}: {text}", self.display) };
-                Outcome { text: shown, source: "ai", reason: None, code: None }
-            }
+        match self.claims.check(text) {
+            Ok(()) => Outcome { text: self.shown(text), source: "ai", reason: None, code: None },
             Err(e) => {
                 log::info!("AI explanation rejected: {}", for_log(&e.to_string()));
                 Outcome::template(&self.template, Fallback::Rejected, mismatch_reason(&e))
@@ -944,6 +983,20 @@ pub(crate) fn explain_fields(
         s.ai.request(&s.prefs.color.ai, facts, label, index, display, template)
     };
     match answer {
+        Answer::Ready(o) => o.to_json(),
+        Answer::Pending { key, template, partial } => {
+            if wait && let Some(o) = s.ai.wait(&key) {
+                return o.to_json();
+            }
+            json!({"text": template, "source": "template", "reason": null, "reasonCode": null, "pending": true, "aiKey": key, "partial": partial})
+        }
+    }
+}
+
+/// [`explain_fields`] for a line with fixed true phrasings (a branch note, a comp node's line;
+/// fork AI2): the same fields, the text checked with `check_phrasings` against `accept`.
+pub(crate) fn explain_fixed_fields(s: &Session, facts_json: &str, accept: Vec<String>, template: &str, wait: bool) -> Value {
+    match s.ai.request_fixed(&s.prefs.color.ai, facts_json, accept, template) {
         Answer::Ready(o) => o.to_json(),
         Answer::Pending { key, template, partial } => {
             if wait && let Some(o) = s.ai.wait(&key) {

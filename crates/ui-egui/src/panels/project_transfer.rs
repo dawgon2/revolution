@@ -839,6 +839,14 @@ fn nearby_receive_section(ui: &mut egui::Ui, d: &mut TransferDialog, busy: bool,
     for w in &d.warnings {
         ui.label(egui::RichText::new(w).size(12.0));
     }
+    // FORK-PLAN §1a.118: the one command that lets the other computer in (never run for the user)
+    if let Some(cmd) = firewall_command(d.port) {
+        ui.label(egui::RichText::new(tl!("The other computer can't connect? Allow Revolution in this computer's firewall once:")).size(12.0));
+        let r = ui.add(egui::Label::new(egui::RichText::new(&cmd).monospace().size(12.0)).selectable(true));
+        elems.push(("projects.transfer.firewall".into(), r, cmd));
+    } else if cfg!(windows) {
+        ui.label(egui::RichText::new(tl!("If Windows asks, allow Revolution on private networks.")).size(12.0));
+    }
     if !d.note.is_empty() {
         ui.label(egui::RichText::new(&d.note).size(12.0).strong());
     }
@@ -858,6 +866,57 @@ fn nearby_receive_section(ui: &mut egui::Ui, d: &mut TransferDialog, busy: bool,
         });
     }
     ui.add_space(4.0);
+}
+
+/// Which firewall this Linux computer has, and whether the package's descriptions are installed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Firewall {
+    UfwProfile,
+    Ufw,
+    FirewalldService,
+    Firewalld,
+}
+
+fn on_path(name: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).take(64).any(|d| d.join(name).is_file()))
+}
+
+fn firewall() -> Option<Firewall> {
+    static F: std::sync::OnceLock<Option<Firewall>> = std::sync::OnceLock::new();
+    *F.get_or_init(|| {
+        if !cfg!(target_os = "linux") {
+            return None;
+        }
+        // root-only tools usually live in sbin, which isn't always on a user's PATH
+        let has = |name: &str| on_path(name) || ["/usr/sbin", "/sbin", "/usr/bin"].iter().any(|d| std::path::Path::new(d).join(name).is_file());
+        let file = |p: &str| std::path::Path::new(p).is_file();
+        if has("ufw") {
+            Some(if file("/etc/ufw/applications.d/revolution") { Firewall::UfwProfile } else { Firewall::Ufw })
+        } else if has("firewall-cmd") {
+            Some(if file("/usr/lib/firewalld/services/revolution.xml") { Firewall::FirewalldService } else { Firewall::Firewalld })
+        } else {
+            None
+        }
+    })
+}
+
+/// The command for the receive window: the packaged rule when the window listens on the standard
+/// port, else a rule for the port it got.
+fn firewall_command(port: u16) -> Option<String> {
+    if port == 0 {
+        return None;
+    }
+    firewall_command_for(firewall()?, port)
+}
+
+fn firewall_command_for(f: Firewall, port: u16) -> Option<String> {
+    let standard = port == filmcraft_engine::nearby::DEFAULT_PORT;
+    Some(match f {
+        Firewall::UfwProfile if standard => "sudo ufw allow Revolution".into(),
+        Firewall::UfwProfile | Firewall::Ufw => format!("sudo ufw allow {port}/tcp"),
+        Firewall::FirewalldService if standard => "sudo firewall-cmd --permanent --add-service=revolution && sudo firewall-cmd --reload".into(),
+        Firewall::FirewalldService | Firewall::Firewalld => format!("sudo firewall-cmd --permanent --add-port={port}/tcp && sudo firewall-cmd --reload"),
+    })
 }
 
 #[cfg(test)]
@@ -910,5 +969,16 @@ mod tests {
         let back: TransferDialog = serde_json::from_value(v).unwrap();
         assert_eq!(back.kind, "send");
         assert_eq!(back.estimate_for, None);
+    }
+
+    #[test]
+    fn the_firewall_command_matches_the_port() {
+        use super::{Firewall, firewall_command_for as c};
+        assert_eq!(c(Firewall::UfwProfile, 47821).unwrap(), "sudo ufw allow Revolution");
+        assert_eq!(c(Firewall::UfwProfile, 40000).unwrap(), "sudo ufw allow 40000/tcp", "a fallback port isn't in the profile");
+        assert_eq!(c(Firewall::Ufw, 47821).unwrap(), "sudo ufw allow 47821/tcp");
+        assert!(c(Firewall::FirewalldService, 47821).unwrap().contains("--add-service=revolution"));
+        assert!(c(Firewall::Firewalld, 47821).unwrap().contains("--add-port=47821/tcp"));
+        assert_eq!(super::firewall_command(0), None);
     }
 }

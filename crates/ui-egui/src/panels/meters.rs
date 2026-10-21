@@ -86,12 +86,22 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     ui.painter().rect_filled(Rect::from_min_max(pos2(rect.min.x + 4.0, rect.min.y + 4.0), pos2(rect.max.x - 4.0, area.max.y + 4.0)), 0.0, t.meter_bg);
     let w = ((area.width() - 4.0 * (nch as f32 - 1.0)) / nch as f32).max(3.0);
+    // clip lights over the bars: latched red until the meters are clicked (like the mixer strips)
+    let master = filmcraft_render::mixer::MASTER.0;
+    let clipped = super::mixer::clip_latched(ui.ctx(), master);
     for c in 0..nch {
         let r = Rect::from_min_size(pos2(area.min.x + c as f32 * (w + 4.0), area.min.y), vec2(w, area.height()));
         let m = st.get(c).copied().unwrap_or([-90.0; 2]);
         crate::widgets::meter_bar(ui.painter(), r, m[0], m[1], &t);
+        let lr = Rect::from_min_size(pos2(r.min.x, rect.min.y + 4.0), vec2(w, 3.0));
+        ui.painter().rect_filled(lr, 0.0, if clipped || m[1] >= -0.1 { egui::Color32::from_rgb(0xe0, 0x50, 0x40) } else { t.meter_clip_off });
         app.auto.add(&format!("audioMeters.channel.{}", names[c]), r, &format!("{} {:.1} dB", names[c], m[0]));
     }
+    let bars = Rect::from_min_max(pos2(area.min.x, rect.min.y + 4.0), pos2(area.max.x, area.max.y));
+    if ui.interact(bars, egui::Id::new("audioMeters-reset"), egui::Sense::click()).on_hover_text(tl!("Click to reset peak hold and clip light")).clicked() {
+        super::mixer::reset_meter(ui.ctx(), master);
+    }
+    app.auto.add("audioMeters.clip", bars, if clipped { "Clipped (click to reset)" } else { "No clip" });
     let mut db = 0;
     while db >= -57 {
         let y = area.min.y + area.height() * (-db as f32 / 60.0);

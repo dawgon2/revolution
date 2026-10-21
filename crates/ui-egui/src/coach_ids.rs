@@ -82,10 +82,13 @@ pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "timeline.renderBar.*", "timeline.settings.thumbnails.*", "timeline.split.*", "timeline.tab.*", "timeline.tab.*.close",
     "timeline.tabs.list.*", "timeline.throughEdit.*", "timeline.toggle.*", "timeline.track.*.enabled", "timeline.track.*.keyframes",
     "timeline.track.*.keyframes.*", "timeline.track.*.keyframes.clip", "timeline.track.*.lane", "timeline.track.*.lane.kf.*",
-    "timeline.track.*.locked", "timeline.track.*.muted", "timeline.track.*.solo", "timeline.track.*.sourcePatch",
+    "timeline.track.*.locked", "timeline.track.*.meter", "timeline.track.*.muted", "timeline.track.*.solo", "timeline.track.*.sourcePatch",
     "timeline.track.*.syncLock", "timeline.track.*.target", "timeline.track.*.voiceover", "timeline.transition.*",
     "timeline.transition.*.in", "timeline.transition.*.out", "tnr.*", "tnr.*.keyframe.*", "tools.*", "tools.select.*", "view.*", "view.display.*",
     "view.magnification.*", "voiceover.input.*", "voiceover.source.*", "window.panel.*", "window.workspace.*", "workspaces.edit.row.*",
+    // C2b mixer controls (panels/grade_mixer.rs): widget ids, and the parameter keys they edit
+    "grade.mixer.*.weight", "grade.mixer.*.share", "grade.mixer.*.mode", "grade.mixer.*.opacity", "grade.mixer.*.invert", "mix.gain.*", "layer.mode.*",
+    "layer.opacity.*", "kmix.mode.*", "kmix.invert.*",
 ];
 
 /// Whether `part` (no dots) matches a glob where `*` is one or more characters.

@@ -310,3 +310,21 @@ fn audio_gain_dialog_normalizes_the_selection() {
     assert!(pk["peakDb"].as_f64().unwrap().abs() < 1e-6, "normalized to 0 dB: {pk}");
     assert!(d.ids("audioGain.").is_empty(), "dialog closed");
 }
+
+#[test]
+fn audio_track_headers_carry_a_meter_that_resets_by_click() {
+    let mut d = Driver::demo();
+    let meter = d.element("timeline.track.A1.meter").expect("A1 header meter");
+    let kf = d.element("timeline.track.A1.keyframes").expect("A1 keyframes button");
+    // a thin bar at the header's right edge, clear of the header's buttons
+    assert!(meter[2] <= 6.0 && meter[3] >= 10.0, "{meter:?}");
+    assert!(meter[0] >= kf[0] + kf[2] - 0.5, "meter {meter:?} overlaps keyframes button {kf:?}");
+    let v = d.ok("ui.elements", json!({"prefix": "timeline.track.A1.meter"}));
+    let label = v.as_array().unwrap().iter().find(|e| e["id"] == "timeline.track.A1.meter").unwrap()["label"].as_str().unwrap_or("").to_string();
+    assert!(label.starts_with("Meter ") && !label.contains("clipped"), "{label}");
+    assert!(d.ids("timeline.track.V1.meter").is_empty(), "video tracks have no meter");
+    // clicking it resets the meter and leaves the track alone
+    let before = d.exec("sequence.inspect", json!({}));
+    d.click("timeline.track.A1.meter");
+    assert_eq!(d.exec("sequence.inspect", json!({})), before, "a meter click changed the sequence");
+}

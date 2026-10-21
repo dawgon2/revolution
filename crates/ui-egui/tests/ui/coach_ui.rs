@@ -867,6 +867,10 @@ fn walked() -> (Driver, BTreeSet<String>) {
 /// Guide ids the walk doesn't reach, each with the reason. Each must still be known to the app's
 /// check (a dynamic id) or a literal automation id in the UI source.
 const NOT_WALKED: &[(&str, &str)] = &[
+    ("inspector.tab.video", "the Resolve workflow's Inspector with a clip selected (inspector_ui covers its tabs and sections)"),
+    ("inspector.tab.audio", "the Resolve workflow's Inspector with a clip selected (inspector_ui covers its tabs and sections)"),
+    ("inspector.tab.file", "the Resolve workflow's Inspector with a clip selected (inspector_ui covers its tabs and sections)"),
+    ("inspector.section.transform", "the Resolve workflow's Inspector with a clip selected (inspector_ui covers its tabs and sections)"),
     ("coach.ask.reference", "only under an answer about a reference picture (coach_reference_tests cover its content)"),
     ("coach.ask.doThis", "only under an answer about a reference picture (coach_reference_tests cover its content)"),
     ("update.notes", "only when an update check found a newer release (updates_ui covers it)"),

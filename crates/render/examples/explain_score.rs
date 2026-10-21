@@ -4,13 +4,18 @@
 //! cargo run --release -p filmcraft-render --example explain_score -- outputs.jsonl [more.jsonl ...]
 //!     [--summary summary.md] [--json summary.json] [--fails]
 //! cargo run --release -p filmcraft-render --example explain_score -- --dump-cases cases.jsonl
-//!     [--set 1|2|all] [--dedupe train.jsonl [--dedupe val.jsonl ...]]
+//!     [--set 1|2|3|5|all] [--cases set4.jsonl] [--dedupe train.jsonl [--dedupe val.jsonl ...]]
 //! ```
 //!
 //! `--dump-cases` writes the held-out cases as JSON lines `{label, facts, template}` (the input
 //! of `filmcraft-llm`'s `llm_eval`) and stops. `--set` picks the set: `1` (default) the 36 cases
 //! of [`eval_cases`], `2` the second set of [`eval_cases_v2`] (another frame and seed, labels
-//! `h2_…`), `all` both. `--dedupe` reads training chat files (`explain_traindata`'s
+//! `h2_…`), `3` the third ([`eval_cases_v3`], `h3_…`), `5` the branch set of
+//! [`branch_eval_cases`] (fork AI2: notes of parallel / layer / splitter / combiner / key-mixer /
+//! outside nodes, labels `b5_…`, checked with `check_branch_explanation`), `all` sets 1–3.
+//! `--cases <jsonl>` scores (or dedupes) a set dumped elsewhere instead, as lines `{label, facts,
+//! template, accept}` checked with `check_phrasings(accept, text)`: set 4, the comp lines
+//! (`filmcraft-engine`'s `comp_traindata --dump-cases`, labels `c4_…`). `--dedupe` reads training chat files (`explain_traindata`'s
 //! `train.jsonl` / `val.jsonl`) and drops every case whose compact facts (as the prompt carries
 //! them) equal a training example's, as the generator drops training grades equal to set 1. It
 //! also reports near-duplicates: kept cases whose reference sentence (without its "Node k" label)
@@ -32,8 +37,59 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::Write as _;
 
-use filmcraft_render::grade_explain::cases::{EvalCase, eval_cases, eval_cases_v2, eval_cases_v3};
-use filmcraft_render::grade_explain::{FactMismatch, check_explanation_labeled};
+use filmcraft_render::grade_explain::cases::{EvalCase, branch_eval_cases, eval_cases, eval_cases_v2, eval_cases_v3};
+use filmcraft_render::grade_explain::{BranchFacts, FactMismatch, NodeFacts, check_branch_explanation, check_explanation_labeled, check_phrasings};
+
+/// The facts a held-out case is checked against.
+enum Facts {
+    Node(Box<NodeFacts>),
+    Branch(BranchFacts),
+    /// A set dumped elsewhere: its facts as given and the phrasings the checker accepts.
+    Fixed {
+        facts: serde_json::Value,
+        accept: Vec<String>,
+    },
+}
+
+/// One held-out case of any set.
+struct Held {
+    label: String,
+    facts: Facts,
+    template: String,
+}
+
+impl Held {
+    fn facts_json(&self) -> Result<String, serde_json::Error> {
+        match &self.facts {
+            Facts::Node(f) => serde_json::to_string(f),
+            Facts::Branch(f) => serde_json::to_string(f),
+            Facts::Fixed { facts, .. } => serde_json::to_string(facts),
+        }
+    }
+
+    /// The line `llm_eval` reads: `{label, facts, template}`.
+    fn line(&self) -> Option<String> {
+        let facts: serde_json::Value = serde_json::from_str(&self.facts_json().ok()?).ok()?;
+        let mut v = serde_json::json!({"label": self.label, "facts": facts, "template": self.template});
+        if let (Facts::Fixed { accept, .. }, Some(o)) = (&self.facts, v.as_object_mut()) {
+            o.insert("accept".into(), serde_json::json!(accept));
+        }
+        Some(v.to_string())
+    }
+
+    /// The node prompt labels the node "Node 1"; a branch note names its nodes itself.
+    fn check(&self, answer: &str) -> Result<(), FactMismatch> {
+        match &self.facts {
+            Facts::Node(f) => check_explanation_labeled(f, None, Some(1), answer),
+            Facts::Branch(f) => check_branch_explanation(f, answer),
+            Facts::Fixed { accept, .. } => check_phrasings(accept, answer),
+        }
+    }
+}
+
+fn node_held(c: EvalCase) -> Held {
+    Held { label: c.label, facts: Facts::Node(Box::new(c.facts)), template: c.template }
+}
 
 #[derive(Default)]
 struct ModelScore {
@@ -66,10 +122,11 @@ struct Args {
     dump: Option<String>,
     set: String,
     dedupe: Vec<String>,
+    cases: Option<String>,
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
-    let mut a = Args { inputs: Vec::new(), summary: None, json: None, fails: false, dump: None, set: "1".into(), dedupe: Vec::new() };
+    let mut a = Args { inputs: Vec::new(), summary: None, json: None, fails: false, dump: None, set: "1".into(), dedupe: Vec::new(), cases: None };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -77,13 +134,14 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
             "--json" => a.json = Some(it.next().ok_or("--json needs a path")?),
             "--fails" => a.fails = true,
             "--dump-cases" => a.dump = Some(it.next().ok_or("--dump-cases needs a path")?),
-            "--set" => a.set = it.next().ok_or("--set needs 1, 2, 3 or all")?,
+            "--set" => a.set = it.next().ok_or("--set needs 1, 2, 3, 5 or all")?,
             "--dedupe" => a.dedupe.push(it.next().ok_or("--dedupe needs a path")?),
+            "--cases" => a.cases = Some(it.next().ok_or("--cases needs a path")?),
             _ => a.inputs.push(arg),
         }
     }
-    if !matches!(a.set.as_str(), "1" | "2" | "3" | "all") {
-        return Err(format!("--set {}: expected 1, 2, 3 or all", a.set).into());
+    if !matches!(a.set.as_str(), "1" | "2" | "3" | "5" | "all") {
+        return Err(format!("--set {}: expected 1, 2, 3, 5 or all", a.set).into());
     }
     if a.inputs.is_empty() && a.dump.is_none() {
         return Err("usage: explain_score <outputs.jsonl>... [--summary out.md] [--json out.json] [--fails]".into());
@@ -91,13 +149,19 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
     Ok(a)
 }
 
-fn selected_cases(set: &str) -> Vec<EvalCase> {
-    match set {
+fn selected_cases(set: &str) -> Vec<Held> {
+    let node = match set {
         "2" => eval_cases_v2(),
         "3" => eval_cases_v3(),
+        "5" => Vec::new(),
         "all" => eval_cases().into_iter().chain(eval_cases_v2()).chain(eval_cases_v3()).collect(),
         _ => eval_cases(),
+    };
+    let mut v: Vec<Held> = node.into_iter().map(node_held).collect();
+    if set == "5" {
+        v.extend(branch_eval_cases().into_iter().map(|c| Held { label: c.label, facts: Facts::Branch(c.facts), template: c.template }));
     }
+    v
 }
 
 /// The compact facts and the reference sentence (without its "Node k …:" label) of a prompt's user
@@ -119,7 +183,7 @@ fn strip_label(template: &str) -> String {
 
 /// Drop the cases whose compact facts equal a training example's (see the module docs); prints the
 /// counts and the near-duplicates.
-fn dedupe(cases: Vec<EvalCase>, files: &[String]) -> Result<Vec<EvalCase>, Box<dyn Error>> {
+fn dedupe(cases: Vec<Held>, files: &[String]) -> Result<Vec<Held>, Box<dyn Error>> {
     let (mut facts, mut sentences, mut targets) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let mut examples = 0usize;
     for path in files {
@@ -140,7 +204,7 @@ fn dedupe(cases: Vec<EvalCase>, files: &[String]) -> Result<Vec<EvalCase>, Box<d
     }
     let (mut kept, mut exact, mut near, mut as_target) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for c in cases {
-        let facts_json = serde_json::to_string(&c.facts)?;
+        let facts_json = c.facts_json()?;
         let (_, user) = filmcraft_llm::explain_prompt(&facts_json, &c.template);
         let Some((f, s)) = prompt_parts(&user) else { continue };
         if facts.contains(&f) {
@@ -162,19 +226,50 @@ fn dedupe(cases: Vec<EvalCase>, files: &[String]) -> Result<Vec<EvalCase>, Box<d
     Ok(kept)
 }
 
+/// The cases of a set dumped elsewhere (`--cases`): unreadable lines are skipped and counted.
+fn cases_file(path: &str) -> Result<Vec<Held>, Box<dyn Error>> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let (mut v, mut bad) = (Vec::new(), 0usize);
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let Ok(c) = serde_json::from_str::<serde_json::Value>(line) else {
+            bad += 1;
+            continue;
+        };
+        let (Some(label), Some(template), Some(facts), Some(accept)) =
+            (c.get("label").and_then(|x| x.as_str()), c.get("template").and_then(|x| x.as_str()), c.get("facts"), c.get("accept").and_then(|x| x.as_array()))
+        else {
+            bad += 1;
+            continue;
+        };
+        let accept: Vec<String> = accept.iter().filter_map(|a| a.as_str().map(str::to_string)).collect();
+        v.push(Held { label: label.to_string(), facts: Facts::Fixed { facts: facts.clone(), accept }, template: template.to_string() });
+    }
+    if bad > 0 {
+        eprintln!("{path}: skipped {bad} unreadable case line(s)");
+    }
+    Ok(v)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     if let Some(p) = &args.dump {
-        let mut cases = selected_cases(&args.set);
+        let mut cases = match &args.cases {
+            Some(p) => cases_file(p)?,
+            None => selected_cases(&args.set),
+        };
         if !args.dedupe.is_empty() {
             cases = dedupe(cases, &args.dedupe)?;
         }
-        let lines: Vec<String> = cases.iter().filter_map(|c| serde_json::to_string(c).ok()).collect();
+        let lines: Vec<String> = cases.iter().filter_map(Held::line).collect();
         std::fs::write(p, lines.join("\n") + "\n").map_err(|e| format!("{p}: {e}"))?;
         println!("wrote {} cases to {p}", lines.len());
         return Ok(());
     }
-    let cases: BTreeMap<String, EvalCase> = selected_cases(&args.set).into_iter().map(|c| (c.label.clone(), c)).collect();
+    let all = match &args.cases {
+        Some(p) => cases_file(p)?,
+        None => selected_cases(&args.set),
+    };
+    let cases: BTreeMap<String, Held> = all.into_iter().map(|c| (c.label.clone(), c)).collect();
     let mut models: BTreeMap<String, ModelScore> = BTreeMap::new();
     let mut bad_lines = 0usize;
     for path in &args.inputs {
@@ -198,7 +293,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 s.timed += 1;
             }
             s.gen_tokens += num(&v, "gen_tokens").map_or(0, |t| t as usize);
-            match check_explanation_labeled(&case.facts, None, Some(1), &answer) {
+            match case.check(&answer) {
                 Ok(()) => {
                     s.passed += 1;
                     s.passed_labels.push(label);

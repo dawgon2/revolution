@@ -4296,4 +4296,7 @@
 	{computer} wants to send {package} ({size})	{computer} quiere enviar {package} ({size})
 	Accept	Aceptar
 	Decline	Rechazar
-	Port for receiving from a nearby computer (0 = any free port)	Puerto para recibir desde un ordenador cercano (0 = cualquier puerto libre)
+	Port for receiving from a nearby computer (0 = the standard port, 47821)	Puerto para recibir desde un ordenador cercano (0 = el puerto estándar, 47821)
+	The other computer can't connect? Allow Revolution in this computer's firewall once:	¿El otro ordenador no puede conectarse? Permite Revolution una vez en el cortafuegos de este ordenador:
+	If Windows asks, allow Revolution on private networks.	Si Windows pregunta, permite Revolution en redes privadas.
+	Click to reset peak hold and clip light	Haz clic para restablecer la retención de picos y el indicador de saturación

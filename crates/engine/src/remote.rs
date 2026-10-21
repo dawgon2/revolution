@@ -23,7 +23,8 @@ pub struct RemotePrefs {
     pub locations: Vec<Location>,
     /// The user allowed keeping secrets in a file (not encrypted) when no keyring works.
     pub secrets_in_file: bool,
-    /// Receiving from a nearby computer listens on this TCP port (0 = any free port).
+    /// Receiving from a nearby computer listens on this TCP port (0 = the standard port,
+    /// `filmcraft_remote::nearby::DEFAULT_PORT`; a taken port falls back to any free one).
     pub nearby_port: u16,
 }
 

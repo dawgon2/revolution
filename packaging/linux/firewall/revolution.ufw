@@ -1,0 +1,4 @@
+[Revolution]
+title=Revolution
+description=Revolution video editor: receive a project from a nearby computer (TCP 47821) and let computers find each other (UDP 47820)
+ports=47821/tcp|47820/udp

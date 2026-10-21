@@ -16,6 +16,9 @@ use std::time::{Duration, Instant};
 pub const SERVICE_TYPE: &str = "_revolution-recv._tcp.local.";
 /// The UDP port receivers answer broadcast probes on.
 pub const PROBE_PORT: u16 = 47820;
+/// The receiver's usual TCP port (FORK-PLAN §1a.118): the one the packaged firewall descriptions
+/// (`ufw` profile / firewalld service "Revolution") name, so one allow rule covers every transfer.
+pub const DEFAULT_PORT: u16 = 47821;
 /// The most receivers one search returns.
 pub const MAX_CANDIDATES: usize = 16;
 

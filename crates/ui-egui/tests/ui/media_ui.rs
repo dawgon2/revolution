@@ -186,6 +186,9 @@ fn source_transport_steps_every_frame_at_a_fractional_tick_rate() {
     let generator = Generator::Demo(DemoScene::OceanSunset);
     let src = GeneratorSource::new(generator.clone(), 32, 18, rate, rate.tick_of(41));
     let mut session = Session::default();
+    // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+    // RS4 Edit page has its own toolbar
+    session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
     let item = Arc::make_mut(&mut session.project).add_item(
         "31 fps source",
         Label::Iris,
@@ -304,6 +307,9 @@ fn zero_tick_frame_duration_source() -> (Driver, Tick) {
     let generator = Generator::ColorMatte { color: [0.2, 0.8, 0.2, 1.0] };
     let src = GeneratorSource::new(generator.clone(), 32, 18, rate, Tick(508_032_000_000_000)); // 2000 seconds.
     let mut session = Session::default();
+    // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+    // RS4 Edit page has its own toolbar
+    session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
     session.execute("file.newSequence", json!({"fps": 31, "width": 32, "height": 18})).unwrap();
     let item = Arc::make_mut(&mut session.project).add_item(
         "Source with less than one tick per frame",
@@ -421,6 +427,9 @@ fn offline_badges_proxy_toggle_and_dialogs() {
     let root = tmp_dir("badges");
     let path = moved_project(&root);
     let mut s = Session::default();
+    // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+    // RS4 Edit page has its own toolbar
+    s.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
     s.execute("file.open", json!({"path": path})).unwrap();
     let mut d = Driver::new(s);
     d.frames(4);

@@ -11,7 +11,7 @@ use filmcraft_project::{MaskPath, Param};
 use filmcraft_time::Tick;
 use serde::{Deserialize, Serialize};
 
-use super::{NodeFacts, explain_node};
+use super::{BranchFacts, NodeFacts, explain_node};
 use crate::Image;
 use crate::grade::{GradeCtx, compile_fx, qualifier_hsl};
 
@@ -378,6 +378,159 @@ pub fn eval_cases_v3() -> Vec<EvalCase> {
         ("tiny_temperature_only", node(&[float("temperature", 3.0)])),
     ];
     measure_all(&frame_v2(), list.into_iter().map(|(l, n)| (format!("h3_{l}"), n)).collect())
+}
+
+/// One case of the branch held-out set (fork AI2 set 5): the facts of one branching node of a
+/// fixed graph grade and its template note. Never in the training data.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchEvalCase {
+    /// A short id, e.g. `b5_parallel_even_0` (the grade's name and the note's position).
+    pub label: String,
+    pub facts: BranchFacts,
+    /// The template note ([`BranchFacts::sentence`]).
+    pub template: String,
+}
+
+/// Fixed graph grades with every kind of branching node: even and uneven parallel blends (one
+/// near-equal), chained branches, layer mixers with blend modes and opacities (three layers),
+/// splitter / combiner (straight and with a channel detour), key mixers (add, take away with an
+/// outside selection, overlap of three), outside / inside nodes and a pass-through mixer.
+pub fn branch_eval_cases() -> Vec<BranchEvalCase> {
+    use filmcraft_project::dag::{Edge, Port};
+    use filmcraft_project::grade::{NodeKind, SOURCE};
+    fn n(g: &mut Grade, id: u64, kind: NodeKind, label: &str) {
+        let mut x = GradeNode::new(id);
+        x.kind = kind;
+        x.label = label.into();
+        g.nodes.push(x);
+    }
+    fn e(g: &mut Grade, a: u64, ap: u8, b: u64, bp: u8) {
+        g.edges.push(Edge::new(Port::new(a, ap), Port::new(b, bp)));
+    }
+    fn set(g: &mut Grade, id: u64, k: &str, v: f64) {
+        if let Some(x) = g.node_mut(id) {
+            x.params.insert(k.into(), Param::new(ParamValue::Float(v)));
+        }
+    }
+    use NodeKind::{Combiner, Correction as C, KeyMixer, LayerMixer, ParallelMixer, Splitter};
+    let two = |a: &str, b: &str, mixer: NodeKind, label: &str| {
+        let mut g = Grade::default();
+        n(&mut g, 1, C, a);
+        n(&mut g, 2, C, b);
+        n(&mut g, 3, mixer, label);
+        e(&mut g, SOURCE, 0, 1, 0);
+        e(&mut g, SOURCE, 0, 2, 0);
+        e(&mut g, 1, 0, 3, 0);
+        e(&mut g, 2, 0, 3, 1);
+        g
+    };
+    let mut grades: Vec<(&str, Grade)> = Vec::new();
+    grades.push(("parallel_even", two("Skin", "Background", ParallelMixer, "")));
+    let mut g = two("", "", ParallelMixer, "Blend");
+    n(&mut g, 4, C, "Sky");
+    e(&mut g, SOURCE, 0, 4, 0);
+    e(&mut g, 4, 0, 3, 2);
+    set(&mut g, 3, "mix.gain.0", 2.0);
+    grades.push(("parallel_three", g));
+    let mut g = two("Exposure", "", ParallelMixer, "");
+    g.edges.retain(|x| x.to.node != 2);
+    e(&mut g, 1, 0, 2, 0);
+    set(&mut g, 3, "mix.gain.1", 0.25);
+    grades.push(("parallel_chained", g));
+    let mut g = two("", "Warm up", ParallelMixer, "");
+    set(&mut g, 3, "mix.gain.0", 1.02);
+    set(&mut g, 3, "mix.gain.1", 0.98);
+    grades.push(("parallel_near_equal", g));
+    grades.push(("layer_normal", two("", "Look", LayerMixer, "")));
+    let mut g = two("Fix", "", LayerMixer, "");
+    set(&mut g, 3, "layer.opacity.1", 0.35);
+    set(&mut g, 3, "layer.mode.1", 13.0);
+    grades.push(("layer_soft_light", g));
+    let mut g = two("", "", LayerMixer, "Looks");
+    n(&mut g, 4, C, "Grade");
+    e(&mut g, SOURCE, 0, 4, 0);
+    e(&mut g, 4, 0, 3, 2);
+    set(&mut g, 3, "layer.opacity.1", 0.5);
+    set(&mut g, 3, "layer.mode.1", 4.0);
+    set(&mut g, 3, "layer.opacity.2", 0.8);
+    set(&mut g, 3, "layer.mode.2", 8.0);
+    grades.push(("layer_three", g));
+    let mut g = Grade::default();
+    n(&mut g, 1, C, "");
+    n(&mut g, 2, Splitter, "");
+    n(&mut g, 3, Combiner, "");
+    e(&mut g, SOURCE, 0, 1, 0);
+    e(&mut g, 1, 0, 2, 0);
+    for c in 0..3 {
+        e(&mut g, 2, c, 3, c);
+    }
+    grades.push(("split_combine", g));
+    let mut g = Grade::default();
+    n(&mut g, 1, C, "Contrast");
+    n(&mut g, 2, Splitter, "");
+    n(&mut g, 3, C, "Shadows");
+    n(&mut g, 4, Combiner, "");
+    e(&mut g, SOURCE, 0, 1, 0);
+    e(&mut g, 1, 0, 2, 0);
+    e(&mut g, 2, 0, 4, 0);
+    e(&mut g, 2, 1, 3, 0);
+    e(&mut g, 3, 0, 4, 1);
+    e(&mut g, 2, 2, 4, 2);
+    grades.push(("split_detour", g));
+    let keys = |k: usize, label: &str| {
+        let mut g = Grade::default();
+        for b in 0..k as u64 {
+            n(&mut g, b + 1, C, if b == 0 { "Skin" } else { "" });
+            e(&mut g, SOURCE, 0, b + 1, 0);
+        }
+        let m = k as u64 + 1;
+        n(&mut g, m, KeyMixer, label);
+        for b in 0..k as u64 {
+            e(&mut g, b + 1, 1, m, b as u8);
+        }
+        n(&mut g, m + 1, C, "");
+        e(&mut g, 1, 0, m + 1, 0);
+        e(&mut g, m, 0, m + 1, 1);
+        (g, m)
+    };
+    grades.push(("key_add", keys(2, "").0));
+    let (mut g, m) = keys(2, "Mask");
+    set(&mut g, m, "kmix.mode.1", 1.0);
+    set(&mut g, m, "kmix.invert.1", 1.0);
+    set(&mut g, m + 1, "key.invert", 1.0);
+    grades.push(("key_subtract_outside", g));
+    let (mut g, m) = keys(3, "");
+    set(&mut g, m, "kmix.mode.1", 2.0);
+    set(&mut g, m, "kmix.mode.2", 2.0);
+    grades.push(("key_overlap_three", g));
+    let mut g = Grade::default();
+    n(&mut g, 1, C, "Sky");
+    n(&mut g, 2, C, "");
+    e(&mut g, SOURCE, 0, 1, 0);
+    e(&mut g, 1, 0, 2, 0);
+    e(&mut g, 1, 1, 2, 1);
+    set(&mut g, 2, "key.invert", 1.0);
+    grades.push(("outside_sky", g));
+    let mut g = Grade::default();
+    n(&mut g, 1, C, "");
+    n(&mut g, 2, C, "Balance");
+    e(&mut g, SOURCE, 0, 1, 0);
+    e(&mut g, 1, 0, 2, 0);
+    e(&mut g, 1, 0, 2, 1);
+    grades.push(("inside_picture", g));
+    let mut g = Grade::default();
+    n(&mut g, 1, C, "");
+    n(&mut g, 2, ParallelMixer, "");
+    e(&mut g, SOURCE, 0, 1, 0);
+    e(&mut g, 1, 0, 2, 0);
+    grades.push(("parallel_pass_through", g));
+    let mut out = Vec::new();
+    for (name, g) in grades {
+        for (i, facts) in super::branch_facts(&g, Tick(0)).into_iter().enumerate() {
+            out.push(BranchEvalCase { label: format!("b5_{name}_{i}"), template: facts.sentence(), facts });
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -938,5 +1091,23 @@ mod tests {
         }
         assert!(matches!(check_vocabulary("It makes the picture warmer."), Err(crate::grade_explain::FactMismatch::UnknownWord(_))));
         assert!(check_vocabulary("It warms the picture!").is_ok() && check_vocabulary("It warms the picture @").is_err());
+    }
+
+    #[test]
+    fn the_branch_set_covers_every_kind_and_its_templates_pass() {
+        let cases = branch_eval_cases();
+        assert!(cases.len() >= 15, "{}", cases.len());
+        let mut labels: Vec<&str> = cases.iter().map(|c| c.label.as_str()).collect();
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), cases.len(), "labels must be unique");
+        for kind in ["parallel", "layer", "splitter", "combiner", "key_mixer", "limited"] {
+            assert!(cases.iter().any(|c| serde_json::to_string(&c.facts).unwrap_or_default().contains(&format!("\"kind\":\"{kind}\""))), "{kind}");
+        }
+        for c in &cases {
+            assert_eq!(super::super::check_branch_explanation(&c.facts, &c.template), Ok(()), "{}: {}", c.label, c.template);
+        }
+        let near = cases.iter().find(|c| c.label.starts_with("b5_parallel_near_equal")).map(|c| c.template.clone()).unwrap_or_default();
+        assert!(near.ends_with("blended 51 / 49."), "{near}");
     }
 }

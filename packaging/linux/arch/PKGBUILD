@@ -48,6 +48,7 @@ check() {
 
 package_revolution() {
   depends=('gcc-libs' 'glibc' 'libxkbcommon' 'vulkan-icd-loader' 'alsa-lib' 'hicolor-icon-theme' 'shared-mime-info' 'desktop-file-utils')
+  backup=('etc/ufw/applications.d/revolution')
   optdepends=(
     'xdg-desktop-portal-kde: KDE file dialogs, accent colour and inhibit on Plasma'
     'xdg-desktop-portal-gnome: file dialogs on GNOME'
@@ -66,6 +67,9 @@ package_revolution() {
   install -Dm644 "$src/packaging/linux/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
   install -Dm644 "$src/packaging/linux/$app.mime.xml" "$pkgdir/usr/share/mime/packages/$app.xml"
   install -Dm644 "$src/packaging/linux/$app.thumbnailer" "$pkgdir/usr/share/thumbnailers/$app.thumbnailer"
+  # firewall descriptions for receiving from a nearby computer (installed, not applied; §1a.118)
+  install -Dm644 "$src/packaging/linux/firewall/revolution.ufw" "$pkgdir/etc/ufw/applications.d/revolution"
+  install -Dm644 "$src/packaging/linux/firewall/revolution.firewalld.xml" "$pkgdir/usr/lib/firewalld/services/revolution.xml"
   install -d "$pkgdir/usr/share/metainfo"
   sed -e "s/@VERSION@/$pkgver/g" -e "s/@DATE@/$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y-%m-%d)/g" \
     "$src/packaging/linux/$app.metainfo.xml.in" > "$pkgdir/usr/share/metainfo/$app.metainfo.xml"

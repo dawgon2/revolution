@@ -148,6 +148,9 @@ fn drag(h: &mut Harness<'_, FilmcraftApp>, from: egui::Pos2, to: egui::Pos2, mod
 #[test]
 fn real_panel_drag_merges_splits_floats_and_redocks_without_editing_documents() {
     let mut session = Session::default();
+    // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+    // RS4 Edit page has its own toolbar
+    session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
     session.execute("file.openDemoProject", json!({})).unwrap();
     let app = FilmcraftApp::new(session);
     let snapshots = std::env::var_os("CRAFT_UI_DOCKING_SNAPSHOT_DIR").map(std::path::PathBuf::from);

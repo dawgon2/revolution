@@ -511,3 +511,39 @@ fn a_corrupt_picture_model_fails_the_look_without_a_crash() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// Fork AI2: a mixer's explanation is its branch note; the model's text is shown only when it is
+/// one of the note's fixed phrasings, and a correction node's own text is unchanged.
+#[test]
+fn a_mixer_is_explained_by_its_branch_note_under_the_fixed_check() {
+    let (mut s, c, n) = graded();
+    let r = s.execute("grade.addParallel", json!({"clip": c.0, "node": n})).unwrap();
+    let mixer = r["nodes"][1].as_u64().unwrap();
+    // off: the note's template
+    let t = explain(&mut s, c, mixer, false);
+    let note = t["branch"]["sentence"].as_str().unwrap().to_string();
+    assert!(note.contains("blended 50 / 50"), "{t}");
+    assert_eq!(t["sentence"], json!(note), "{t}");
+    assert_eq!(t["text"], json!(note), "{t}");
+    assert_eq!(t["branch"]["facts"]["kind"], "parallel", "{t}");
+    // on: a true rephrasing passes, shown as written
+    let accept =
+        filmcraft_render::grade_explain::branch_facts(s.active_sequence().unwrap().find_item(c).unwrap().1.grade.as_ref().unwrap(), filmcraft_time::Tick(0))[0]
+            .phrasings();
+    let other = accept[1].clone();
+    let o = other.clone();
+    with_backend(&mut s, Fake(move |_: &str| Ok(o.clone())));
+    let a = explain(&mut s, c, mixer, true);
+    assert_eq!((a["source"].clone(), a["text"].clone()), (json!("ai"), json!(other)), "{a}");
+    // a wrong share falls back to the template with the reason
+    let mut s2 = s;
+    // (a fresh cache: the passing answer above is cached per facts and model)
+    s2.ai = Default::default();
+    let wrong = note.replace("50 / 50", "70 / 30");
+    with_backend(&mut s2, Fake(move |_: &str| Ok(wrong.clone())));
+    let b = explain(&mut s2, c, mixer, true);
+    assert_eq!((b["source"].clone(), b["text"].clone(), b["reasonCode"].clone()), (json!("template"), json!(note), json!("rejected")), "{b}");
+    // the correction node keeps its measured explanation (no branch note: nothing limits it)
+    let own = explain(&mut s2, c, n, false);
+    assert!(own.get("branch").is_none() && own["facts"]["ranges"].is_array(), "{own}");
+}

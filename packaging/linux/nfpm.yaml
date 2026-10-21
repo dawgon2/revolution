@@ -70,6 +70,16 @@ contents:
   - src: ${STAGE}/usr/share/
     dst: /usr/share/
     type: tree
+  # FORK-PLAN §1a.118: firewall descriptions for "Receive from a nearby computer" (TCP 47821,
+  # UDP 47820), like KDE Connect's. Installed only, never applied: the user allows them once
+  # (`sudo ufw allow Revolution` / `firewall-cmd --add-service=revolution`; Revolution shows how).
+  - src: packaging/linux/firewall/revolution.ufw
+    dst: /etc/ufw/applications.d/revolution
+    type: config
+    file_info: { mode: 0644 }
+  - src: packaging/linux/firewall/revolution.firewalld.xml
+    dst: /usr/lib/firewalld/services/revolution.xml
+    file_info: { mode: 0644 }
 
 scripts:
   postinstall: packaging/linux/postinst.sh

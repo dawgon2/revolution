@@ -22,7 +22,7 @@ pub mod words;
 mod tests;
 
 pub use code::{Code, MAX_CHANNEL};
-pub use discovery::{Candidate, MAX_CANDIDATES, PROBE_PORT, SERVICE_TYPE, discover, list_receivers};
+pub use discovery::{Candidate, DEFAULT_PORT, MAX_CANDIDATES, PROBE_PORT, SERVICE_TYPE, discover, list_receivers};
 pub use net::{IncomingOffer, MAX_SEND_CANDIDATES, Receiver, ReceiverOptions, SendOptions, SendOutcome, Target, send};
 
 use std::time::Duration;

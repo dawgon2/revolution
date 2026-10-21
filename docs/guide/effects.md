@@ -13,7 +13,7 @@ Effect Controls; written for AI-PLAN AI3-PREP (feature pages)
 1. Find the effect in the Effects panel (Window ▸ Effects; `effects.list` lists them by kind and
    folder) and drag it onto a clip, or select clips and run `effects.apply` with the effect's
    name.
-2. Its controls appear in **Effect Controls** (the **Inspector** in the Resolve workflow) under
+2. Its controls appear in **Effect Controls** (**Keyframes** in the Resolve workflow; the **Inspector**'s Effects tab lists them too) under
    the clip's built-in Motion, Opacity and Time Remapping (video) or Volume and Panner (audio).
 3. Effects run top to bottom: drag one up or down to change the order (`effects.move`). The
    switch next to its name bypasses it (`effects.toggleEnabled`); `effects.reset` puts its
@@ -51,8 +51,8 @@ Text and shape layers aren't effects you apply: make them with Graphics ▸ New 
 
 **[Revolution]**
 
-Every video clip has a built-in **Opacity** effect in Effect Controls (the **Inspector** in the
-Resolve workflow). It decides how the clip mixes with the tracks under it.
+Every video clip has a built-in **Opacity** effect in Effect Controls (**Keyframes** in the
+Resolve workflow; the **Inspector**'s Composite section shows the same settings). It decides how the clip mixes with the tracks under it.
 
 1. Select the clip on the upper track. Under **Opacity**, lower **Opacity** (0–100 %) to let the
    track below show through (`effects.setParam` with effect `opacity`, param `opacity`).

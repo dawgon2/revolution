@@ -13,6 +13,47 @@ Write no number that is not in the facts. \
 Never name tools, controls, sliders, nodes, panels or menus; give no advice. \
 If unsure, reword the reference sentence.";
 
+/// The system prompt for a branching grade node's note or a comp node's line (fork AI2): those
+/// must name the nodes whose pictures or selections they use, and only the fixed phrasings pass
+/// the checker.
+const EXPLAIN_BRANCH_SYSTEM: &str = "You explain what one node of a colour grade or a composite \
+does with the pictures or selections of other nodes, for a beginner video editor, in one sentence. \
+Use only the facts given; never guess or add anything. \
+Write no number and no node name that is not in the facts. \
+Give no advice. If unsure, repeat the reference sentence.";
+
+/// The `kind`s of a branching grade node's facts (`filmcraft_render::grade_explain::BranchFacts`)
+/// and of a comp node's facts (`filmcraft_engine::comp_explain::CompFacts`).
+const BRANCH_KINDS: &[&str] = &[
+    "parallel",
+    "layer",
+    "splitter",
+    "combiner",
+    "key_mixer",
+    "limited",
+    "media_in",
+    "media_out",
+    "merge",
+    "transform",
+    "key",
+    "mask",
+    "blur",
+    "color",
+    "text",
+    "solid",
+    "gradient",
+    "bypassed",
+    "unused",
+];
+
+/// Whether `facts_json` holds a branching grade node's or a comp node's facts: an object with
+/// one of those `kind`s and a `node` name (a correction node's facts have neither).
+fn is_branch_facts(facts_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(facts_json.trim()).ok().is_some_and(|v| {
+        v.get("node").is_some_and(serde_json::Value::is_string) && v.get("kind").and_then(serde_json::Value::as_str).is_some_and(|k| BRANCH_KINDS.contains(&k))
+    })
+}
+
 /// Remove chat-template control markers (`<|...|>`) from text that goes into a prompt, so facts
 /// or user text can never open or close a turn.
 pub fn sanitize(text: &str) -> String {
@@ -173,7 +214,8 @@ fn round2(x: f64) -> Option<serde_json::Value> {
 
 /// The fixed prompt asking for one or two beginner-friendly sentences grounded in `facts_json`
 /// (the grader's structured facts, shortened by [`compact_facts`]) and `template_sentence` (the
-/// deterministic sentence shown when the model is unavailable). Returns `(system, user)`.
+/// deterministic sentence shown when the model is unavailable). Returns `(system, user)`. A
+/// branching node's facts get their own system prompt (they must name nodes).
 pub fn explain_prompt(facts_json: &str, template_sentence: &str) -> (String, String) {
     let compact = compact_facts(clip(facts_json, MAX_FACTS_BYTES.saturating_mul(4)));
     let facts = clip(&compact, MAX_FACTS_BYTES);
@@ -182,7 +224,8 @@ pub fn explain_prompt(facts_json: &str, template_sentence: &str) -> (String, Str
         "Facts (JSON):\n{facts}\n\nReference sentence:\n{template}\n\n\
          Explain what this change does to the picture."
     );
-    (EXPLAIN_SYSTEM.to_string(), user)
+    let system = if is_branch_facts(facts_json) { EXPLAIN_BRANCH_SYSTEM } else { EXPLAIN_SYSTEM };
+    (system.to_string(), user)
 }
 
 /// The full prompt for one system + user turn, ending where the assistant's answer starts. Both
@@ -232,6 +275,18 @@ mod tests {
         assert!(user.len() < MAX_FACTS_BYTES + MAX_TEMPLATE_BYTES + 200);
         let (_, user) = explain_prompt("", "");
         assert!(user.contains("Reference sentence"));
+    }
+
+    #[test]
+    fn branch_facts_get_their_own_system_prompt() {
+        let branch = r#"{"kind":"layer","node":"node 3","layers":[]}"#;
+        let (system, user) = explain_prompt(branch, "Node 3 is a layer mixer with fewer than two inputs, so it passes its picture through.");
+        assert_eq!(system, EXPLAIN_BRANCH_SYSTEM);
+        assert!(user.contains("layer mixer"));
+        assert_eq!(explain_prompt(r#"{"kind":"merge","node":"Merge 4","foreground":"a","background":"b","changed":[]}"#, "t").0, EXPLAIN_BRANCH_SYSTEM);
+        for other in [r#"{"enabled":true,"kind":"layer"}"#, r#"{"kind":"warp","node":"x"}"#, r#"{"kind":"layer","node":3}"#, "not json", ""] {
+            assert_eq!(explain_prompt(other, "t").0, EXPLAIN_SYSTEM, "{other}");
+        }
     }
 
     #[test]

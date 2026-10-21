@@ -42,6 +42,9 @@ impl Driver {
 
     fn demo() -> Self {
         let mut session = Session::default();
+        // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+        // RS4 Edit page has its own toolbar
+        session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         Self::with(session)
     }
@@ -835,6 +838,9 @@ fn double_click_empty_area_imports_with_a_project_loaded() {
 #[test]
 fn double_click_imports_with_audio_in_the_timeline() {
     let mut session = Session::default();
+    // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+    // RS4 Edit page has its own toolbar
+    session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
     session.execute("file.newSequence", json!({"name": "Mix", "audio": 2, "video": 1})).unwrap();
     let inter: Vec<f32> = (0..48_000).flat_map(|i| [(i as f32 * 0.0576).sin() * 0.5; 2]).collect();
     let bytes: std::sync::Arc<[u8]> = filmcraft_engine::previews::write_wav_f32(&inter, 48_000).into();

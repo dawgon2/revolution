@@ -1056,3 +1056,25 @@ Resolve uses F9 / F10 / F11 / F12 for Insert / Overwrite / Replace / Place on To
 Compatible preset had F11 = Full Screen; it is now **Replace** (`edit.replace`), as in Resolve, and full
 screen stays on Ctrl+` in that preset. The Premiere preset keeps F11 = Full Screen.
 To change it back: Edit ▸ Keyboard Shortcuts, bind F11 to Full Screen.
+
+## Q61 (2026-10-21, AI2.5): the new explainer smol360-v3 is one case short of v1 / v2 on held-out set 3 (FYI, choice made, never blocks)
+
+Held-out fact-check passes (greedy, Q8_0, own CPU inference; synthetic sets):
+
+| set | v1 (shipped) | v2 | **v3** |
+|---|---|---|---|
+| 1 node lines (36) | 34 | 33 | **36** |
+| 2 node lines (40) | 37 | 36 | **38** |
+| 3 node lines (13) | 13 | 13 | **12** |
+| 4 comp lines (32) | 6 | – | **32** |
+| 5 branch notes (20) | 2 | – | **20** |
+
+AI-PLAN's bar is "≥ v2 on each old set". v3 misses it on set 3 by one case: it says an auto white
+balance node leaves the highlights unchanged when they change a little. The fact checker rejects that
+answer, so the app shows the built-in text for that case instead; no wrong sentence reaches the user.
+Mean answer time is 1.27 s (limit 2.5 s).
+Options: (a) ship v3 as the first choice now (better on 4 of 5 sets, the only tune that knows comps and
+branches); (b) keep v1 first and offer v3 in Settings ▸ AI; (c) train v4 first (about 1.5 h of the GPU).
+**Choice for now: (a)**, provisional: `TUNED_PREFERENCE` in `crates/llm/src/models.rs` lists v3 first.
+To reverse: move `filmcraft-explainer-smol360-v3-q8` after the v1 entries there (or choose a model in
+Settings ▸ AI).

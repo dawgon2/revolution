@@ -23,6 +23,9 @@ struct Driver {
 impl Driver {
     fn new(isolated: bool) -> Self {
         let mut session = Session::default();
+        // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+        // RS4 Edit page has its own toolbar
+        session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
         session.execute("file.openDemoProject", json!({})).unwrap();
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session);

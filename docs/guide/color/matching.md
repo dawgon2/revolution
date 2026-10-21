@@ -175,6 +175,9 @@ highlights untouched".
    node.
 3. Click **Show what changed** {ui:grade.match.changes} to see a heat map of where, and how
    strongly, the node changed the picture (`grade.explainNode` with `"overlay": <png path>`).
+4. **[Fork]** On a node that combines other nodes' pictures or selections, **Explain node** gives
+   the sentence described in [nodes.md](nodes.md) ("What the explainer says about branches"),
+   returned as `branch` by `grade.explainNode`.
 
 Numbers are measured on the frame at the playhead (or the clip's middle frame), rounded to ⅙ of
 a stop and whole percentages; anything below a just-noticeable change is called "untouched".
@@ -229,14 +232,25 @@ ahead; an older background answer you never asked for is dropped. When the model
 hint under the sentence says why. Most stock models fail this strict check, so with them expect
 the template often.
 
+**[Fork]** For the mixer sentences above (and the Compositor's node lines) the check is stricter
+still: the model's text must be one of a few fixed ways of saying it, with exactly the node names,
+shares, opacities and blend modes the graph has. These sentences come from the graph itself, not
+from measuring the picture, so the template is already exact; the model can only choose the
+wording, never add or change a fact.
+
 ### The Revolution-tuned explainer
 
 Revolution has its own explainer models: small models trained to describe a node in exactly the
 words the check accepts. In tests the best one passed 35 of 36 sample nodes and answered in about
-1.6 seconds. For now they are built on the owner's computer and can't be downloaded: in the
-**Model** list they say "Built on this computer" and **Download** stays greyed out. Once they are
-published, they download like any other model. If you haven't picked a model yourself, Revolution
+1.6 seconds. They download like any other model (Settings ▸ AI, **Download**), from the fork's
+public releases. The "fast" 135M tune below isn't published yet: in the **Model** list it says
+"Built on this computer" and its **Download** stays greyed out. If you haven't picked a model yourself, Revolution
 uses the best tuned explainer that is installed, and the standard default model otherwise.
+
+The newest, **Revolution explainer, SmolLM2 360M tuned v3 (8-bit)**, is the first choice: it also
+learned compositor nodes and branch nodes (parallel, layer, splitter / combiner, key mixer,
+outside), where the older tunes mostly fall back to the built-in text. In tests 138 of 141 sample
+answers passed the check, at about 1.3 seconds each.
 
 On a slower computer, pick **Revolution explainer, SmolLM2 135M tuned (8-bit, fast)** in the
 **Model** list: it answers in about half the time (0.6 s instead of 1.3 s here) and passed nearly

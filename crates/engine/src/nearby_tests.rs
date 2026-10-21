@@ -163,3 +163,23 @@ fn the_fixed_port_setting_is_used() {
     b.execute("nearby.stop", json!({})).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// §1a.118: a taken fixed port falls back to any free one and says so.
+#[test]
+fn a_taken_port_falls_back_with_a_note() {
+    let dir = tmp("taken");
+    let busy = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    let port = busy.local_addr().unwrap().port();
+    let mut b = Session { prefs_path: Some(dir.join("preferences.json")), ..Session::default() };
+    b.prefs.remote.nearby_port = port;
+    let r = b.execute("nearby.receive", json!({"discovery": false})).unwrap();
+    assert_ne!(r["port"].as_u64(), Some(u64::from(port)));
+    assert!(r["warnings"][0].as_str().unwrap().contains(&format!("Port {port} is in use")), "{r}");
+    b.execute("nearby.stop", json!({})).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_standard_port_matches_the_protocol_crate() {
+    assert_eq!(crate::nearby::DEFAULT_PORT, filmcraft_remote::nearby::DEFAULT_PORT);
+}

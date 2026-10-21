@@ -18,6 +18,9 @@ fn harness(width: f32, kind: ThemeKind, which: Which) -> Harness<'static, Filmcr
 
 fn harness_at_scale(width: f32, kind: ThemeKind, which: Which, scale: f32) -> Harness<'static, FilmcraftApp> {
     let mut session = Session::default();
+    // Premiere panels (Tools panel, Source transport, list view); the fork defaults to Resolve (RS1), whose
+    // RS4 Edit page has its own toolbar
+    session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
     session.execute("file.openDemoProject", json!({})).unwrap();
     session.execute("source.open", json!({"item":5})).unwrap();
     let mut h = Harness::builder().with_size(vec2(width, 340.0)).with_pixels_per_point(scale).build_ui_state(

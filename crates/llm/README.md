@@ -66,6 +66,7 @@ after the user opts in, into `<data dir>/models/<id>/`.
 | `smollm2-1.7b-instruct-q4km` | HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF, Q4_K_M | 1.06 GB + 2 MB | Apache-2.0 |
 | `filmcraft-explainer-qwen05-v1-q8` (fork fine-tune, local) | Qwen2.5-0.5B-Instruct + LoRA, Q8_0 | 525 MB + 7 MB | Apache-2.0 |
 | `filmcraft-explainer-smol360-v1-q8` (fork fine-tune, local) | SmolLM2-360M-Instruct + LoRA, Q8_0 | 385 MB + 2 MB | Apache-2.0 |
+| `filmcraft-explainer-smol360-v3-q8` (fork fine-tune AI2, local; first choice) | SmolLM2-360M-Instruct + LoRA, Q8_0 (node, comp and branch lines) | 385 MB + 2 MB | Apache-2.0 |
 
 The `filmcraft-explainer-*` entries are the fork's fine-tuned explainers (GRADE-PLAN G2.11b,
 [`docs/fork/TRAINING.md`](../../docs/fork/TRAINING.md)): they write the fact checker's controlled

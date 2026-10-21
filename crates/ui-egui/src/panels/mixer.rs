@@ -18,7 +18,7 @@
 //! (six for 5.1 strips). The panel menu (`mixer.menu`) holds Show/Hide Tracks (`mixer.menu.showHide`,
 //! then `mixer.showHide.<A1|S1>` per strip) and Meter Input(s) Only (`mixer.menu.meterInputOnly`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use filmcraft_engine::mixer::strip_label;
@@ -118,6 +118,9 @@ pub fn poll_meters(app: &mut FilmcraftApp, ui: &egui::Ui) -> HashMap<u64, Vec<[f
                 m[0] = m[0].max(l);
                 m[1] = m[1].max(l);
             }
+            if clips_now(&p) {
+                ui.data_mut(|d| d.get_temp_mut_or_default::<HashSet<u64>>(clip_id()).insert(k));
+            }
         }
         ui.ctx().request_repaint();
     }
@@ -125,8 +128,45 @@ pub fn poll_meters(app: &mut FilmcraftApp, ui: &egui::Ui) -> HashMap<u64, Vec<[f
     st
 }
 
-/// One bar per channel (level, peak hold) with a clip light on top; 5.1 meters carry channel names.
-fn draw_meters(ui: &egui::Ui, r: Rect, m: &[[f32; 2]], channels: usize, t: &Tokens) {
+/// Peak at or above this (dBFS) lights a meter's clip light.
+const CLIP_DB: f32 = -0.1;
+
+fn clip_id() -> egui::Id {
+    egui::Id::new("mixer-meter-clips")
+}
+
+/// Whether a block of linear channel peaks reaches [`CLIP_DB`] (NaN never does).
+fn clips_now(peaks: &[f32]) -> bool {
+    peaks.iter().any(|x| 20.0 * x.max(1e-6).log10() >= CLIP_DB)
+}
+
+/// Whether meter `key` (a strip id, [`MASTER`](filmcraft_render::mixer::MASTER) or [`INPUT_METER`])
+/// clipped since its last reset: the clip light stays red until the meter is clicked.
+pub fn clip_latched(ctx: &egui::Context, key: u64) -> bool {
+    ctx.data(|d| d.get_temp::<HashSet<u64>>(clip_id()).is_some_and(|s| s.contains(&key)))
+}
+
+/// Click on a meter: clear its clip light and drop its peak hold to the current level.
+pub fn reset_meter(ctx: &egui::Context, key: u64) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<HashSet<u64>>(clip_id()).remove(&key);
+        let (_, st) = d.get_temp_mut_or_default::<(u64, HashMap<u64, Vec<[f32; 2]>>)>(egui::Id::new("mixer-meters"));
+        if let Some(v) = st.get_mut(&key) {
+            for m in v.iter_mut() {
+                m[1] = m[0];
+            }
+        }
+    });
+}
+
+/// The loudest channel's `[level, peak]` of a meter (silence when it has no channels).
+pub fn loudest(m: &[[f32; 2]]) -> [f32; 2] {
+    m.iter().fold([-90.0f32; 2], |a, v| [a[0].max(v[0]), a[1].max(v[1])])
+}
+
+/// One bar per channel (level, peak hold) with a clip light on top (red while `clipped` is latched
+/// or the peak is at [`CLIP_DB`]); 5.1 meters carry channel names.
+fn draw_meters(ui: &egui::Ui, r: Rect, m: &[[f32; 2]], channels: usize, clipped: bool, t: &Tokens) {
     let p = ui.painter();
     p.rect_filled(r, 0.0, t.meter_bg);
     let n = channels.max(1);
@@ -138,7 +178,7 @@ fn draw_meters(ui: &egui::Ui, r: Rect, m: &[[f32; 2]], channels: usize, t: &Toke
         crate::widgets::meter_bar(p, br, v[0], v[1], t);
         // clip light
         let lr = Rect::from_min_size(pos2(br.min.x, r.min.y), vec2(w, 4.0));
-        p.rect_filled(lr, 0.0, if v[1] >= -0.1 { RED } else { t.meter_clip_off });
+        p.rect_filled(lr, 0.0, if clipped || v[1] >= CLIP_DB { RED } else { t.meter_clip_off });
     }
 }
 
@@ -369,6 +409,7 @@ fn strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, cx: &mut Ctx, id: TrackId, s
     let ap = format!("mixer.{label}");
     let is_master = id == MASTER_STRIP;
     let sid = json!(id.0);
+    let sid_key = id.0;
     ui.painter().rect_filled(sr, 3.0, t.control_surface);
     ui.painter().line_segment([pos2(sr.max.x + 1.0, sr.min.y), pos2(sr.max.x + 1.0, sr.max.y)], Stroke::new(1.0, t.separator));
     let x = sr.min.x;
@@ -723,8 +764,17 @@ fn strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, cx: &mut Ctx, id: TrackId, s
         let nch = filmcraft_render::mixer::width_of(tr.channels);
         let mrect = Rect::from_min_max(pos2(x + 46.0, area.min.y), pos2(x + 70.0, area.max.y));
         let nshow = if meter.is_empty() { nch } else { meter.len() };
-        draw_meters(ui, mrect, meter, nshow, &t);
-        app.auto.add(&format!("{ap}.meter"), mrect, &format!("Meter {} dB", meter_text(meter, nshow)));
+        let clipped = clip_latched(ui.ctx(), sid_key);
+        draw_meters(ui, mrect, meter, nshow, clipped, &t);
+        // click the meter (not the fader cap's edge) to reset it
+        if ui
+            .interact(mrect.with_min_x(mrect.min.x + 2.0), ui.id().with(("strip-meter", sid_key)), Sense::click())
+            .on_hover_text(tl!("Click to reset peak hold and clip light"))
+            .clicked()
+        {
+            reset_meter(ui.ctx(), sid_key);
+        }
+        app.auto.add(&format!("{ap}.meter"), mrect, &format!("Meter {} dB{}", meter_text(meter, nshow), if clipped { ", clipped" } else { "" }));
         let bar_top = mrect.min.y + 6.0;
         let bar_h = mrect.height() - 6.0;
         let mut d = 0;
@@ -1008,7 +1058,17 @@ pub fn clip_mixer(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             }
             let mrect = Rect::from_min_max(pos2(sr.min.x + 46.0, area.min.y), pos2(sr.max.x - 6.0, area.max.y));
             let m = meters.get(&tr.id.0).cloned().unwrap_or_default();
-            draw_meters(ui, mrect, &m, if m.is_empty() { filmcraft_render::mixer::width_of(tr.channels) } else { m.len() }, &t);
+            draw_meters(
+                ui,
+                mrect,
+                &m,
+                if m.is_empty() { filmcraft_render::mixer::width_of(tr.channels) } else { m.len() },
+                clip_latched(ui.ctx(), tr.id.0),
+                &t,
+            );
+            if ui.interact(mrect.with_min_x(mrect.min.x + 2.0), ui.id().with(("clip-meter", tr.id.0)), Sense::click()).clicked() {
+                reset_meter(ui.ctx(), tr.id.0);
+            }
         }
         // dB readout: drag to scrub, click to type a value (clamped to the fader range), like the track mixer
         let vr = Rect::from_min_size(pos2(sr.min.x + 4.0, sr.max.y - 42.0), vec2(50.0, 16.0));
@@ -1044,7 +1104,7 @@ mod tests {
             let t = Tokens::for_kind(kind);
             let ctx = egui::Context::default();
             let area = Rect::from_min_size(pos2(20.0, 20.0), vec2(40.0, 100.0));
-            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| draw_meters(ui, area, &[[-90.0; 2]], 1, &t));
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| draw_meters(ui, area, &[[-90.0; 2]], 1, false, &t));
             out.textures_delta.clear();
             let rectangles: Vec<_> = out
                 .shapes
@@ -1059,6 +1119,42 @@ mod tests {
             let light = rectangles.iter().find(|r| r.rect.height() == 4.0).expect("painted clip light");
             assert_eq!(light.fill, t.meter_clip_off, "clip light did not follow {kind:?}");
         }
+    }
+
+    #[test]
+    fn clip_light_latches_until_the_meter_is_reset() {
+        assert!(!clips_now(&[0.5, 0.9]));
+        assert!(clips_now(&[0.2, 1.0]));
+        assert!(clips_now(&[1.7]));
+        assert!(!clips_now(&[f32::NAN, f32::NEG_INFINITY, 0.0]));
+        assert!(!clips_now(&[]));
+        let ctx = egui::Context::default();
+        ctx.data_mut(|d| {
+            d.get_temp_mut_or_default::<HashSet<u64>>(clip_id()).insert(7);
+            d.insert_temp(egui::Id::new("mixer-meters"), (0u64, HashMap::from([(7u64, vec![[-12.0f32, -0.05]; 2])])));
+        });
+        assert!(clip_latched(&ctx, 7));
+        assert!(!clip_latched(&ctx, 8));
+        reset_meter(&ctx, 8); // another meter: no effect, no panic
+        assert!(clip_latched(&ctx, 7));
+        reset_meter(&ctx, 7);
+        assert!(!clip_latched(&ctx, 7));
+        let st: (u64, HashMap<u64, Vec<[f32; 2]>>) = ctx.data(|d| d.get_temp(egui::Id::new("mixer-meters"))).unwrap_or_default();
+        assert_eq!(st.1.get(&7), Some(&vec![[-12.0f32, -12.0]; 2]), "peak hold drops to the level");
+        // a latched meter paints its clip light red even when the peak has fallen
+        let t = Tokens::for_kind(crate::theme::ThemeKind::Dark);
+        let area = Rect::from_min_size(pos2(20.0, 20.0), vec2(40.0, 100.0));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| draw_meters(ui, area, &[[-40.0, -30.0]], 1, true, &t));
+        out.textures_delta.clear();
+        let red = out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.rect.height() == 4.0 && r.fill == RED));
+        assert!(red, "latched clip light is red");
+    }
+
+    #[test]
+    fn loudest_takes_each_maximum_and_survives_nan_and_empty() {
+        assert_eq!(loudest(&[]), [-90.0, -90.0]);
+        assert_eq!(loudest(&[[-20.0, -6.0], [-10.0, -12.0]]), [-10.0, -6.0]);
+        assert_eq!(loudest(&[[f32::NAN, f32::NAN], [-30.0, -20.0]]), [-30.0, -20.0]);
     }
 
     #[test]
