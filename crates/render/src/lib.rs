@@ -26,6 +26,7 @@ pub mod graphic_clip;
 pub mod graphics;
 pub mod handoff;
 pub mod image;
+pub mod look_diff;
 pub mod lumetri_presets;
 pub mod luts;
 pub mod mask;

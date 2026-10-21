@@ -104,8 +104,8 @@ Every step is one undo step (Ctrl+Z); dragging a control counts as one step howe
 
 **[Fork]**
 
-Not built yet: parallel and layer nodes arrive with C2 (with splitter / combiner, outside and
-key-mixer nodes, see [later nodes](nodes.md)); an object mask that finds a person or thing for you
+Not built yet: sliders for the mixer nodes' settings (parallel, layer and key mixer use commands
+for now, see [nodes](nodes.md)); an object mask that finds a person or thing for you
 (like Resolve's Magic Mask) comes in phase G3; a colour warper, extra tonal-zone wheels, a 3D
 qualifier and planar-tracked windows come in phase G4. Each page says what is missing.
 

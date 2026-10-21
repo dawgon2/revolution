@@ -111,24 +111,25 @@ impl Driver {
 #[test]
 fn resolve_pages_open_their_layouts_with_toolbar_and_page_bar() {
     let mut d = Driver::demo(Workflow::Resolve);
-    // the Resolve header replaces the Premiere one; the page bar has the app name, the six pages,
-    // Home and Settings
+    // the Resolve header replaces the Premiere one; the page bar has the app name, the seven
+    // pages, Home and Settings
     assert!(d.ids("header.").is_empty(), "no Premiere header: {:?}", d.ids("header."));
-    assert_eq!(d.ids("page.").len(), 6, "{:?}", d.ids("page."));
+    assert_eq!(d.ids("page.").len(), 7, "{:?}", d.ids("page."));
     for id in ["pageBar.app", "pageBar.home", "pageBar.settings", "pageToolbar.title"] {
         assert!(d.has(id), "{id}");
     }
-    // Cut stays hidden; Fusion is the Compositor's page (fork C1, `comp_ui.rs`)
-    assert!(!d.has("page.cut"), "Cut stays hidden");
+    // the Cut page (fork RS4, `cut_page_ui.rs`); Fusion is the Compositor's page (fork C1, `comp_ui.rs`)
+    assert!(d.has("page.cut"), "the Cut page");
     // the window opens on the Edit page (the Premiere Editing workspace is the Edit page here)
     assert_eq!(d.workspace(), "Edit Page");
-    let pages: [(&str, &str, &[&str], &[&str]); 5] = [
-        ("media", "Media Page", &["MediaBrowser", "Source", "Project", "Metadata"], &["MediaBrowser", "Project", "AudioMeters", "Metadata", "EffectControls"]),
+    let pages: [(&str, &str, &[&str], &[&str]); 6] = [
+        ("media", "Media Page", &["MediaBrowser", "Source", "Project", "Metadata"], &["MediaBrowser", "Project", "AudioMeters", "Metadata", "Inspector"]),
+        ("cut", "Cut Page", &["Project", "Program", "AudioMeters", "CutTimeline"], &["Project", "Effects", "quickExport", "AudioTrackMixer", "Inspector"]),
         (
             "edit",
             "Edit Page",
             &["Project", "Source", "Program", "Timeline"],
-            &["Project", "Effects", "Markers", "quickExport", "AudioTrackMixer", "Metadata", "EffectControls"],
+            &["Project", "Effects", "Markers", "EffectControls", "quickExport", "AudioTrackMixer", "Metadata", "Inspector"],
         ),
         (
             "color",
@@ -140,7 +141,7 @@ fn resolve_pages_open_their_layouts_with_toolbar_and_page_bar() {
             "fairlight",
             "Fairlight Page",
             &["AudioMeters", "Timeline", "AudioTrackMixer"],
-            &["Project", "Effects", "Markers", "AudioTrackMixer", "AudioMeters", "Metadata", "EffectControls"],
+            &["Project", "Effects", "Markers", "AudioTrackMixer", "AudioMeters", "Metadata", "Inspector"],
         ),
         ("deliver", "Deliver Page", &["RenderSettings", "Program", "RenderQueue", "Timeline"], &["RenderSettings", "RenderQueue"]),
     ];
@@ -197,7 +198,8 @@ fn resolve_pages_open_their_layouts_with_toolbar_and_page_bar() {
     assert_eq!(d.harness.state().ui.mode, Mode::Edit);
     // Resolve's page keys land on the pages too (Shift+4 Edit, Shift+7 Fairlight, Shift+8 Deliver)
     d.exec("shortcuts.loadPreset", json!({"name": "DaVinci Resolve Compatible"}));
-    for (key, ws) in [("Shift+4", "Edit Page"), ("Shift+7", "Fairlight Page"), ("Shift+2", "Media Page"), ("Shift+8", "Deliver Page")] {
+    for (key, ws) in [("Shift+3", "Cut Page"), ("Shift+4", "Edit Page"), ("Shift+7", "Fairlight Page"), ("Shift+2", "Media Page"), ("Shift+8", "Deliver Page")]
+    {
         d.ok("ui.key", json!({"key": key}));
         d.frames(3);
         assert_eq!(d.workspace(), ws, "{key}");
@@ -209,10 +211,10 @@ fn resolve_toolbar_toggles_panels_and_page_layouts_save_like_workspaces() {
     let mut d = Driver::demo(Workflow::Resolve);
     d.click("page.edit");
     // Inspector: not on the Edit page until toggled; it opens on the right
-    assert!(!d.has("panel.EffectControls"));
-    d.click("pageToolbar.EffectControls");
-    assert!(d.has("panel.EffectControls"), "Inspector shown");
-    let (insp, prg) = (d.rect("panel.EffectControls"), d.rect("panel.Program"));
+    assert!(!d.has("panel.Inspector"));
+    d.click("pageToolbar.Inspector");
+    assert!(d.has("panel.Inspector"), "Inspector shown");
+    let (insp, prg) = (d.rect("panel.Inspector"), d.rect("panel.Program"));
     assert!(insp[0] >= prg[0] + prg[2] - 1.0, "Inspector right of the viewers: {insp:?} {prg:?}");
     d.shot("resolve-edit-inspector");
     // Effects is a tab behind the Media Pool: its toggle brings it forward, Media Pool's back
@@ -230,12 +232,12 @@ fn resolve_toolbar_toggles_panels_and_page_layouts_save_like_workspaces() {
     d.menu("window.workspace.saveChanges", json!({}));
     d.click("page.color");
     d.click("page.edit");
-    assert!(d.has("panel.EffectControls"), "saved layout kept the Inspector");
+    assert!(d.has("panel.Inspector"), "saved layout kept the Inspector");
     // deleting the saved changes brings back the built-in page layout
     d.menu("window.workspace.delete", json!({"name": "Edit Page"}));
     d.frames(2);
     assert_eq!(d.workspace(), "Edit Page");
-    assert!(!d.has("panel.EffectControls"), "built-in Edit page again");
+    assert!(!d.has("panel.Inspector"), "built-in Edit page again");
     // Window ▸ Workspaces lists the pages, not the Premiere workspaces they stand for
     let names: Vec<String> = filmcraft_ui_egui::menus::menu_items(d.harness.state())
         .into_iter()
@@ -313,8 +315,8 @@ fn workflow_round_trip_keeps_unsaved_layouts_and_modes_land_on_pages() {
     d.exec("settings.setWorkflow", json!({"workflow": "resolve"}));
     d.frames(4);
     assert_eq!(d.workspace(), "Edit Page");
-    d.click("pageToolbar.EffectControls");
-    assert!(d.has("panel.EffectControls"));
+    d.click("pageToolbar.Inspector");
+    assert!(d.has("panel.Inspector"));
     let resolve = d.harness.state().ui.dock.clone();
     // back to Premiere: its rearranged Editing, not the saved one
     d.exec("settings.setWorkflow", json!({"workflow": "premiere"}));

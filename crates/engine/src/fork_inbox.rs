@@ -83,7 +83,7 @@ pub fn send(s: &mut Session, p: &Value, id: u64, extras: Extras, frame_png: Opti
         None => vec![id],
     };
     let turns: Vec<(u64, ShareRecord, Option<Value>)> =
-        ids.iter().filter_map(|i| s.assist.records.get(*i).map(|r| (*i, r, s.assist.result(*i).flatten().map(|a| a.to_json())))).collect();
+        ids.iter().filter_map(|i| s.assist.records.get(*i).map(|r| (*i, r, s.assist.result(*i).flatten().map(|a| a.shareable_json())))).collect();
     if turns.is_empty() {
         return Err("none of those questions is kept any more".into());
     }

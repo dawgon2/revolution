@@ -941,6 +941,22 @@ fn transport(app: &mut FilmcraftApp, ui: &mut egui::Ui, row: Rect, which: Which)
     if !src {
         buttons.push((Icon::Loop, "playback.loop", tl!("Loop")));
     }
+    // fork RS4: the Resolve workflow's transport (first frame, play reverse, stop, play, last
+    // frame, loop; In and Out), the other buttons on their menus and keys as in Resolve
+    if app.resolve_workflow() {
+        let playing = if src { app.source_playback.clock.playing } else { app.playback.playing };
+        let play = if src { "source.playback.toggle" } else { "playback.toggle" };
+        buttons = vec![
+            (Icon::ToStart, if src { "src.goStart" } else { "playhead.start" }, tl!("First Frame (Home)")),
+            (Icon::PlayReverse, "playback.reverse", tl!("Play Reverse (J)")),
+            (Icon::Stop, "playback.stop", tl!("Stop (K)")),
+            (if playing { Icon::Pause } else { Icon::Play }, play, tl!("Play (L / Space)")),
+            (Icon::ToEnd, if src { "src.goEnd" } else { "playhead.end" }, tl!("Last Frame (End)")),
+            (Icon::Loop, "playback.loop", tl!("Loop")),
+            (Icon::MarkIn, if src { "src.markIn" } else { "markers.markIn" }, tl!("Mark In (I)")),
+            (Icon::MarkOut, if src { "src.markOut" } else { "markers.markOut" }, tl!("Mark Out (O)")),
+        ];
+    }
     let hidden = monitor_view::view(app, which).transport_hidden.clone();
     let all_buttons = buttons.clone();
     buttons.retain(|(_, command, _)| transport_visible(&hidden, command));
@@ -1065,7 +1081,7 @@ fn invoke_transport(app: &mut FilmcraftApp, ctx: &egui::Context, which: Which, c
     let result = match command {
         "src.markIn" => app.session.execute("markers.markIn", json!({"target": "source"})).map_err(|error| error.to_string()),
         "src.markOut" => app.session.execute("markers.markOut", json!({"target": "source"})).map_err(|error| error.to_string()),
-        "src.goIn" | "src.goOut" | "src.stepBack" | "src.stepFwd" => {
+        "src.goIn" | "src.goOut" | "src.stepBack" | "src.stepFwd" | "src.goStart" | "src.goEnd" => {
             source_nav(app, command);
             Ok(serde_json::Value::Null)
         }
@@ -1119,6 +1135,8 @@ fn source_nav(app: &mut FilmcraftApp, cmd: &str) {
     let t = match cmd {
         "src.goIn" => v.mark_in.unwrap_or(v.start),
         "src.goOut" => v.mark_out.unwrap_or(v.end - rate.frame_duration()),
+        "src.goStart" => v.start,
+        "src.goEnd" => (v.end - rate.frame_duration()).max(v.start),
         _ if rate.frame_duration() == Tick::ZERO => cur,
         "src.stepBack" => rate.tick_of(rate.frame_at(cur).saturating_sub(1)),
         _ => rate.tick_of(rate.frame_at(cur).saturating_add(1)),

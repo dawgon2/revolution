@@ -20,6 +20,7 @@
 
 pub mod apv;
 pub mod audio;
+pub mod camera_log;
 pub mod gop;
 pub mod hw;
 mod hw_frame;

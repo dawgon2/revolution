@@ -30,7 +30,7 @@ fn workflow_switch_relabels_menus_and_panels_live() {
     frames(&mut h, 3);
     assert_eq!(menu_label(&h, "sequence.settings").as_deref(), Some("Sequence Settings…"));
     assert!(h.query_by_label("Effect Controls").is_some(), "Premiere: the Effect Controls tab");
-    assert!(h.query_by_label("Inspector").is_none());
+    assert!(h.query_by_label("Keyframes").is_none());
 
     h.state_mut().session.execute("settings.setWorkflow", json!({"workflow": "resolve"})).unwrap();
     frames(&mut h, 3);
@@ -38,7 +38,7 @@ fn workflow_switch_relabels_menus_and_panels_live() {
     h.state_mut().show_panel(filmcraft_ui_egui::dock::PanelKind::EffectControls);
     frames(&mut h, 3);
     assert_eq!(menu_label(&h, "sequence.settings").as_deref(), Some("Timeline Settings…"), "same command id, Resolve's word");
-    assert!(h.query_by_label("Inspector").is_some(), "Resolve: the Inspector tab");
+    assert!(h.query_by_label("Keyframes").is_some(), "Resolve: Effect Controls is the Keyframes tab (fork RS4)");
     assert!(h.query_by_label("Effect Controls").is_none());
 
     h.state_mut().session.execute("settings.setWorkflow", json!({"workflow": "premiere"})).unwrap();

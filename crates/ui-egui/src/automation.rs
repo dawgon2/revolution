@@ -28,12 +28,20 @@ pub struct Registry {
     pub previous: Vec<Element>,
     /// Every id shown this session ("Ask the coach" checks the controls it names against it).
     pub seen: crate::coach_ids::SeenIds,
+    /// While set, ids starting with the first string are registered with the second instead
+    /// (fork RS4: the Cut page's two timelines register `cutUpper.` / `cutLower.` ids, not the
+    /// Timeline panel's `timeline.` ones).
+    pub rename: Option<(String, String)>,
 }
 
 impl Registry {
     pub fn add(&mut self, id: &str, rect: Rect, label: &str) {
+        let id = match &self.rename {
+            Some((from, to)) => id.strip_prefix(from.as_str()).map_or_else(|| id.to_string(), |rest| format!("{to}{rest}")),
+            None => id.to_string(),
+        };
         self.elements.push(Element {
-            id: id.to_string(),
+            id,
             label: label.to_string(),
             rect: [rect.min.x, rect.min.y, rect.width(), rect.height()],
             widget_id: None,

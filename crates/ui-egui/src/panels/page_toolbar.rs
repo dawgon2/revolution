@@ -2,13 +2,13 @@
 //! bar on a row of its own (when the menus are in the window), then the page's toolbar: labelled
 //! panel toggles on the left and right with the project name centred. Each page has its own
 //! toggles ([`toggles`]); FilmCraft panels stand in for Resolve's (Media Pool is the Project
-//! panel, Inspector is Effect Controls, Mixer is the Audio Track Mixer…), and Resolve tools
-//! FilmCraft has no panel for (Index, Sound Library, Keyframes, ADR, LUTs, Lightbox) are left
-//! out. A lit toggle's panel is on screen; clicking it closes the panel, clicking an unlit one
+//! panel, Mixer is the Audio Track Mixer…; Inspector is its own panel, fork RS4.2), and Resolve
+//! tools FilmCraft has no panel for (Index, Sound Library, Keyframes, ADR, LUTs, Lightbox) are
+//! left out. A lit toggle's panel is on screen; clicking it closes the panel, clicking an unlit one
 //! brings the panel forward or opens it as a column on its side of the page.
 //!
 //! Automation ids: `pageToolbar.<panel id>` (e.g. `pageToolbar.Project`,
-//! `pageToolbar.EffectControls`), `pageToolbar.quickExport`, `pageToolbar.title`.
+//! `pageToolbar.Inspector`), `pageToolbar.quickExport`, `pageToolbar.title`.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 
@@ -54,7 +54,7 @@ impl Toggle {
                 PanelKind::Effects => Icon::Fx,
                 PanelKind::Markers => Icon::Marker,
                 PanelKind::Metadata => Icon::Info,
-                PanelKind::EffectControls => Icon::Wrench,
+                PanelKind::EffectControls | PanelKind::Inspector => Icon::Wrench,
                 PanelKind::AudioTrackMixer => Icon::Speaker,
                 PanelKind::AudioMeters => Icon::Mic,
                 PanelKind::Gallery => Icon::Camera,
@@ -75,21 +75,25 @@ pub fn toggles(page: Option<&str>) -> (&'static [Toggle], &'static [Toggle]) {
     use PanelKind::*;
     use Toggle::{Panel as P, QuickExport};
     match page {
-        Some("media") => (&[P(MediaBrowser), P(Project)], &[P(AudioMeters), P(Metadata), P(EffectControls)]),
+        Some("media") => (&[P(MediaBrowser), P(Project)], &[P(AudioMeters), P(Metadata), P(Inspector)]),
         Some("color") => (&[P(Gallery), P(Project), P(ColorClips)], &[P(ColorNodes), P(LumetriScopes), P(Effects)]),
-        Some("fairlight") => (&[P(Project), P(Effects), P(Markers)], &[P(AudioTrackMixer), P(AudioMeters), P(Metadata), P(EffectControls)]),
+        Some("fairlight") => (&[P(Project), P(Effects), P(Markers)], &[P(AudioTrackMixer), P(AudioMeters), P(Metadata), P(Inspector)]),
         Some("deliver") => (&[P(RenderSettings)], &[P(RenderQueue)]),
+        // fork RS4: the Cut page (Resolve's: Media Pool, Sync Bin, Transitions, Titles, Effects /
+        // Quick Export, Full Screen, Mixer, Inspector)
+        Some("cut") => (&[P(Project), P(Effects)], &[QuickExport, P(AudioTrackMixer), P(Inspector)]),
         // fork C1: the Fusion page (Resolve's: Media Pool, Effects, Nodes / Metadata, Inspector)
-        Some("fusion") => (&[P(Project), P(Effects), P(Compositor)], &[P(Metadata), P(EffectControls)]),
+        Some("fusion") => (&[P(Project), P(Effects), P(Compositor)], &[P(Metadata), P(Inspector)]),
         // the Edit page, and any other workspace
-        _ => (&[P(Project), P(Effects), P(Markers)], &[QuickExport, P(AudioTrackMixer), P(Metadata), P(EffectControls)]),
+        // fork RS4: Resolve's Keyframes button is Effect Controls with its keyframe lane
+        _ => (&[P(Project), P(Effects), P(Markers), P(EffectControls)], &[QuickExport, P(AudioTrackMixer), P(Metadata), P(Inspector)]),
     }
 }
 
 /// Every toolbar key any page uses (for the coach's id check).
 pub fn all_keys() -> Vec<String> {
     let mut v = Vec::new();
-    for page in [Some("media"), Some("edit"), Some("color"), Some("fairlight"), Some("deliver"), None] {
+    for page in [Some("media"), Some("cut"), Some("edit"), Some("color"), Some("fairlight"), Some("deliver"), None] {
         let (l, r) = toggles(page);
         for t in l.iter().chain(r) {
             let k = t.key();

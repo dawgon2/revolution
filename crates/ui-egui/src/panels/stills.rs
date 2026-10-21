@@ -148,6 +148,10 @@ fn run(app: &mut FilmcraftApp, command: &str, params: serde_json::Value) {
     }
 }
 
+/// egui temp-data key of the Gallery's rect and the pass it was drawn in (where dropped
+/// pictures become stills; a Gallery not drawn lately takes no drops).
+pub const STRIP_RECT: &str = "stills.strip_rect";
+
 /// The stills gallery strip.
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
@@ -174,6 +178,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     if button(app, ui, next(84.0), "Grab Still", "stills.grab", false, app.session.state.active_sequence.is_some()) {
         run(app, "stills.grab", json!({}));
     }
+    if button(app, ui, next(76.0), "Import…", "stills.import", false, true) {
+        // a reference picture to compare against and match to (REF.1)
+        if let Err(e) = app.file_dialog("stills.import", &json!({})) {
+            app.session.toast(e);
+        }
+    }
     if button(app, ui, next(60.0), "Delete", "stills.delete", false, selected.is_some())
         && let Some(id) = selected
     {
@@ -188,6 +198,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     // ---- thumbnails, scrolled sideways with the wheel
     let strip = Rect::from_min_max(pos2(rect.min.x + 8.0, y.get() + head.height() + 8.0), pos2(rect.max.x - 8.0, rect.max.y - 6.0));
+    // pictures dropped here are imported as reference stills (see the app's drop handling)
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(STRIP_RECT), (rect, pass)));
     if strip.height() < 24.0 || strip.width() < 24.0 {
         return;
     }
@@ -207,7 +220,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ui.painter().text(
             strip.left_center(),
             Align2::LEFT_CENTER,
-            "No stills yet. Grab Still saves the Program frame and its grade.",
+            "No stills yet. Grab Still saves the Program frame and its grade; Import… (or drop a picture here) brings in a reference look.",
             Tokens::ui(11.0),
             t.text_dim,
         );

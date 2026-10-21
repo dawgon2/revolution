@@ -323,7 +323,7 @@ fn resolve_workflow_shows_pages_and_color_opens_the_node_grader() {
     d.exec("settings.setWorkflow", json!({"workflow": "resolve"}));
     d.frames(3);
     let pages = d.ids("page.");
-    assert_eq!(pages.len(), 6, "{pages:?}");
+    assert_eq!(pages.len(), 7, "{pages:?}");
     d.click("page.color");
     d.frames(2);
     assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["workspace"], json!("Color Grading"), "Color page");
@@ -502,4 +502,246 @@ fn wb_picker_case(workflow: filmcraft_engine::settings::Workflow, size: egui::Ve
     d.click("grade.wb.auto");
     d.frames(2);
     assert_eq!(temp(&mut d), t);
+}
+
+/// Fork C2: the Nodes panel is a node canvas. A parallel node added by command shows its mixer;
+/// a node's right-click menu adds a layer node; dragging a key output to a key input connects.
+#[test]
+fn node_canvas_shows_branches_and_connects_by_drag() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(2);
+    d.click("grade.addFirst");
+    d.click("grade.addNode");
+    let ids: Vec<u64> = grade(&mut d, clip)["nodes"].as_array().unwrap().iter().map(|n| n["id"].as_u64().unwrap()).collect();
+    let (a, b) = (ids[0], ids[1]);
+    let r = d.exec("grade.addParallel", json!({"clip": clip, "node": b}));
+    let (y, m) = (r["nodes"][0].as_u64().unwrap(), r["nodes"][1].as_u64().unwrap());
+    d.frames(3);
+    // the mixer is on the canvas, named, with the grade's input and the new node's key port
+    let els = d.ok("ui.elements", json!({"prefix": "grade."}));
+    let label = |id: String| els.as_array().unwrap().iter().find(|e| e["id"] == id.as_str()).map(|e| e["label"].as_str().unwrap_or("").to_string());
+    let mixer = label(format!("grade.node.{m}")).unwrap_or_else(|| panic!("mixer {m} not on the canvas: {els}"));
+    assert!(mixer.contains("Parallel Mixer"), "{mixer}");
+    assert!(label("grade.node.0".into()).is_some(), "the grade's input is drawn");
+    assert!(label(format!("grade.port.{y}.in.1")).is_some(), "key input port of the new node");
+    assert!(label(format!("grade.edge.{y}-{m}.1")).is_some(), "the new node feeds mixer input 2");
+    d.snapshot("grade-canvas-parallel", Some("grade.node."));
+    // a node's menu: Add Layer Node on node a
+    d.ok("ui.click", json!({"id": format!("grade.node.{a}"), "button": "right"}));
+    d.frames(3);
+    d.click("grade.nodeMenu.layer");
+    let g = grade(&mut d, clip);
+    assert!(g["nodes"].as_array().unwrap().iter().any(|n| n["kind"] == "LayerMixer"), "{g}");
+    // drag a's key output onto y's key input
+    d.frames(2);
+    d.ok("ui.drag", json!({"from": {"id": format!("grade.port.{a}.out.1")}, "to": {"id": format!("grade.port.{y}.in.1")}, "steps": 8}));
+    d.frames(3);
+    let g = grade(&mut d, clip);
+    let edge = json!({"from": {"node": a, "index": 1}, "to": {"node": y, "index": 1}});
+    assert!(g["edges"].as_array().is_some_and(|e| e.contains(&edge)), "{g}");
+}
+
+/// A node's number parameter as stored (its static value), when set.
+fn float_param(g: &Value, node: u64, key: &str) -> Option<f64> {
+    let n = g["nodes"].as_array()?.iter().find(|n| n["id"] == json!(node))?;
+    n["params"][key]["value"]["Float"].as_f64()
+}
+
+fn label_of(d: &mut Driver, id: &str) -> Option<String> {
+    let v = d.ok("ui.elements", json!({"prefix": id}));
+    v.as_array()?.iter().find(|e| e["id"] == id).and_then(|e| e["label"].as_str().map(str::to_string))
+}
+
+/// Fork C2b: a selected mixer shows one row per connected input instead of the correction tabs.
+/// Parallel: dragging a weight sets `mix.gain.<i>` in one undo step and the shares follow; layer:
+/// the blend mode dropdown; key mixer: invert; an outside node: its key input on the Qualifier tab.
+#[test]
+fn mixer_and_key_input_controls_edit_the_selected_node() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(2);
+    d.click("grade.addFirst");
+    let a = grade(&mut d, clip)["nodes"][0]["id"].as_u64().unwrap();
+    let r = d.exec("grade.addParallel", json!({"clip": clip, "node": a}));
+    let (y, m) = (r["nodes"][0].as_u64().unwrap(), r["nodes"][1].as_u64().unwrap());
+    d.exec("grade.selectNode", json!({"clip": clip, "node": m}));
+    d.frames(3);
+    let ids = d.ids("grade.");
+    for id in ["grade.mixer.0.weight", "grade.mixer.1.weight", "grade.mixer.1.weight.reset", "grade.mixer.1.weight.anim"] {
+        assert!(ids.iter().any(|i| i == id), "{id} missing from {ids:?}");
+    }
+    assert!(!ids.iter().any(|i| i.starts_with("grade.mixer.2.")), "only connected inputs: {ids:?}");
+    assert!(!ids.iter().any(|i| i == "grade.tab.primaries"), "a mixer shows no correction tabs: {ids:?}");
+    assert_eq!(label_of(&mut d, "grade.mixer.1.share").as_deref(), Some("50 %"));
+    d.snapshot("grade-mixer-parallel", Some("grade.mixer."));
+
+    // drag input 2's weight down: one parameter, one undo step
+    let [x, top, w, h] = d.element("grade.mixer.1.weight").expect("weight slider");
+    let cy = top + h / 2.0;
+    d.ok("ui.drag", json!({"from": {"x": x + w * 0.3, "y": cy}, "to": {"x": x + w * 0.1, "y": cy}, "steps": 8}));
+    d.frames(3);
+    let g = grade(&mut d, clip);
+    let gain = float_param(&g, m, "mix.gain.1").unwrap_or_else(|| panic!("mix.gain.1 set: {g}"));
+    assert!(gain < 0.9, "dragged down: {gain}");
+    assert_ne!(label_of(&mut d, "grade.mixer.1.share").as_deref(), Some("50 %"), "the share follows the weight");
+    d.exec("edit.undo", json!({}));
+    let g = grade(&mut d, clip);
+    assert_eq!(float_param(&g, m, "mix.gain.1"), None, "one undo removes the whole drag: {g}");
+
+    // a layer mixer: blend mode from the dropdown, an opacity slider
+    let r = d.exec("grade.addLayer", json!({"clip": clip, "node": y}));
+    let lm = r["nodes"][1].as_u64().unwrap();
+    d.exec("grade.selectNode", json!({"clip": clip, "node": lm}));
+    d.frames(3);
+    assert!(d.element("grade.mixer.1.opacity").is_some());
+    d.click("grade.mixer.1.mode");
+    d.frames(2);
+    d.click("grade.mixer.1.mode.3");
+    let g = grade(&mut d, clip);
+    assert_eq!(float_param(&g, lm, "layer.mode.1"), Some(3.0), "Multiply: {g}");
+    d.snapshot("grade-mixer-layer", Some("grade.mixer."));
+
+    // a key mixer: invert input 1
+    let r = d.exec("grade.addKeyMixer", json!({"clip": clip, "node": a}));
+    let k = r["nodes"][0].as_u64().unwrap();
+    d.exec("grade.selectNode", json!({"clip": clip, "node": k}));
+    d.frames(3);
+    assert!(d.element("grade.mixer.0.mode").is_some());
+    d.click("grade.mixer.0.invert");
+    let g = grade(&mut d, clip);
+    assert_eq!(float_param(&g, k, "kmix.invert.0"), Some(1.0), "{g}");
+
+    // an outside node: its inverted key input, shown on the Qualifier tab
+    let r = d.exec("grade.addOutside", json!({"clip": clip, "node": a}));
+    let o = r["nodes"][0].as_u64().unwrap();
+    d.exec("grade.selectNode", json!({"clip": clip, "node": o}));
+    d.frames(2);
+    d.click("grade.tab.qualifier");
+    assert!(d.element("grade.key.gain").is_some() && d.element("grade.key.offset").is_some());
+    d.click("grade.key.invert");
+    let g = grade(&mut d, clip);
+    assert_eq!(float_param(&g, o, "key.invert"), Some(0.0), "unticked: {g}");
+}
+
+fn node_pos(g: &Value, id: u64) -> Option<[f64; 2]> {
+    let n = g["nodes"].as_array()?.iter().find(|n| n["id"] == id)?;
+    let p = n["pos"].as_array()?;
+    Some([p.first()?.as_f64()?, p.get(1)?.as_f64()?])
+}
+
+/// Fork C2b: a node dragged on the Color page canvas keeps its place, after another edit and
+/// through a save / open round trip; the drag is one undo step; Reset Layout (the canvas's
+/// background menu) lays the grade out automatically again.
+#[test]
+fn dragged_nodes_keep_their_place_and_reset_layout_restores_the_auto_layout() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(2);
+    d.click("grade.addFirst");
+    d.click("grade.addNode");
+    let ids: Vec<u64> = grade(&mut d, clip)["nodes"].as_array().unwrap().iter().map(|n| n["id"].as_u64().unwrap()).collect();
+    let (a, b) = (ids[0], ids[1]);
+    d.frames(3);
+    let g0 = grade(&mut d, clip);
+    assert!(!g0.to_string().contains("pos"), "an undragged grade stores no positions: {g0}");
+    assert!(d.element("grade.canvas").is_some());
+    let undo0 = d.exec("history.list", json!({}))["undo"].as_array().map_or(0, Vec::len);
+    let [x, y, w, h] = d.element(&format!("grade.node.{b}")).unwrap_or_else(|| panic!("node {b} not on the canvas"));
+    let from = [x + w * 0.5, y + h * 0.15];
+    d.ok("ui.drag", json!({"from": {"x": from[0], "y": from[1]}, "to": {"x": from[0] + 40.0, "y": from[1] + 90.0}, "steps": 8}));
+    d.frames(3);
+    let g1 = grade(&mut d, clip);
+    let pb = node_pos(&g1, b).unwrap_or_else(|| panic!("the dragged node has a position: {g1}"));
+    assert!(node_pos(&g1, a).is_some(), "the first drag keeps every other node where it was: {g1}");
+    let undo1 = d.exec("history.list", json!({}))["undo"].as_array().map_or(0, Vec::len);
+    assert_eq!(undo1, undo0 + 1, "one undo step for the drag");
+    let [x1, y1, _, _] = d.element(&format!("grade.node.{b}")).unwrap();
+    assert!((x1 - x - 40.0).abs() < 6.0 && (y1 - y - 90.0).abs() < 6.0, "the node is where it was dropped: {x},{y} → {x1},{y1}");
+    // another edit: the node stays
+    d.exec("grade.setParam", json!({"clip": clip, "node": a, "param": "saturation", "value": 0.7}));
+    d.frames(3);
+    assert_eq!(node_pos(&grade(&mut d, clip), b), Some(pb));
+    let [x2, y2, _, _] = d.element(&format!("grade.node.{b}")).unwrap();
+    assert!((x2 - x1).abs() < 1.0 && (y2 - y1).abs() < 1.0, "the canvas didn't move: {x1},{y1} → {x2},{y2}");
+    // save and open again: the layout comes back
+    let dir = std::env::temp_dir().join(format!("fc-grade-ui-pos-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("pos.fcproj").to_string_lossy().to_string();
+    d.exec("file.saveAs", json!({"path": path}));
+    d.exec("file.open", json!({"path": path}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(3);
+    assert_eq!(node_pos(&grade(&mut d, clip), b), Some(pb), "the position survives save / open");
+    let _ = std::fs::remove_dir_all(&dir);
+    // Reset Layout from the background menu (a spot without nodes)
+    d.ok("ui.click", json!({"id": "grade.canvas", "fx": 0.97, "fy": 0.95, "button": "right"}));
+    d.frames(3);
+    assert!(d.element("grade.menu.resetLayout").is_some(), "Reset Layout is in the canvas menu");
+    d.click("grade.menu.resetLayout");
+    d.frames(2);
+    let g2 = grade(&mut d, clip);
+    assert!(!g2.to_string().contains("pos"), "Reset Layout clears the positions: {g2}");
+    d.exec("edit.undo", json!({}));
+    assert_eq!(node_pos(&grade(&mut d, clip), b), Some(pb), "Reset Layout is undoable");
+}
+
+/// Whether the node's canvas element lies inside the canvas.
+fn node_in_canvas(d: &mut Driver, node: u64) -> bool {
+    let (Some(c), Some(n)) = (d.element("grade.canvas"), d.element(&format!("grade.node.{node}"))) else { return false };
+    n[0] >= c[0] - 0.5 && n[1] >= c[1] - 0.5 && n[0] + n[2] <= c[0] + c[2] + 0.5 && n[1] + n[3] <= c[1] + c[3] + 0.5
+}
+
+/// Fork C2b review: a shape change while the pointer is held for something other than a node
+/// drag (a dock splitter, a scrub that changes the clip) refits the canvas on release.
+#[test]
+fn canvas_refits_on_release_after_a_change_with_the_pointer_held() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clips: Vec<u64> = seq["video"][0]["items"].as_array().unwrap().iter().filter_map(|i| i["clip"].as_u64()).collect();
+    let (c1, c2) = (clips[0], clips[1]);
+    let n1 = d.exec("grade.addNode", json!({"clip": c1, "after": null}))["node"].as_u64().unwrap();
+    let n2 = d.exec("grade.addNode", json!({"clip": c2, "after": null}))["node"].as_u64().unwrap();
+    d.exec("timeline.select", json!({"clips": [c1]}));
+    d.frames(4);
+    assert!(node_in_canvas(&mut d, n1), "fitted at first");
+    // pan the view far away (middle drag on the background)
+    let c = d.element("grade.canvas").unwrap();
+    let push = |d: &mut Driver, e: egui::Event| d.harness.input_mut().events.push(e);
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Middle, pressed, modifiers: Default::default() };
+    let mut p = egui::pos2(c[0] + c[2] * 0.97, c[1] + c[3] * 0.95);
+    push(&mut d, egui::Event::PointerMoved(p));
+    d.frames(1);
+    push(&mut d, button(p, true));
+    d.frames(1);
+    for _ in 0..8 {
+        p.x -= c[2] * 0.2;
+        push(&mut d, egui::Event::PointerMoved(p));
+        d.frames(1);
+    }
+    push(&mut d, button(p, false));
+    d.frames(3);
+    assert!(!node_in_canvas(&mut d, n1), "panned out of view");
+    // hold the pointer (not on a node) and change the clip: no refit while held…
+    let hold = egui::pos2(c[0] + c[2] * 0.97, c[1] + c[3] * 0.95);
+    push(&mut d, egui::Event::PointerMoved(hold));
+    d.frames(1);
+    push(&mut d, button(hold, true));
+    d.frames(1);
+    d.exec("timeline.select", json!({"clips": [c2]}));
+    d.frames(3);
+    assert!(!node_in_canvas(&mut d, n2), "no refit while the pointer is held");
+    // …and the fit on release
+    push(&mut d, button(hold, false));
+    d.frames(3);
+    assert!(node_in_canvas(&mut d, n2), "the canvas refits on release");
 }

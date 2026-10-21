@@ -1,4 +1,5 @@
-//! Color Grading panels (fork GRADE-PLAN G1): **Nodes**, the selected clip's serial node strip,
+//! Color Grading panels (fork GRADE-PLAN G1): **Nodes**, the selected clip's node canvas (fork C2:
+//! a serial grade as a row; parallel / layer / outside / splitter / key-mixer branches),
 //! and **Primaries**, the Lift / Gamma / Gain / Offset wheels, contrast / pivot / saturation /
 //! temperature / tint and the per-node curves of the selected node.
 //!
@@ -6,10 +7,11 @@
 //! drag is one undo step. Automation ids: `grade.node.<id>`, `grade.addNode`, `grade.insertNode`,
 //! `grade.removeNode`, `grade.toggleNode`, `grade.resetNode`, `grade.renameNode` (and its field
 //! `grade.renameNode.field`), `grade.bypass`, `grade.tab.<tab>`,
-//! `grade.wheel.<key>`, `grade.param.<key>`, `grade.curve.<channel>`.
+//! `grade.wheel.<key>`, `grade.param.<key>`, `grade.curve.<channel>`; a mixer node's settings and a
+//! correction node's key input: see `grade_mixer`.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
-use filmcraft_project::grade::{Grade, GradeNode, MAX_NODES, NodeParamKind, node_param};
+use filmcraft_project::grade::{Grade, GradeNode, MAX_NODES, NodeKind, NodeParamKind, SOURCE, node_param};
 use filmcraft_project::{ClipId, TrackItem};
 use filmcraft_time::Tick;
 use serde_json::{Value, json};
@@ -17,6 +19,7 @@ use serde_json::{Value, json};
 use crate::FilmcraftApp;
 use crate::state::GradeRename;
 use crate::widgets;
+use crate::widgets::node_canvas::{CanvasEvent, CanvasGraph, EdgeView, NodeView};
 
 /// The first selected clip on a video track.
 fn selected(app: &FilmcraftApp) -> Option<(ClipId, TrackItem)> {
@@ -38,7 +41,7 @@ fn select_node(app: &mut FilmcraftApp, clip: ClipId, node: u64) {
 }
 
 /// A label cut to `n` characters (with an ellipsis), for labels from hostile files.
-fn short(text: &str, n: usize) -> String {
+pub(crate) fn short(text: &str, n: usize) -> String {
     if text.chars().count() <= n { text.to_string() } else { format!("{}…", text.chars().take(n.saturating_sub(1)).collect::<String>()) }
 }
 
@@ -56,20 +59,22 @@ fn run(app: &mut FilmcraftApp, cmd: &str, p: Value) -> Option<Value> {
 /// The Primaries panel's gesture number: bumped on every pointer press and key press, so a drag
 /// is one undo step while separate clicks and key nudges are separate steps.
 pub(crate) fn gesture(ui: &egui::Ui) -> u64 {
+    // (bumped once per frame: the Primaries and Curves panels both ask, and a frame can take
+    // several passes; a second bump in the press frame would split a drag into two steps)
     let id = egui::Id::new("grade-gesture");
-    let mut g: u64 = ui.data(|d| d.get_temp(id)).unwrap_or(0);
-    if ui.input(|i| i.pointer.any_pressed() || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Text(_)))) {
+    let frame = ui.ctx().cumulative_frame_nr();
+    let (mut g, at): (u64, u64) = ui.data(|d| d.get_temp(id)).unwrap_or((0, u64::MAX));
+    if at != frame
+        && ui.input(|i| i.pointer.any_pressed() || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::Text(_))))
+    {
         g = g.wrapping_add(1);
-        ui.data_mut(|d| d.insert_temp(id, g));
+        ui.data_mut(|d| d.insert_temp(id, (g, frame)));
     }
     g
 }
 
 // ---------- Nodes ----------
 
-const NODE_W: f32 = 92.0;
-const NODE_H: f32 = 46.0;
-const NODE_GAP: f32 = 22.0;
 /// Longest node name, as `grade.labelNode` keeps it.
 const MAX_LABEL: usize = 64;
 
@@ -129,91 +134,110 @@ pub fn show_nodes(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
     });
 
-    // the strip: input → nodes → output, scrolling sideways (a file may hold more nodes than fit;
-    // only the first MAX_NODES render, the rest are listed as a count)
-    let shown = grade.nodes.len().min(MAX_NODES);
-    let strip_w = 40.0 + shown as f32 * (NODE_W + NODE_GAP) + NODE_GAP + 120.0;
-    let strip_rect = Rect::from_min_max(pos2(rect.min.x, bui.cursor().min.y), rect.max);
-    let mut sui = ui.new_child(egui::UiBuilder::new().max_rect(strip_rect).id_salt(("grade-strip", clip.0)));
-    egui::ScrollArea::horizontal().id_salt(("grade-strip-scroll", clip.0)).show(&mut sui, |ui| {
-        let (area, _) = ui.allocate_exact_size(vec2(strip_w, NODE_H + 12.0), Sense::hover());
-        let top = area.min.y + 4.0;
-        let mut x = area.min.x + 12.0;
-        let p = ui.painter_at(ui.clip_rect());
-        let y_mid = top + NODE_H / 2.0;
-        let dot = |x: f32| p.circle_filled(pos2(x, y_mid), 4.0, t.text_faint);
-        dot(x);
-        x += 8.0;
-        if grade.nodes.is_empty() {
-            p.text(pos2(x + NODE_GAP, y_mid), Align2::LEFT_CENTER, "No nodes: + Serial adds one", egui::FontId::proportional(12.0), t.text_faint);
+    // the rename field (the canvas draws the nodes, so the name is typed above it)
+    if app.ui.grade_rename.is_some() {
+        let (field, _) = bui.allocate_exact_size(vec2(200.0, 20.0), Sense::hover());
+        if let Some(done) = rename_field(app, &mut bui, field, clip) {
+            cmds.extend(done);
         }
-        for (i, n) in grade.nodes.iter().take(MAX_NODES).enumerate() {
-            p.line_segment([pos2(x, y_mid), pos2(x + NODE_GAP, y_mid)], Stroke::new(1.5, t.text_faint));
-            x += NODE_GAP;
-            let r = Rect::from_min_size(pos2(x, top), vec2(NODE_W, NODE_H));
-            let resp = ui.interact(r, egui::Id::new(("grade-node", clip.0, n.id)), Sense::click());
-            let sel = cur == Some(n.id);
-            let fill = if sel { t.accent.gamma_multiply(0.35) } else { Color32::from_gray(0x2a) };
-            p.rect_filled(r, 4.0, fill);
-            p.rect_stroke(r, 4.0, Stroke::new(if sel { 2.0 } else { 1.0 }, if sel { t.accent } else { t.text_faint }), egui::StrokeKind::Inside);
-            let col = if n.enabled && !grade.bypass { t.text } else { t.text_faint };
-            p.text(r.min + vec2(6.0, 4.0), Align2::LEFT_TOP, format!("{:02}", i + 1), egui::FontId::monospace(11.0), col);
-            let renaming = app.ui.grade_rename.as_ref().is_some_and(|rn| rn.node == n.id);
-            if renaming {
-                let field = Rect::from_min_max(pos2(r.min.x + 4.0, r.max.y - 22.0), pos2(r.max.x - 4.0, r.max.y - 3.0));
-                if let Some(done) = rename_field(app, ui, field, clip) {
-                    cmds.extend(done);
-                }
-                autos.push(("grade.renameNode.field".into(), field, format!("Name of node {:02}", i + 1)));
-            } else {
-                let name = if n.label.is_empty() { summary(n) } else { short(&n.label, 13) };
-                p.text(r.left_bottom() + vec2(6.0, -5.0), Align2::LEFT_BOTTOM, name, egui::FontId::proportional(11.0), col);
-            }
-            if !n.enabled {
-                p.line_segment([r.left_bottom(), r.right_top()], Stroke::new(1.0, t.text_faint));
-            }
-            if resp.clicked() {
-                select = Some(n.id);
-            }
-            if resp.double_clicked() {
-                cmds.push(("grade.toggleNode", json!({"clip": clip.0, "node": n.id})));
-            }
-            resp.context_menu(|ui| {
-                if ui.button("Rename").clicked() {
-                    rename = Some(n.id);
-                    ui.close();
-                }
-                if ui.button(if n.enabled { "Disable" } else { "Enable" }).clicked() {
-                    cmds.push(("grade.toggleNode", json!({"clip": clip.0, "node": n.id})));
-                    ui.close();
-                }
-                if ui.button("Reset").clicked() {
-                    cmds.push(("grade.resetNode", json!({"clip": clip.0, "node": n.id})));
-                    ui.close();
-                }
-                if ui.button("Delete").clicked() {
-                    cmds.push(("grade.removeNode", json!({"clip": clip.0, "node": n.id})));
-                    ui.close();
-                }
-            });
-            if ui.clip_rect().intersects(r) {
-                autos.push((format!("grade.node.{}", n.id), r.intersect(ui.clip_rect()), format!("Node {:02}", i + 1)));
-            }
-            x += NODE_W;
+        autos.push(("grade.renameNode.field".into(), field, "Node name".into()));
+    }
+
+    // the node canvas (fork C2): a serial grade lays out as a row, branches stack in columns;
+    // dragged nodes keep their place (fork C2b)
+    let drag_gesture = gesture(ui);
+    let canvas_rect = Rect::from_min_max(pos2(rect.min.x, bui.cursor().min.y), rect.max);
+    let view = canvas_graph(&grade, cur);
+    let mut state = app.ui.panels.grade_nodes.clone();
+    // the canvas selection follows the current node (a multi-selection made on the canvas stays)
+    if state.selection.len() <= 1 && state.selection.first().copied() != cur {
+        state.selection = cur.into_iter().collect();
+    }
+    // the whole graph is fitted into view when its shape changes (another clip, nodes added,
+    // removed or rewired, the panel resized, Reset Layout); pan and zoom are the user's in
+    // between, and moving a dragged node never refits (fork C2b)
+    let shape = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        clip.0.hash(&mut h);
+        grade.has_positions().hash(&mut h);
+        for n in &view.nodes {
+            let auto = if grade.stored_pos(n.id).is_some() { None } else { Some((n.pos[0].to_bits(), n.pos[1].to_bits())) };
+            (n.id, auto, n.inputs.len()).hash(&mut h);
         }
-        p.line_segment([pos2(x, y_mid), pos2(x + NODE_GAP, y_mid)], Stroke::new(1.5, t.text_faint));
-        dot(x + NODE_GAP + 4.0);
-        if grade.nodes.len() > MAX_NODES {
-            let more = grade.nodes.len() - MAX_NODES;
-            p.text(
-                pos2(x + NODE_GAP + 14.0, y_mid),
-                Align2::LEFT_CENTER,
-                format!("+{more} more (not rendered)"),
-                egui::FontId::proportional(11.0),
-                t.text_faint,
-            );
+        (canvas_rect.width().to_bits(), canvas_rect.height().to_bits()).hash(&mut h);
+        h.finish()
+    };
+    let fit_id = egui::Id::new("grade-canvas-fit");
+    // (whether a node was being dragged on the canvas last frame, or was just dropped)
+    let node_drag_id = egui::Id::new("grade-canvas-node-drag");
+    let node_drag = ui.data(|d| d.get_temp::<bool>(node_drag_id)).unwrap_or(false);
+    if ui.data(|d| d.get_temp::<u64>(fit_id)) != Some(shape) {
+        if node_drag {
+            // never while a node is being dragged: the view would jump under the pointer
+            ui.data_mut(|d| d.insert_temp(fit_id, shape));
+        } else if !ui.input(|i| i.pointer.any_down()) {
+            ui.data_mut(|d| d.insert_temp(fit_id, shape));
+            widgets::node_canvas::fit(&mut state, &view, canvas_rect.size());
         }
-    });
+        // (any other held pointer, a dock splitter or a scrub: the fit waits for the release)
+    }
+    let events = if canvas_rect.is_positive() {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(canvas_rect).id_salt(("grade-canvas", clip.0)), |ui| {
+            widgets::node_canvas::node_canvas(ui, &view, &mut state, &mut app.auto, "grade")
+        })
+        .inner
+    } else {
+        Vec::new()
+    };
+    app.ui.panels.grade_nodes = state;
+    let dragging = events.iter().any(|e| matches!(e, CanvasEvent::Move(..) | CanvasEvent::MoveEnd(..)));
+    ui.data_mut(|d| d.insert_temp(node_drag_id, dragging));
+    if grade.nodes.is_empty() {
+        let p = ui.painter_at(canvas_rect);
+        p.text(canvas_rect.center(), Align2::CENTER_CENTER, crate::i18n::t("No nodes: + Serial adds one"), egui::FontId::proportional(12.0), t.text_faint);
+    }
+    let real = |ids: Vec<u64>| ids.into_iter().filter(|n| *n != SOURCE && grade.node(*n).is_some()).collect::<Vec<u64>>();
+    for e in events {
+        match e {
+            CanvasEvent::Select(ids) => {
+                if let [one] = real(ids).as_slice() {
+                    select = Some(*one);
+                }
+            }
+            CanvasEvent::View(n) if n != SOURCE => select = Some(n),
+            CanvasEvent::Connect { from, to } => {
+                cmds.push(("grade.connect", json!({"clip": clip.0, "from": from.0, "fromPort": from.1, "to": to.0, "toPort": to.1})))
+            }
+            CanvasEvent::Disconnect { to } => cmds.push(("grade.disconnect", json!({"clip": clip.0, "to": to.0, "toPort": to.1}))),
+            // (every frame of a drag: one gesture, so one undo step)
+            CanvasEvent::Move(n, p) | CanvasEvent::MoveEnd(n, p) => {
+                if let Some(nodes) = move_entries(&grade, &view, n, p) {
+                    cmds.push(("grade.moveNodes", json!({"clip": clip.0, "nodes": nodes, "gesture": drag_gesture})));
+                }
+            }
+            CanvasEvent::CanvasAction(a) if a == "resetLayout" => cmds.push(("grade.resetLayout", json!({"clip": clip.0}))),
+            CanvasEvent::AddRequested { kind, .. } => {
+                if let Some(c) = add_command(&kind, clip, cur) {
+                    cmds.push(c);
+                }
+            }
+            // (several nodes: one command, one undo step)
+            CanvasEvent::Bypass(ids) if !real(ids.clone()).is_empty() => cmds.push(("grade.toggleNode", json!({"clip": clip.0, "nodes": real(ids)}))),
+            CanvasEvent::Delete(ids) if !real(ids.clone()).is_empty() => cmds.push(("grade.removeNode", json!({"clip": clip.0, "nodes": real(ids)}))),
+            CanvasEvent::SetOutput(n) if n != SOURCE => cmds.push(("grade.setOutput", json!({"clip": clip.0, "node": n}))),
+            CanvasEvent::NodeAction { node, action } if node != SOURCE => match action.as_str() {
+                "rename" => rename = Some(node),
+                "reset" => cmds.push(("grade.resetNode", json!({"clip": clip.0, "node": node}))),
+                other => {
+                    if let Some(c) = add_command(other, clip, Some(node)) {
+                        cmds.push(c);
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
 
     for (id, r, label) in autos {
         if r.is_positive() {
@@ -236,6 +260,119 @@ pub fn show_nodes(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             select_node(app, clip, id);
         }
     }
+}
+
+/// The node canvas's add entries (its background menu and each node's menu): key, label (the
+/// command's label), command.
+pub(crate) const ADD_ACTIONS: [(&str, &str, &str); 6] = [
+    ("serial", "Add Serial Node", "grade.addNode"),
+    ("parallel", "Add Parallel Node", "grade.addParallel"),
+    ("layer", "Add Layer Node", "grade.addLayer"),
+    ("outside", "Add Outside Node", "grade.addOutside"),
+    ("splitter", "Add Splitter / Combiner Nodes", "grade.addSplitter"),
+    ("keyMixer", "Add Key Mixer", "grade.addKeyMixer"),
+];
+
+/// The command an add entry runs on node `at` (none: the grade's current node).
+fn add_command(key: &str, clip: ClipId, at: Option<u64>) -> Option<(&'static str, Value)> {
+    let (_, _, cmd) = ADD_ACTIONS.iter().find(|(k, _, _)| *k == key)?;
+    Some(if *cmd == "grade.addNode" { (*cmd, json!({"clip": clip.0, "after": at})) } else { (*cmd, json!({"clip": clip.0, "node": at})) })
+}
+
+/// What a node kind is called on the canvas.
+fn kind_title(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Correction => "Corrector",
+        NodeKind::ParallelMixer => "Parallel Mixer",
+        NodeKind::LayerMixer => "Layer Mixer",
+        NodeKind::Splitter => "Splitter",
+        NodeKind::Combiner => "Combiner",
+        NodeKind::KeyMixer => "Key Mixer",
+    }
+}
+
+/// The `nodes` of a `grade.moveNodes` for node `n` dragged to `p` (fork C2b): the first drag on a
+/// grade laid out automatically also stores where every other node is now, so nothing else moves;
+/// later drags store only the dragged node. None when the position isn't usable or unchanged.
+fn move_entries(g: &Grade, view: &CanvasGraph, n: u64, p: [f32; 2]) -> Option<Value> {
+    if !(p[0].is_finite() && p[1].is_finite()) || (n != SOURCE && g.node(n).is_none()) {
+        return None;
+    }
+    let shown = view.nodes.iter().find(|v| v.id == n).map(|v| v.pos);
+    if g.stored_pos(n).is_some() && shown == Some(p) {
+        return None;
+    }
+    let entry = |id: u64, at: [f32; 2]| json!({"node": id, "x": at[0], "y": at[1]});
+    if g.has_positions() {
+        return Some(json!([entry(n, p)]));
+    }
+    Some(Value::Array(view.nodes.iter().map(|v| if v.id == n { entry(n, p) } else { entry(v.id, v.pos) }).collect()))
+}
+
+/// The canvas view of a grade: the grade's input, then every node with its ports (key ports are
+/// Resolve's green triangles), and the connections (the implicit chain of a serial grade).
+pub(crate) fn canvas_graph(g: &Grade, cur: Option<u64>) -> CanvasGraph {
+    let error = g.graph_order().err().map(|e| e.to_string());
+    let output = g.output_node().ok();
+    let edges = g.effective_edges();
+    // (stored positions of dragged nodes, the automatic layout for the rest)
+    let pos = g.layout();
+    let at = |id: u64| pos.iter().find(|(i, _)| *i == id).map_or([0.0, 0.0], |(_, p)| *p);
+    let mut nodes = vec![NodeView {
+        id: SOURCE,
+        title: crate::i18n::t("Input").to_string(),
+        pos: at(SOURCE),
+        inputs: Vec::new(),
+        outputs: vec!["RGB".into()],
+        bypassed: false,
+        error: None,
+        is_output: false,
+        key_inputs: 0,
+        key_outputs: 0,
+    }];
+    let key = crate::i18n::t("Key").to_string();
+    for (i, n) in g.nodes.iter().take(MAX_NODES).enumerate() {
+        // a mixer shows its connected inputs and one free one
+        let mix_inputs = || {
+            let used = edges.iter().filter(|e| e.to.node == n.id).map(|e| usize::from(e.to.index) + 2).max().unwrap_or(2);
+            (1..=used.clamp(2, usize::from(filmcraft_project::grade::MAX_MIX_INPUTS))).map(|i| i.to_string()).collect::<Vec<_>>()
+        };
+        let (inputs, outputs, key_inputs, key_outputs): (Vec<String>, Vec<String>, u32, u32) = match n.kind {
+            NodeKind::Correction => (vec!["RGB".into(), key.clone()], vec!["RGB".into(), key.clone()], 0b10, 0b10),
+            NodeKind::ParallelMixer | NodeKind::LayerMixer => (mix_inputs(), vec!["RGB".into()], 0, 0),
+            NodeKind::KeyMixer => (mix_inputs(), vec![key.clone()], u32::MAX, 1),
+            NodeKind::Splitter => (vec!["RGB".into()], vec!["R".into(), "G".into(), "B".into()], 0, 0),
+            NodeKind::Combiner => (vec!["R".into(), "G".into(), "B".into()], vec!["RGB".into()], 0, 0),
+        };
+        let name = if !n.label.is_empty() {
+            n.label.clone()
+        } else if n.kind == NodeKind::Correction {
+            summary(n)
+        } else {
+            crate::i18n::t(kind_title(n.kind)).to_string()
+        };
+        let is_output = output == Some(n.id);
+        nodes.push(NodeView {
+            id: n.id,
+            title: format!("{:02} {}", i + 1, short(&name, 16)),
+            pos: at(n.id),
+            inputs,
+            outputs,
+            bypassed: !n.enabled || g.bypass,
+            // a graph that can't render says why on its output (or the current node)
+            error: if is_output || (output.is_none() && cur == Some(n.id)) { error.clone() } else { None },
+            is_output,
+            key_inputs,
+            key_outputs,
+        });
+    }
+    let edges = edges.iter().map(|e| EdgeView { from: (e.from.node, e.from.index), to: (e.to.node, e.to.index) }).collect();
+    let add_kinds: Vec<(String, String)> = ADD_ACTIONS.iter().map(|(k, l, _)| ((*k).to_string(), (*l).to_string())).collect();
+    let mut node_actions = add_kinds.clone();
+    node_actions.extend([("rename".to_string(), "Rename".to_string()), ("reset".to_string(), "Reset".to_string())]);
+    // (the background menu offers Reset Layout once a node was placed by hand)
+    let canvas_actions = if g.has_positions() { vec![("resetLayout".to_string(), "Reset Layout".to_string())] } else { Vec::new() };
+    CanvasGraph { nodes, edges, add_kinds, node_actions, canvas_actions, on_screen_ids: true }
 }
 
 /// The in-place name field of the node being renamed, at `r`. Returns the command to run once the
@@ -416,6 +553,8 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
     };
     let Some(node_id) = current_node(app, clip, &grade) else { return };
     let Some(node) = grade.node(node_id).cloned() else { return };
+    // a mixer node shows its per-input settings instead of the correction tabs (fork C2b)
+    let mixer = super::grade_mixer::is_mixer(node.kind);
     let index = grade.nodes.iter().position(|n| n.id == node_id).unwrap_or(0);
     prefetch_explanation(app, bui.ctx(), clip, node_id);
     let ph = app.session.playhead();
@@ -439,7 +578,7 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
     bui.horizontal(|ui| {
         let labels = [tl!("Primaries"), tl!("Curves"), tl!("Qualifier"), tl!("Windows"), tl!("Noise"), tl!("Match")];
         for (id, label) in TABS.into_iter().zip(labels) {
-            if !shown.contains(&id) {
+            if !shown.contains(&id) || mixer {
                 continue;
             }
             let r = ui.selectable_label(tab == id, label);
@@ -467,7 +606,7 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
 
     // the controls scroll when the panel is short (the Color page puts it below the viewer)
     let mut wview = Some(app_view(&app.session, clip, node_id));
-    let mview = if tab == "match" { Some(match_view(app, bui.ctx(), clip, &grade)) } else { None };
+    let mview = if tab == "match" && !mixer { Some(match_view(app, bui.ctx(), clip, &grade)) } else { None };
     let luts = lut_entries(&app.session.project);
     let tnr_ok = tab == "noise" && super::tnr::takes_tnr(&app.session, clip);
     let scroll_rect = Rect::from_min_max(bui.cursor().min, bui.max_rect().max);
@@ -476,8 +615,16 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
     // a Grading Coach step about one of these controls scrolls it into view (once per step)
     let coach_scroll = super::coach::scroll_request(app, bui.ctx());
     let mut coach_scrolled = false;
+    let mut pedits: Vec<super::grade_mixer::ParamEdit> = Vec::new();
     egui::ScrollArea::vertical().id_salt(("grade-primaries", tab, middle)).auto_shrink([false, false]).show(&mut sui, |bui| {
-        if tab == "primaries" {
+        if mixer {
+            if middle {
+                bui.add_space(8.0);
+                bui.label(egui::RichText::new(tl!("A mixer node: its settings are in the Primaries panel.")).color(t.text_dim));
+            } else {
+                super::grade_mixer::mixer_controls(bui, &grade, &node, mt, &t, &mut pedits, &mut autos);
+            }
+        } else if tab == "primaries" {
             // Resolve's Primaries palette: a strip of numbers (Temp, Tint, Contrast, Pivot) with
             // the white-balance tools, four wheels with their numbers and a master jog bar each,
             // then a strip with Saturation and film grain, and the node's LUT
@@ -639,6 +786,7 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
                 });
             }
         } else if tab == "qualifier" {
+            super::grade_mixer::key_input_controls(bui, &grade, &node, mt, &t, &mut pedits, &mut autos);
             let mut edits = Vec::new();
             qualifier_controls(bui, &node, mt, &t, armed, &mut arm, &mut edits, &mut autos);
             for (key, v) in edits {
@@ -729,6 +877,13 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
     });
     if coach_scrolled {
         super::coach::scrolled(app, bui.ctx());
+    }
+    for e in pedits {
+        match e {
+            super::grade_mixer::ParamEdit::Set { key, value, drag } => sets.push(set(key, value, drag.then(|| key_of(key)))),
+            super::grade_mixer::ParamEdit::Reset(key) => sets.push(json!({"reset": key})),
+            super::grade_mixer::ParamEdit::ToggleAnimation(key) => cmds.push(("grade.toggleAnimation", json!({"node": node_id, "param": key}))),
+        }
     }
 
     for (id, r, label) in autos {
@@ -918,6 +1073,7 @@ fn float_rows(
             min,
             max,
             step: 0.0,
+            suffix: "",
             enabled,
             animated: None,
             id: &id,
@@ -942,6 +1098,8 @@ pub(crate) struct FloatRow<'a> {
     pub max: f32,
     /// Slider step (0: continuous).
     pub step: f64,
+    /// Unit shown after the slider's number (e.g. " %"), or "".
+    pub suffix: &'a str,
     /// Whether the slider is editable.
     pub enabled: bool,
     /// `Some(animated)`: show the keyframe toggle, lit while the value is animated.
@@ -966,7 +1124,7 @@ pub(crate) fn float_row(ui: &mut egui::Ui, t: &crate::theme::Tokens, row: FloatR
     let mut v = if row.value.is_finite() { row.value.clamp(lo, hi) } else { lo };
     ui.horizontal(|ui| {
         ui.add_sized(vec2(104.0, 18.0), egui::Label::new(egui::RichText::new(row.label).color(t.text_dim)));
-        let r = ui.add_enabled(row.enabled, egui::Slider::new(&mut v, lo..=hi).max_decimals(3).step_by(row.step));
+        let r = ui.add_enabled(row.enabled, egui::Slider::new(&mut v, lo..=hi).max_decimals(3).step_by(row.step).suffix(row.suffix));
         autos.push((row.id.to_string(), r.rect, row.label.to_string()));
         if r.changed() {
             out = Some(RowEdit::Set(v));
@@ -1040,6 +1198,10 @@ struct MatchView {
     others: Vec<(u64, String)>,
     same: Vec<String>,
     reference: Option<u64>,
+    /// Gallery stills (grabbed frames and imported reference pictures, REF.3) and the one chosen
+    /// as the reference instead of a clip.
+    stills: Vec<(u64, String)>,
+    reference_still: Option<u64>,
     result: Option<MatchResult>,
 }
 
@@ -1166,7 +1328,19 @@ fn match_view(app: &FilmcraftApp, ctx: &egui::Context, clip: ClipId, grade: &Gra
     if let Some(r) = result.as_mut() {
         poll_ai(app, ctx, clip, r);
     }
-    MatchView { others, same, reference, result }
+    let stills: Vec<(u64, String)> = app
+        .session
+        .project
+        .stills
+        .iter()
+        .map(|st| {
+            let name = if st.label.is_empty() { format!("{} {}", tl!("Still"), st.id) } else { st.label.clone() };
+            (st.id, format!("{}: {name}", if st.is_reference() { tl!("Reference picture") } else { tl!("Still") }))
+        })
+        .collect();
+    let reference_still = ctx.data(|d| d.get_temp::<u64>(egui::Id::new(("grade-match-ref-still", clip.0)))).filter(|r| stills.iter().any(|(id, _)| id == r));
+    let reference = if reference_still.is_some() { None } else { reference };
+    MatchView { others, same, reference, stills, reference_still, result }
 }
 
 /// The Match tab (G2.8–G2.10): the "same grade" check, Compare shots / Shot Match against a
@@ -1186,17 +1360,31 @@ fn match_controls(
     ui.label(egui::RichText::new(text).color(t.text_dim));
     ui.separator();
     let mut reference = v.reference;
+    let mut reference_still = v.reference_still;
     ui.horizontal(|ui| {
         ui.add_sized(vec2(84.0, 18.0), egui::Label::new(egui::RichText::new(tl!("Reference")).color(t.text_dim)));
-        let shown = reference.and_then(|r| v.others.iter().find(|(id, _)| *id == r)).map_or_else(|| tl!("(pick a clip)").to_string(), |(_, n)| n.clone());
+        let shown = match reference_still {
+            Some(r) => v.stills.iter().find(|(id, _)| *id == r).map(|(_, n)| n.clone()),
+            None => reference.and_then(|r| v.others.iter().find(|(id, _)| *id == r)).map(|(_, n)| n.clone()),
+        }
+        .unwrap_or_else(|| tl!("(pick a clip)").to_string());
         let r = egui::ComboBox::from_id_salt(("grade-match-ref", clip.0))
             .selected_text(shown)
             .truncate()
             .width((ui.available_width() - 10.0).max(80.0))
             .show_ui(ui, |ui| {
                 for (id, name) in &v.others {
-                    if ui.selectable_label(reference == Some(*id), name).clicked() {
+                    if ui.selectable_label(reference_still.is_none() && reference == Some(*id), name).clicked() {
                         reference = Some(*id);
+                        reference_still = None;
+                    }
+                }
+                if !v.stills.is_empty() {
+                    ui.separator();
+                }
+                for (id, name) in &v.stills {
+                    if ui.selectable_label(reference_still == Some(*id), name).clicked() {
+                        reference_still = Some(*id);
                     }
                 }
             });
@@ -1207,8 +1395,21 @@ fn match_controls(
     {
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("grade-match-ref", clip.0)), r));
     }
+    if reference_still != v.reference_still {
+        let key = egui::Id::new(("grade-match-ref-still", clip.0));
+        ui.ctx().data_mut(|d| {
+            if let Some(r) = reference_still {
+                d.insert_temp(key, r);
+            } else {
+                d.remove::<u64>(key);
+            }
+        });
+    }
     ui.horizontal_wrapped(|ui| {
-        let with = reference.map(|r| json!({"clip": clip.0, "with": r}));
+        let with = match reference_still {
+            Some(st) => Some(json!({"clip": clip.0, "still": st})),
+            None => reference.map(|r| json!({"clip": clip.0, "with": r})),
+        };
         for (id, label, cmd, show) in [
             ("grade.match.compare", tl!("Compare shots"), "grade.compareShots", "compare"),
             ("grade.match.shotMatch", tl!("Shot Match"), "grade.shotMatch", "match"),

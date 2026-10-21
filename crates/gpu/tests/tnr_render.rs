@@ -40,6 +40,7 @@ fn project(frames: f64) -> (Project, filmcraft_project::ItemId, SourceMap) {
         kind: MediaKind::Movie,
         duration: FPS.tick_of(fixture::FRAMES as i64),
         video: Some(VideoStreamInfo {
+            camera_color_space: None,
             width: fixture::W as u32,
             height: fixture::H as u32,
             frame_rate: FPS,
@@ -79,7 +80,7 @@ fn project(frames: f64) -> (Project, filmcraft_project::ItemId, SourceMap) {
     }
     let mut n = GradeNode::new(1);
     n.params.insert("saturation".into(), Param::new(ParamValue::Float(1.2)));
-    ti.grade = Some(Grade { nodes: vec![n], bypass: false });
+    ti.grade = Some(Grade { nodes: vec![n], bypass: false, ..Default::default() });
     let mut tnr = filmcraft_project::TemporalNr::default();
     for (k, v) in [("luma", 1.0), ("chroma", 0.8), ("frames", frames)] {
         tnr.params.insert(k.into(), Param::new(ParamValue::Float(v)));

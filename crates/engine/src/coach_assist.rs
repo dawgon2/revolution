@@ -65,6 +65,13 @@ pub struct AssistContext {
     pub previous_answer: Option<String>,
     /// Free answers, or only the guide's own steps picked by the model (owner question Q35 (b)).
     pub style: AssistStyle,
+    /// REF: the reference picture the question is about, measured against the shot, with
+    /// FilmCraft's own two-part recipe ([`crate::coach_reference`]).
+    pub reference: Option<Arc<crate::coach_reference::RefAnswer>>,
+    /// REF.4: the reference picture for the vision model (taken when asked).
+    pub reference_picture: Option<Arc<PictureInput>>,
+    /// REF.4: what the vision model saw in the reference picture.
+    pub reference_seen: Option<String>,
 }
 
 /// A small frame for the vision model: display RGB in 0..=1, row by row
@@ -86,6 +93,12 @@ impl std::fmt::Debug for PictureInput {
 /// (AI-PLAN AI4 items 2 / 2b). Blocking: called on the assistant's background thread.
 pub trait PictureLooker: Send + Sync {
     fn look(&self, picture: &PictureInput, question: &str) -> std::result::Result<String, String>;
+    /// Look with a prompt of the caller's own (REF.4: a reference picture is described with
+    /// [`crate::coach_reference::reference_look_prompt`]). Lookers without a model of their own
+    /// (tests) answer as [`PictureLooker::look`] would for the prompt as the question.
+    fn look_with(&self, picture: &PictureInput, prompt: &str) -> std::result::Result<String, String> {
+        self.look(picture, prompt)
+    }
 }
 
 /// Pixels the frame is rendered at for the vision model (≈ 512 × 512: ~256 picture tokens).
@@ -299,6 +312,8 @@ pub fn assistant_prompt(question: &str, ctx: &AssistContext, budget_chars: usize
         ("Current grade (facts)", &ctx.grade_facts_json),
         ("Picture (seen)", &ctx.picture_seen),
         ("Picture (measured)", &ctx.picture_facts),
+        ("Reference picture (seen)", &ctx.reference_seen),
+        ("Reference picture vs this shot (measured)", &ctx.reference.as_ref().map(|r| r.measured.join(" "))),
     ] {
         if let Some(v) = v.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
             context.push_str(&format!("{label}: {}\n", chars(v, MAX_CONTEXT_CHARS)));
@@ -316,14 +331,29 @@ pub fn assistant_prompt(question: &str, ctx: &AssistContext, budget_chars: usize
         }
         head.push_str("The new question may follow up on it.\n\n");
     }
+    if let Some(r) = &ctx.reference {
+        head.push_str(&filmcraft_llm::sanitize(&format!(
+            "A reference picture is attached. Answer in two parts, \"In the grade\" and \"On set\", using this measured recipe:\n{}\
+             Never claim to know exactly how the reference was made.\n\n",
+            chars(&r.text(), MAX_CONTEXT_CHARS)
+        )));
+    }
     let tail = format!("Question: {question}");
     let fixed = SYSTEM.chars().count().saturating_add(head.chars().count()).saturating_add(tail.chars().count()).saturating_add("Guide sections:\n\n".len());
     let mut left = budget.saturating_sub(fixed);
     let mut blocks = String::new();
     let mut sources = Vec::new();
     // a follow-up ("and how do I undo that?") is about the earlier question's topic too
-    let query = previous_question.as_ref().map_or_else(|| question.clone(), |pq| format!("{pq} {question}"));
-    let found = retrieve_with_picture(&query, &question, ctx.picture_facts.as_deref(), SECTIONS.min(MAX_RETRIEVE));
+    let mut query = previous_question.as_ref().map_or_else(|| question.clone(), |pq| format!("{pq} {question}"));
+    // (REF: the recipe's steps steer retrieval to the sections they come from)
+    if let Some(r) = &ctx.reference {
+        for st in r.grade.iter().skip(1) {
+            query.push(' ');
+            query.push_str(st.text);
+        }
+    }
+    let mut found = retrieve_with_picture(&query, &question, ctx.picture_facts.as_deref(), SECTIONS.min(MAX_RETRIEVE));
+    pin_recipe(&mut found, ctx);
     let gap = gap_of(&found, &query);
     let gap_note = gap.as_ref().map(|(id, g)| {
         filmcraft_llm::sanitize(&format!(
@@ -479,7 +509,8 @@ pub fn pick_prompt(question: &str, ctx: &AssistContext, budget_chars: usize) -> 
         || filmcraft_llm::sanitize(&chars(question.trim(), MAX_QUESTION_CHARS)),
         |pq| filmcraft_llm::sanitize(&format!("{} {}", chars(pq, MAX_PREVIOUS_CHARS), chars(question.trim(), MAX_QUESTION_CHARS))),
     );
-    let found = retrieve_with_picture(&query, question, ctx.picture_facts.as_deref(), SECTIONS.min(MAX_RETRIEVE));
+    let mut found = retrieve_with_picture(&query, question, ctx.picture_facts.as_deref(), SECTIONS.min(MAX_RETRIEVE));
+    pin_recipe(&mut found, ctx);
     // the free prompt's head (context, earlier exchange) and tail (gap note, question) are reused
     let (head, rest) = free.user.split_once("Guide sections:").unwrap_or(("", free.user.as_str()));
     let asked = rest.rfind("Question: ").and_then(|i| rest.get(i..)).unwrap_or("");
@@ -818,6 +849,10 @@ pub struct AssistAnswer {
     /// AI4.1d: measured facts of the frame that fit the question ([`picture_note`]), shown as
     /// "On this frame (measured)"; written by FilmCraft, never by the model.
     pub seen: Vec<String>,
+    /// REF: the reference answer (measured difference, recipe, on set, Do this), written by
+    /// FilmCraft, and what the vision model saw in the reference picture.
+    pub reference: Option<Arc<crate::coach_reference::RefAnswer>>,
+    pub reference_seen: Option<String>,
 }
 
 /// Most lines of [`picture_note`].
@@ -1181,6 +1216,8 @@ pub fn answer_streaming(
     };
     let pick = ctx.style == AssistStyle::Pick;
     let coach = |sources: Vec<String>, why: AssistFallback| AssistAnswer {
+        reference: None,
+        reference_seen: None,
         seen: Vec::new(),
         sources,
         grounded: None,
@@ -1254,7 +1291,17 @@ pub fn answer_streaming(
     let dont_know = prompt.gap.is_none() && says_dont_know(&g);
     let coach = dont_know.then(|| coach_ask::ask(question, checks));
     let lesson = if dont_know { None } else { coach_ask::lesson_for(question, if g.cited.is_empty() { &prompt.sources } else { &g.cited }) };
-    AssistAnswer { seen: Vec::new(), sources: prompt.sources, grounded: Some(g), fallback: None, dont_know, lesson, coach }
+    AssistAnswer {
+        reference: None,
+        reference_seen: None,
+        seen: Vec::new(),
+        sources: prompt.sources,
+        grounded: Some(g),
+        fallback: None,
+        dont_know,
+        lesson,
+        coach,
+    }
 }
 
 // ---------- jobs and commands (AI3.3d) ----------
@@ -1269,6 +1316,23 @@ pub const MAX_PENDING: usize = 4;
 pub const MAX_PARTIAL_CHARS: usize = 16_000;
 
 impl AssistAnswer {
+    /// The answer as it may leave the session (training inbox): never the reference picture's
+    /// numbers or description, and an answer about a reference picture keeps none of its text
+    /// (the model may have repeated what it was told about the picture). REF privacy rule.
+    pub fn shareable_json(&self) -> Value {
+        let mut v = self.to_json();
+        if let Some(m) = v.as_object_mut() {
+            m.remove("reference");
+            if self.reference.is_some() {
+                for k in ["lines", "coach", "seen"] {
+                    m.remove(k);
+                }
+                m.insert("privateReference".into(), json!(true));
+            }
+        }
+        v
+    }
+
     pub fn to_json(&self) -> Value {
         let lines: Vec<Value> =
             self.grounded.iter().flat_map(|g| &g.lines).map(|l| json!({"text": l.text, "general": l.general, "ui": l.ui, "commands": l.commands})).collect();
@@ -1286,6 +1350,11 @@ impl AssistAnswer {
             "lesson": self.lesson.as_ref().map(|(id, title)| json!({"id": id, "title": title})),
             "coach": self.coach.as_ref().map(coach_ask::Answer::to_json),
             "seen": self.seen,
+            "reference": self.reference.as_ref().map(|r| {
+                let mut v = r.to_json();
+                v["seen"] = json!(self.reference_seen);
+                v
+            }),
         })
     }
 }
@@ -1396,6 +1465,8 @@ impl AssistJobs {
         let backend = self.backend.clone().or_else(|| crate::ai_explain::real_backend().map(|b| b as Arc<dyn ExplainBackend>));
         let Some(backend) = backend else {
             let a = snap.with(|c| AssistAnswer {
+                reference: None,
+                reference_seen: None,
                 seen: Vec::new(),
                 sources: assistant_prompt(&question, &ctx, DEFAULT_BUDGET_CHARS).sources,
                 grounded: None,
@@ -1406,13 +1477,14 @@ impl AssistJobs {
             });
             let mut a = a;
             a.seen = picture_note(&question, ctx.picture_facts.as_deref());
+            a.reference = ctx.reference.clone();
             entries.insert(id, Some(a));
             return Ok(id);
         };
         entries.insert(id, None);
         drop(entries);
         let (store, partial, gate) = (self.entries.clone(), self.partial.clone(), self.gate.clone());
-        let looker = ctx.picture.is_some().then(|| self.looker()).flatten();
+        let looker = (ctx.picture.is_some() || ctx.reference_picture.is_some()).then(|| self.looker()).flatten();
         let looks = self.looks.clone();
         let shot_looks = self.shot_looks.clone();
         let spawned = std::thread::Builder::new().name("filmcraft-assist".into()).spawn(move || {
@@ -1422,6 +1494,22 @@ impl AssistJobs {
             }
             // AI4.2: the vision model looks at the frame with the question first (its failure
             // only means no "seen" line)
+            // REF.4: and at the reference picture, with its own prompt (what numbers can't say)
+            if let (Some(pic), Some(looker)) = (ctx.reference_picture.take(), looker.as_ref()) {
+                let prompt = crate::coach_reference::reference_look_prompt(&question);
+                let key = look_key(&pic, &prompt);
+                let cached = lock(&looks).iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+                ctx.reference_seen = cached.or_else(|| {
+                    let seen = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| looker.look_with(&pic, &prompt)));
+                    let text = Some(chars(seen.ok()?.ok()?.trim(), MAX_SEEN_CHARS)).filter(|t| !t.is_empty())?;
+                    let mut l = lock(&looks);
+                    if l.len() >= MAX_LOOKS {
+                        l.pop_front();
+                    }
+                    l.push_back((key, text.clone()));
+                    Some(text)
+                });
+            }
             if let (Some(pic), Some(looker)) = (ctx.picture.take(), looker) {
                 let key = look_key(&pic, &question);
                 let cached = lock(&looks).iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
@@ -1453,6 +1541,8 @@ impl AssistJobs {
             lock(&partial).remove(&id);
             let seen = picture_note(&question, ctx.picture_facts.as_deref());
             let mut a = r.unwrap_or_else(|_| AssistAnswer {
+                reference: None,
+                reference_seen: None,
                 seen: Vec::new(),
                 sources: Vec::new(),
                 grounded: None,
@@ -1462,6 +1552,8 @@ impl AssistJobs {
                 coach: snap.with(|c| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| coach_ask::ask(&question, c))).ok()),
             });
             a.seen = seen;
+            a.reference = ctx.reference.clone();
+            a.reference_seen = ctx.reference_seen.clone();
             // (a forgotten question stays forgotten)
             if let Some(slot) = lock(&store).get_mut(&id) {
                 *slot = Some(a);
@@ -1505,6 +1597,38 @@ impl AssistJobs {
     }
 }
 
+/// REF: the recipe's own sections go first (the model is told to follow the recipe, so it cites
+/// them; without them in the prompt its citations would count as invented). At most
+/// [`SECTIONS`] in all.
+fn pin_recipe(found: &mut Vec<coach_ask::Retrieved>, ctx: &AssistContext) {
+    let Some(r) = &ctx.reference else { return };
+    let top = found.iter().map(|f| f.score).filter(|x| x.is_finite()).fold(1.0_f64, f64::max);
+    let mut pinned: Vec<coach_ask::Retrieved> = Vec::new();
+    for st in r.grade.iter().take(SECTIONS) {
+        if !pinned.iter().any(|p| p.header.is_some_and(|h| h.id == st.see))
+            && let Some(x) = coach_ask::retrieved_by_id(st.see, top)
+        {
+            pinned.push(x);
+        }
+    }
+    found.retain(|f| !pinned.iter().any(|p| std::ptr::eq(p.section, f.section)));
+    pinned.append(found);
+    pinned.truncate(SECTIONS.min(MAX_RETRIEVE));
+    *found = pinned;
+}
+
+/// REF.4: a still's picture for the vision model, small (about [`LOOK_PIXELS`]), display RGB 0..=1.
+fn reference_rgb(s: &Session, still: u64) -> Option<PictureInput> {
+    let pic = s.still_picture(still)?;
+    let im = image::RgbaImage::from_raw(pic.w, pic.h, pic.rgba)?;
+    let area = u64::from(pic.w).saturating_mul(u64::from(pic.h)).max(1);
+    let f = ((LOOK_PIXELS as f64) / (area as f64)).sqrt().min(1.0);
+    let (w, h) = (((f64::from(pic.w) * f).round() as u32).max(1), ((f64::from(pic.h) * f).round() as u32).max(1));
+    let im = if (w, h) == (pic.w, pic.h) { im } else { image::imageops::resize(&im, w, h, image::imageops::FilterType::Triangle) };
+    let rgb = im.pixels().flat_map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
+    Some(PictureInput { rgb, w: w as usize, h: h as usize })
+}
+
 fn opt_text(p: &Value, k: &str) -> Option<String> {
     p.get(k).and_then(Value::as_str).map(|v| chars(v, MAX_CONTEXT_CHARS))
 }
@@ -1521,6 +1645,9 @@ fn assist_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("coach.assist", "`context` is `auto` or `none`")),
     };
     let ctx = AssistContext {
+        reference: None,
+        reference_picture: None,
+        reference_seen: None,
         page: opt_text(p, "page"),
         selection: opt_text(p, "selection").or_else(|| auto.then(|| crate::grade_tools::selection_text(s)).flatten().map(|v| chars(&v, MAX_CONTEXT_CHARS))),
         grade_facts_json: opt_text(p, "gradeFacts")
@@ -1549,6 +1676,14 @@ fn assist_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         // would you do with this shot?") gets the shot's last look, if there is one; it never
         // waits for a fresh look (provisional design: reuse instead of a generic description)
         ctx.picture_seen = ctx.shot.and_then(|k| s.assist.shot_look(k));
+    }
+    // REF: a question about a reference picture gets its measured recipe, and the picture goes
+    // to the vision model too (the picture itself never leaves the machine, nor the share record)
+    if let Some(rid) = crate::coach_reference::reference_for(s, p, q, auto)? {
+        ctx.reference = crate::coach_reference::reference_answer(s, rid, &json!({}), "coach.assist").ok().map(Arc::new);
+        if ctx.reference.is_some() && s.assist.looker().is_some() {
+            ctx.reference_picture = reference_rgb(s, rid).map(Arc::new);
+        }
     }
     let snap = Snapshot::of(s);
     let mut record = crate::coach_share::ShareRecord::new(&chars(q, MAX_QUESTION_CHARS), &ctx);

@@ -249,6 +249,7 @@ pub(crate) fn media_info(name: &str, spec: &MediaSpec) -> MediaInfo {
         kind,
         duration: spec.duration.unwrap_or(Tick::ZERO),
         video: spec.video.map(|(w, h, r)| VideoStreamInfo {
+            camera_color_space: None,
             width: w,
             height: h,
             frame_rate: r,

@@ -34,8 +34,11 @@ Resolve / Premiere approach and the Revolution nodes. Written in our own words f
 **[Standard]**
 
 - **Resolve:** a layer mixer blending the shot with a black-and-white, high-contrast version.
-- **Revolution:** no layer mixer yet; on the look node: Saturation about 40–60 %, Contrast up,
-  slight highlight shoulder; or a desaturated duplicate on V2 with the **Overlay** blend mode.
+- **Revolution:** **Add Layer Node** (`grade.addLayer`) and make the layer node low in
+  saturation and high in contrast, then set its strength with `layer.opacity.1`
+  ([color/nodes.md](../color/nodes.md) ▸ Layer nodes for looks); or on the look node: Saturation
+  about 40–60 %, Contrast up, slight highlight shoulder; or a desaturated duplicate on V2 with the
+  **Overlay** blend mode.
 - **Pitfalls:** skin goes grey; protect it a little with a skin qualifier.
 
 ## Faded, lifted blacks (vintage)

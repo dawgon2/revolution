@@ -158,7 +158,7 @@ kind = "what-for"
 origin = "agent"
 page = "glossary.md"
 heading = "Serial node"
-alt = [{ page = "color/nodes.md", heading = "Later: parallel and layer nodes (C2)" }]
+alt = [{ page = "color/nodes.md", heading = "Serial, parallel, layer, outside, splitter, key mixer: which one?" }]
 status = "covered"
 facts = ["each node sees the one before"]
 

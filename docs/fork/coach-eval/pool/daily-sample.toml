@@ -14,8 +14,8 @@ ids = [
   # chains-1
   "pool-ch1-screen-export",
   # color-1
-  "pool-c1-gap-layer-node",
-  "pool-c1-same-numbers",
+  "pool-c1-curve-hue",
+  "pool-c1-output-rolloff",
   "pool-c1-before-after",
   # color-2
   "pool-c2-qual-subtract",
@@ -23,8 +23,8 @@ ids = [
   "pool-c2-bw",
   # color-3
   "pool-c3-convert",
-  "pool-c3-lumetri-sees-nodes",
-  "pool-c3-resolve-keys",
+  "pool-c3-lumetri-wb-keys",
+  "pool-c3-splitter",
   # color-4
   "pool-c4-shot-match-steps",
   "pool-c4-ai-checked",
@@ -46,39 +46,32 @@ ids = [
   "pool-k1-node-kinds",
   "pool-k1-holes",
   # creative-1
-  "pool-cr1-stormy-sky",
+  "pool-cr1-phone-screen",
+  "pool-cr1-freeze-drain",
   # creative-10
-  "pool-cr10-before-after",
-  "pool-cr10-zoom-hand",
-  "pool-cr10-before-after-split",
+  "pool-cr10-kenburns",
+  "pool-cr10-rain",
   # creative-11
-  "pool-cr11-replay",
-  "pool-cr11-replay-freeze",
-  "pool-cr11-replay-spot",
+  "pool-cr11-vert-fill",
+  "pool-cr11-recipe-punch",
   # creative-14
-  "pool-cr14-silent",
-  "pool-cr14-outline-green",
-  "pool-cr14-outline-roto",
+  "pool-cr14-vanish",
+  "pool-cr14-hyperlapse-blur",
   # creative-16
-  "pool-cr16-fisheye",
-  "pool-cr16-fisheye-match",
-  "pool-cr16-fisheye-add",
+  "pool-cr16-review",
+  "pool-cr16-magnify-screen",
   # creative-18
-  "pool-cr18-pan",
-  "pool-cr18-pan-wide",
-  "pool-cr18-pan-headphones",
+  "pool-cr18-chipmunk",
+  "pool-cr18-kinetic-beat",
   # creative-2
-  "pool-cr2-vert-tiktok",
-  "pool-cr2-blur-crowd",
-  "pool-cr2-blur-plate",
+  "pool-cr2-remove-walker",
+  "pool-cr2-dx-resolve",
   # creative-22
-  "pool-cr22-twins-ots",
-  "pool-cr22-twins-handoff",
-  "pool-cr22-twins-audio",
+  "pool-cr22-screen",
+  "pool-cr22-holo-glitch",
   # creative-24
-  "pool-cr24-flip",
-  "pool-cr24-flip-perspective",
-  "pool-cr24-flip-quiz",
+  "pool-cr24-snow",
+  "pool-cr24-mix-filter",
   # creative-26
   "pool-cr26-radio",
   "pool-cr26-compare-wipe",
@@ -86,9 +79,8 @@ ids = [
   "pool-cr28-inner",
   "pool-cr28-zoomout-photo",
   # creative-3
-  "pool-cr3-gs-weather",
-  "pool-cr3-billboard-blend",
-  "pool-cr3-gs-uneven",
+  "pool-cr3-cctv",
+  "pool-cr3-freeze-title",
   # creative-30
   "pool-cr30-meme-shake",
   "pool-cr30-moon-trees",
@@ -106,17 +98,14 @@ ids = [
   "pool-cr4-rewind",
   "pool-cr4-pod-resolve",
   # creative-5
-  "pool-cr5-pack",
-  "pool-cr5-cold-open-sound",
-  "pool-cr5-pack-loud",
+  "pool-cr5-split",
+  "pool-cr5-bug-change",
   # creative-6
-  "pool-cr6-trails",
-  "pool-cr6-whip-real",
-  "pool-cr6-whip-travel",
+  "pool-cr6-teal",
+  "pool-cr6-stab-jelly",
   # creative-7
-  "pool-cr7-skin",
-  "pool-cr7-vignette-moving",
-  "pool-cr7-skin-plastic",
+  "pool-cr7-archive",
+  "pool-cr7-dark-8bit",
   # creative-8
   "pool-cr8-bilingual",
   "pool-cr8-roomtone-none",
@@ -147,11 +136,14 @@ ids = [
   "feat-as-sends-anything",
   "feat-as-too-long",
   # feature-battery-igpu
-  "feat-bat-premiere-words",
+  "feat-igpu-mem-auto",
+  "feat-igpu-mem-override",
   # feature-gpu-rule
-  "feat-gpu-kind-missing",
+  "feat-gpu-kinds-vs-named",
+  "feat-gpu-script-check",
   # feature-network-storage-check
-  "feat-ns1-premiere-label",
+  "feat-ns1-clip-on-nas",
+  "feat-ns1-script-list",
   # feature-network-storage-copies
   "feat-ns2-setting-default",
   # feature-network-storage-drops
@@ -163,7 +155,8 @@ ids = [
   # feature-nvdec-order
   "feat-nvd-resolve-words",
   # feature-nvenc-linux
-  "feat-nvl-order",
+  "feat-nvl-422",
+  "feat-nvl-hardware-choice",
   # feature-nvenc-presets
   "feat-nvp-map",
   # feature-pm-window-icon
@@ -171,9 +164,19 @@ ids = [
   # feature-project-package-newer
   "feat-pn-format-vs-project",
   # feature-project-package-trim
-  "feat-pt-handles",
+  "feat-pt-quality",
+  "feat-pt-keyframe-start",
   # feature-project-package
   "feat-pk-shaders",
+  # feature-rs4-cut-page
+  "feat-cut-trim-tool",
+  # feature-rs4-edit-toolbar
+  "feat-etb-badge-lit",
+  "feat-etb-bins",
+  # feature-rs4-resolve-edits
+  "feat-re-replace-vs-ripple",
+  # feature-tarball-menu-entry
+  "feat-tme-own-launcher",
   # feature-updates
   "feat-up-safe-tampered",
   # glossary-1
@@ -190,10 +193,9 @@ ids = [
   "pool-l1-ime",
   "pool-l1-no-sound-status",
   # media-1
-  "pool-m1-drp",
-  "pool-m1-color-bg",
-  "pool-m1-replace-footage",
-  "pool-m1-scene-dissolves",
+  "pool-m1-archive",
+  "pool-m1-subclip",
+  "pool-m1-ripple-speed",
   # pictures-1
   "pool-pic1-clipped-sky",
   # pictures-2
@@ -203,13 +205,15 @@ ids = [
   # practice-10
   "pool-r10-skin-global",
   # practice-2
-  "pool-r2-adjlayer-order",
+  "pool-r2-hue-tear",
   # practice-3
   "pool-r3-faded-banding",
   # practice-4
-  "pool-r4-too-tight",
+  "pool-r4-cut-motion",
+  "pool-r4-lcut-sync",
   # practice-5
-  "pool-r5-thin-voice",
+  "pool-r5-music-level",
+  "pool-r5-rumble",
   # practice-6
   "pool-r6-vertical",
   # practice-7
@@ -222,8 +226,8 @@ ids = [
   "pool-p1-undo-proxy",
   "pool-p1-prores-proxy",
   # start-1
-  "pool-s1-missing-panels",
-  "pool-s1-resolve-keys",
+  "pool-s1-xm5-workflow",
+  "pool-s1-cut-page",
   # tasks-1
   "pool-t1-wrap-archive",
   # tasks-2

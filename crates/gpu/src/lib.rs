@@ -1267,16 +1267,22 @@ impl GpuCompositor {
             None
         };
         let out_view = Self::target(&self.device, &mut self.output, w, h, OUTPUT_FORMAT, wgpu::TextureUsages::COPY_SRC);
-        // Layers whose effects the GPU stage can't run (no stage on this device, or a working image
-        // larger than a texture) are rendered on the CPU here and drawn as plain RGBA layers.
+        // Layers whose effects the GPU stage can't run (no stage on this device, a working image
+        // larger than a texture, or a grade graph whose shader didn't build or whose textures don't
+        // fit the budget) are rendered on the CPU here and drawn as plain RGBA layers.
         let max_side = self.device.limits().max_texture_dimension_2d;
+        if layers.iter().any(|l| l.fx.as_ref().is_some_and(|f| fx::graph::has_graph(&f.ops)))
+            && let Some(f) = self.fx.as_mut()
+        {
+            f.ensure_graph(&self.device);
+        }
         let cpu_fx: Vec<Option<PlanLayer>> = layers
             .iter()
             .map(|l| {
                 // a comp program the GPU couldn't run (too large) runs on the CPU here
                 if l.comp.is_none() {
                     let lfx = l.fx.as_ref()?;
-                    if self.fx.is_some() && lfx.size.0.max(lfx.size.1) <= max_side {
+                    if self.fx.as_ref().is_some_and(|f| f.graphs_fit(&self.device, lfx)) && lfx.size.0.max(lfx.size.1) <= max_side {
                         return None;
                     }
                 }
@@ -1308,7 +1314,7 @@ impl GpuCompositor {
         let mut jobs: Vec<Option<fx::FxJob>> = Vec::with_capacity(layers.len());
         for (l, k) in layers.iter().zip(&keys) {
             // (every frame was just uploaded; a missing upload draws transparent texels)
-            let src = self.src_info(&l.frame, *k).unwrap_or(SrcInfo {
+            let mut src = self.src_info(&l.frame, *k).unwrap_or(SrcInfo {
                 kind: 1,
                 code_scale: 1.0,
                 texel_scale: 1.0,
@@ -1317,7 +1323,7 @@ impl GpuCompositor {
                 size: (l.frame.width, l.frame.height),
                 color: l.frame.color,
             });
-            let views = self.uploads.get(k).map_or_else(|| std::array::from_fn(|_| self.dummy.clone()), |up| up.views.clone());
+            let mut views = self.uploads.get(k).map_or_else(|| std::array::from_fn(|_| self.dummy.clone()), |up| up.views.clone());
             let job = match &l.fx {
                 Some(lfx) => {
                     // the source drawn onto the working image (box-decimated by n, as the CPU decodes)
@@ -1330,6 +1336,20 @@ impl GpuCompositor {
                 }
                 None => None,
             };
+            // a grade graph the stage couldn't route after all (fork C2): the layer's effects on
+            // the CPU, drawn as an RGBA picture, never the layer without its grade
+            let mut on_cpu = false;
+            if job.is_none() && l.fx.as_ref().is_some_and(|f| fx::graph::has_graph(&f.ops)) {
+                let img = l.cpu_image();
+                if img.w.max(img.h) <= max_side as usize {
+                    let frame = Arc::new(VideoFrame::rgba_f32(img.w as u32, img.h as u32, img.px));
+                    let key = self.upload(&frame, None);
+                    if let (Some(info), Some(up)) = (self.src_info(&frame, key), self.uploads.get(&key)) {
+                        log::warn!("a branched grade couldn't run on the GPU; the clip rendered on the CPU");
+                        (src, views, on_cpu) = (info, up.views.clone(), true);
+                    }
+                }
+            }
             // what the layer draws: the effect result (linear premultiplied RGBA) or the frame
             let (u, tex) = match &job {
                 Some(j) => {
@@ -1344,6 +1364,7 @@ impl GpuCompositor {
                     // fallback above rules out; it is then drawn without them, where the working
                     // image would be)
                     let m = match &l.fx {
+                        Some(_) if on_cpu => l.matrix,
                         Some(lfx) => {
                             let n = 1.0 / lfx.decimation.max(1) as f64;
                             l.matrix.then_apply(&filmcraft_geom::Affine::scale(n, n))
@@ -2026,6 +2047,8 @@ mod colorops_tests;
 mod comp_tests;
 #[cfg(test)]
 mod fx_tests;
+#[cfg(test)]
+mod graph_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

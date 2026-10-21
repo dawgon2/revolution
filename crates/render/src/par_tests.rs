@@ -38,6 +38,7 @@ fn halves(w: u32, h: u32, par: (u32, u32)) -> Halves {
         kind: MediaKind::Movie,
         duration: Tick(10 * TICKS_PER_SECOND),
         video: Some(VideoStreamInfo {
+            camera_color_space: None,
             width: w,
             height: h,
             frame_rate: FPS,

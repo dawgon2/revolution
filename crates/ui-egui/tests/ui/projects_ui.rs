@@ -379,3 +379,247 @@ fn a_project_without_a_poster_gets_one_when_listed() {
     assert!(d.element("pageBar.app").is_some());
     d.shot("editor");
 }
+
+impl Driver {
+    /// Frames until `done` holds (background jobs and listings), at most ~10 s.
+    fn until(&mut self, what: &str, done: impl Fn(&Self) -> bool) {
+        for _ in 0..2000 {
+            if done(self) {
+                return;
+            }
+            self.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("timed out waiting for {what}: {}", self.home());
+    }
+}
+
+/// STORAGE-PLAN S2b items 1–3: Send… a project to a saved server from the Project Manager, then
+/// Receive it back through the sidebar's Remote group (it lands relinked in the shown folder and
+/// is selected), and Manage Locations… shows the Settings widget.
+#[test]
+fn send_and_receive_a_project_through_a_location_in_the_project_manager() {
+    send_receive_flow(Workflow::Resolve, "pm-srv");
+}
+
+/// The same in the Premiere workflow (its Project Manager comes from File ▸ Projects…).
+#[test]
+fn send_and_receive_through_a_location_in_the_premiere_workflow() {
+    send_receive_flow(Workflow::Premiere, "pm-srv-pr");
+}
+
+fn send_receive_flow(workflow: Workflow, srv: &str) {
+    use filmcraft_remote::{RemotePath, RemoteStore};
+    let tag = if workflow == Workflow::Resolve { "send-receive" } else { "send-receive-premiere" };
+    let (mut d, _) = Driver::launch(tag, workflow, |dir| {
+        let root = dir.join("Projects");
+        std::fs::create_dir_all(root.join("In")).unwrap();
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        s.execute("file.saveAs", json!({"path": root.join("Trip.fcproj").to_string_lossy()})).unwrap();
+    });
+    let store = filmcraft_engine::remote::test_stores::put(srv);
+    d.harness.state_mut().session.execute("remote.add", json!({"kind": "webDav", "name": "PM Server", "url": "https://pm.test", "id": srv})).unwrap();
+    if !d.open() {
+        d.ok("ui.menu.invoke", json!({"id": "projects.show"}));
+        d.frames(3);
+    }
+    assert!(d.element("projects.send").is_some() && d.element("projects.receive").is_some(), "footer buttons");
+    let tile = (0..4).map(|i| format!("projects.tile.{i}")).find(|id| d.element(id).is_some_and(|e| e["label"] == "Trip")).expect("the Trip tile");
+    d.click(&tile);
+    d.click("projects.send");
+    assert_eq!(d.home()["transfer"]["kind"], "send");
+    d.until("the size estimate", |d| d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| t.estimate.is_some()));
+    d.shot(&format!("{tag}-send"));
+    d.click("projects.transfer.ok");
+    d.until("the upload", |d| d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| t.message.starts_with("Sent:")));
+    d.frames(3);
+    assert!(store.stat(&RemotePath::parse("Trip.revpkg").unwrap()).is_ok_and(|e| e.size > 0), "the package is on the server");
+    d.click("projects.transfer.cancel");
+    assert!(d.home()["transfer"].is_null(), "Close shuts the window");
+
+    // receive it into the In folder, from the sidebar's Remote group
+    d.harness.state_mut().ui.home.folder = "In".into();
+    d.harness.state_mut().ui.home.sidebar = true;
+    d.frames(3);
+    d.click(&format!("projects.sidebar.remote.{srv}"));
+    assert_eq!(d.home()["transfer"]["kind"], "receive");
+    assert!(d.element("projects.transfer.entry.Trip.revpkg").is_some(), "the package is listed");
+    d.click("projects.transfer.entry.Trip.revpkg");
+    d.shot(&format!("{tag}-receive"));
+    d.click("projects.transfer.ok");
+    d.until("the import", |d| {
+        d.harness.state().ui.home.receiving.is_empty() && d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| t.job.is_none() && !t.message.is_empty())
+    });
+    d.frames(3);
+    let msg = d.home()["transfer"]["message"].as_str().unwrap_or_default().to_string();
+    assert!(msg.starts_with("Received:"), "{msg}");
+    let sel = d.harness.state().ui.home.selected.clone().unwrap_or_default();
+    assert!(sel.contains("In") && Path::new(&sel).exists(), "the received project is selected: {sel}");
+    d.click("projects.transfer.cancel");
+
+    // Manage Locations… is the Settings widget
+    d.click("projects.sidebar.manageLocations");
+    assert!(d.element("settings.remote.add.url").is_some() && d.element(&format!("settings.remote.test.{srv}")).is_some());
+    d.shot(&format!("{tag}-locations"));
+    d.click("projects.transfer.close");
+    assert!(d.home()["transfer"].is_null());
+}
+
+/// A saved demo project in `<dir>/Projects/<name>.fcproj` (a separate engine session).
+fn save_demo(dir: &Path, name: &str) -> PathBuf {
+    let root = dir.join("Projects");
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join(format!("{name}.fcproj"));
+    let mut s = Session::default();
+    s.execute("file.openDemoProject", json!({})).unwrap();
+    s.execute("file.saveAs", json!({"path": path.to_string_lossy()})).unwrap();
+    path
+}
+
+impl Driver {
+    /// Opens Receive and starts a nearby receive (no network discovery: one machine); returns
+    /// the code and port the window shows.
+    fn start_nearby_receive(&mut self) -> (String, u16) {
+        self.click("projects.receive");
+        assert_eq!(self.home()["transfer"]["kind"], "receive");
+        self.harness.state_mut().ui.home.transfer.as_mut().unwrap().no_discovery = true;
+        self.click("projects.transfer.nearby");
+        self.until("the code", |d| d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| !t.code.is_empty() && t.port != 0));
+        let t = self.harness.state().ui.home.transfer.clone().unwrap();
+        let shown = self.element("projects.transfer.codeShown").expect("the code on screen");
+        assert_eq!(shown["label"], json!(t.code));
+        (t.code, t.port)
+    }
+    fn wait_offer(&mut self) {
+        self.until("the offer", |d| d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| t.offer.is_some()));
+        assert!(self.element("projects.transfer.accept").is_some() && self.element("projects.transfer.decline").is_some());
+    }
+    fn transfer_message(&self) -> String {
+        self.harness.state().ui.home.transfer.as_ref().map(|t| t.message.clone()).unwrap_or_default()
+    }
+}
+
+/// A sender (its own engine session and data folder) sending `path` to the code at the port.
+fn nearby_sender(code: &str, port: u16, path: &Path) -> (Session, PathBuf) {
+    let dir = tmp("nearby-sender");
+    let mut s = session(&dir, Workflow::Resolve);
+    let v =
+        s.execute("nearby.send", json!({"code": code, "path": path.to_string_lossy(), "address": format!("127.0.0.1:{port}"), "discovery": false})).unwrap();
+    assert!(v["job"].is_u64(), "{v}");
+    (s, dir)
+}
+
+/// STORAGE-PLAN S2b items 4–5: Receive ▸ Receive from a nearby computer shows a code; another
+/// computer sends with it; Accept imports the project into the shown folder and selects it.
+#[test]
+fn receive_a_project_from_a_nearby_computer_with_accept() {
+    let (mut d, _) = Driver::launch("nearby-accept", Workflow::Resolve, |_| {});
+    let (code, port) = d.start_nearby_receive();
+    assert!(d.element("projects.transfer.cancel").is_some());
+    d.shot("nearby-code");
+    let src_dir = tmp("nearby-src");
+    let project = save_demo(&src_dir, "Gift");
+    let (_sender, sender_dir) = nearby_sender(&code, port, &project);
+    d.wait_offer();
+    let offer = d.harness.state().ui.home.transfer.as_ref().unwrap().offer.clone().unwrap();
+    assert!(offer.package.contains("Gift") && offer.bytes > 0, "{offer:?}");
+    d.shot("nearby-offer");
+    d.click("projects.transfer.accept");
+    d.until("the import", |d| {
+        d.harness.state().ui.home.receiving.is_empty() && d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| t.job.is_none() && !t.message.is_empty())
+    });
+    d.frames(3);
+    let msg = d.transfer_message();
+    assert!(msg.starts_with("Received:") && msg.contains("Gift"), "{msg}");
+    let sel = d.harness.state().ui.home.selected.clone().unwrap_or_default();
+    assert!(sel.contains("Gift") && Path::new(&sel).starts_with(d.root()) && Path::new(&sel).exists(), "the received project is selected: {sel}");
+    d.click("projects.transfer.cancel");
+    assert!(d.home()["transfer"].is_null(), "Close shuts the window");
+    let _ = std::fs::remove_dir_all(src_dir);
+    let _ = std::fs::remove_dir_all(sender_dir);
+}
+
+/// Decline: nothing is written, the window says so.
+#[test]
+fn decline_a_project_from_a_nearby_computer() {
+    let (mut d, _) = Driver::launch("nearby-decline", Workflow::Resolve, |_| {});
+    let (code, port) = d.start_nearby_receive();
+    let src_dir = tmp("nearby-src-decline");
+    let project = save_demo(&src_dir, "Unwanted");
+    let (_sender, sender_dir) = nearby_sender(&code, port, &project);
+    d.wait_offer();
+    d.click("projects.transfer.decline");
+    d.until("the end of the receive", |d| {
+        d.harness.state().ui.home.receiving.is_empty() && d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| t.job.is_none())
+    });
+    d.frames(3);
+    let msg = d.transfer_message();
+    assert!(msg.contains("declined"), "{msg}");
+    let listing = d.exec("projects.list", json!({}));
+    assert!(listing["projects"].as_array().is_none_or(|p| p.is_empty()), "nothing imported: {listing}");
+    assert!(d.harness.state().ui.home.selected.is_none());
+    // Receive from a nearby computer is offered again
+    assert!(d.element("projects.transfer.nearby").is_some());
+    d.click("projects.transfer.cancel");
+    assert!(d.home()["transfer"].is_null());
+    let _ = std::fs::remove_dir_all(src_dir);
+    let _ = std::fs::remove_dir_all(sender_dir);
+}
+
+/// The code with two words swapped (still valid words, so it is the key exchange that fails).
+fn wrong_code(code: &str) -> Option<String> {
+    let parts: Vec<&str> = code.split('-').collect();
+    let [n, a, b, c] = parts.as_slice() else { return None };
+    if a != c {
+        Some(format!("{n}-{c}-{b}-{a}"))
+    } else if a != b {
+        Some(format!("{n}-{b}-{a}-{c}"))
+    } else {
+        None
+    }
+}
+
+/// Send ▸ Nearby computer, with no saved servers: a wrong code against a receiving computer
+/// says the code didn't match.
+#[test]
+fn send_to_a_nearby_computer_with_a_wrong_code() {
+    let (mut d, _) = Driver::launch("nearby-send", Workflow::Resolve, |dir| {
+        save_demo(dir, "Trip");
+    });
+    let rx_dir = tmp("nearby-rx");
+    let mut rx = session(&rx_dir, Workflow::Resolve);
+    let mut started = None;
+    for _ in 0..5 {
+        let v = rx.execute("nearby.receive", json!({"discovery": false})).unwrap();
+        let code = v["code"].as_str().unwrap().to_string();
+        if let Some(w) = wrong_code(&code) {
+            started = Some((w, v["port"].as_u64().unwrap()));
+            break;
+        }
+        rx.execute("nearby.stop", json!({})).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    let (wrong, port) = started.expect("a code with two different words");
+    let tile = (0..4).map(|i| format!("projects.tile.{i}")).find(|id| d.element(id).is_some_and(|e| e["label"] == "Trip")).expect("the Trip tile");
+    d.click(&tile);
+    d.click("projects.send");
+    assert_eq!(d.home()["transfer"]["kind"], "send");
+    assert!(d.element("projects.transfer.manage").is_some(), "the add-a-server hint stays");
+    d.click("projects.transfer.nearby");
+    assert!(d.element("projects.transfer.code").is_some() && d.element("projects.transfer.address").is_some() && d.element("projects.transfer.find").is_some());
+    {
+        let t = d.harness.state_mut().ui.home.transfer.as_mut().unwrap();
+        assert!(t.nearby);
+        t.code = wrong;
+        t.address = format!("127.0.0.1:{port}");
+        t.no_discovery = true;
+    }
+    d.frames(3);
+    d.shot("nearby-send");
+    d.click("projects.transfer.ok");
+    d.until("the refusal", |d| d.harness.state().ui.home.transfer.as_ref().is_some_and(|t| t.job.is_none() && t.message.contains("didn't match")));
+    d.shot("nearby-send-wrong");
+    let _ = rx.execute("nearby.stop", json!({}));
+    let _ = std::fs::remove_dir_all(rx_dir);
+}

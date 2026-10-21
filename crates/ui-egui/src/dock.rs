@@ -58,9 +58,15 @@ pub enum PanelKind {
     RenderSettings,
     /// Resolve workflow's Deliver page (fork RS3): the export queue as a panel (not in `ALL`).
     RenderQueue,
+    /// Resolve workflow's Cut page (fork RS4): its fast-edit toolbar over the upper (whole) and
+    /// lower (zoomed, playhead in the middle) timelines (not in `ALL`).
+    CutTimeline,
     /// The assistant's chat (fork AI3, FORK-PLAN §1a.78): opened floating by the Assistant button
     /// in the page bar / header, dockable like any panel.
     Assistant,
+    /// Resolve workflow's Inspector (fork RS4.2): the selected clip's settings in Resolve's
+    /// layout (tabs, sections); the page toolbar's Inspector toggle opens it (not in `ALL`).
+    Inspector,
 }
 
 impl PanelKind {
@@ -102,7 +108,7 @@ impl PanelKind {
         PanelKind::Assistant,
     ];
     /// Panels only the Resolve workflow's pages use (fork RS3), kept out of [`PanelKind::ALL`].
-    pub const RESOLVE_ONLY: [PanelKind; 2] = [PanelKind::RenderSettings, PanelKind::RenderQueue];
+    pub const RESOLVE_ONLY: [PanelKind; 4] = [PanelKind::RenderSettings, PanelKind::RenderQueue, PanelKind::CutTimeline, PanelKind::Inspector];
     pub fn title(self) -> &'static str {
         match self {
             PanelKind::Project => "Project",
@@ -141,7 +147,9 @@ impl PanelKind {
             PanelKind::ColorClips => "Clips",
             PanelKind::RenderSettings => "Render Settings",
             PanelKind::RenderQueue => "Render Queue",
+            PanelKind::CutTimeline => "Cut Timeline",
             PanelKind::Assistant => "Assistant",
+            PanelKind::Inspector => "Inspector",
         }
     }
     pub fn id(self) -> String {
@@ -226,7 +234,8 @@ pub const WORKSPACES: [&str; 11] =
 /// The Resolve workflow's page layouts (fork RS3), built-in workspaces listed only in that
 /// workflow: (workspace, the Premiere-workflow workspace it stands for). The Color page is the
 /// existing Color Grading workspace (GRADE-PLAN G1.8).
-pub const PAGE_WORKSPACES: [(&str, &str); 4] = [("Media Page", "Assembly"), ("Edit Page", "Editing"), ("Fairlight Page", "Audio"), ("Deliver Page", "Editing")];
+pub const PAGE_WORKSPACES: [(&str, &str); 5] =
+    [("Media Page", "Assembly"), ("Cut Page", "Editing"), ("Edit Page", "Editing"), ("Fairlight Page", "Audio"), ("Deliver Page", "Editing")];
 
 /// The user's workspaces file, beside `preferences.json` in the data directory.
 pub const WORKSPACES_FILE: &str = "workspaces.json";
@@ -504,19 +513,28 @@ pub fn workspace(name: &str) -> DockNode {
             vsplit(Ratio(0.55), hsplit(Ratio(0.42), tabs(&[MediaBrowser], 0), tabs(&[Source], 0)), tabs(&[Project], 0)),
             vsplit(Ratio(0.7), tabs(&[Metadata, Info], 0), tabs(&[AudioMeters], 0)),
         ),
+        // fork RS4, the Cut page (from observation of Resolve 21's): the media pool and the
+        // timeline viewer side by side over the Cut timeline (fast edits, the whole timeline,
+        // the zoomed-in timeline), the audio meters beside the viewer.
+        "Cut Page" => vsplit(
+            Ratio(0.5),
+            hsplit(Ratio(0.5), tabs(&[Project], 0), hsplit(FixedB(40.0), tabs(&[Program], 0), tabs(&[AudioMeters], 0))),
+            tabs(&[CutTimeline], 0),
+        ),
         // Edit: the media pool (bins) down the left; source and timeline viewers side by side over
         // the timeline. The Inspector opens on the right from the page's toolbar.
         "Edit Page" => hsplit(
             FixedA(440.0),
             tabs(&[Project, Effects, Markers], 0),
-            vsplit(Ratio(0.5), hsplit(Ratio(0.5), tabs(&[Source], 0), tabs(&[Program], 0)), hsplit(FixedA(48.0), tabs(&[Tools], 0), tabs(&[Timeline], 0))),
+            // fork RS4: Resolve's timeline toolbar holds the tools (no Tools panel)
+            vsplit(Ratio(0.5), hsplit(Ratio(0.5), tabs(&[Source], 0), tabs(&[Program], 0)), tabs(&[Timeline], 0)),
         ),
         // Fairlight: a strip across the top (a small viewer, then the meters with the loudness
         // readout), the timeline under it, the mixer on the right.
         "Fairlight Page" => vsplit(
             FixedA(270.0),
             hsplit(FixedB(220.0), tabs(&[Program], 0), tabs(&[AudioMeters], 0)),
-            hsplit(FixedB(360.0), hsplit(FixedA(48.0), tabs(&[Tools], 0), tabs(&[Timeline], 0)), tabs(&[AudioTrackMixer, EssentialSound], 0)),
+            hsplit(FixedB(360.0), tabs(&[Timeline], 0), tabs(&[AudioTrackMixer, EssentialSound], 0)),
         ),
         // Deliver: render settings down the left; the viewer and the render queue over the
         // timeline.

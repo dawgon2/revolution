@@ -216,7 +216,7 @@ id = "pool-c3-move-node-drag"
 kind = "gap"
 q = "can I drag a node to reorder it?"
 sources = ["color.nodes.reorder"]
-must = ["no drag yet", "grade.moveNode (node, to) from the control channel, MCP or command list"]
+must = ["dragging a node only moves its box on the canvas, not its place in the order", "grade.moveNode (node, to) from the control channel, MCP or command list"]
 must_not = ["claims nodes can be dragged"]
 style = "gap"
 
@@ -303,11 +303,11 @@ style = "resolve-words"
 
 [[question]]
 id = "pool-c3-splitter"
-kind = "gap"
+kind = "tool"
 q = "is there a splitter / combiner node to grade channels separately?"
-sources = ["color.nodes.later", "color.nodes.resolve"]
-must = ["not yet: splitter / combiner nodes are planned with parallel, layer, outside and key-mixer nodes"]
-must_not = ["invents a splitter node"]
+sources = ["color.nodes.splitter", "color.nodes.resolve"]
+must = ["Add Splitter / Combiner Nodes (grade.addSplitter): a splitter, Red, Green and Blue nodes and a combiner"]
+must_not = ["says the splitter is missing"]
 style = "resolve-words"
 
 # ---------- keyword-coach format ----------
@@ -443,7 +443,7 @@ q = "layer node"
 kind = "resolve-word"
 origin = "agent"
 page = "color/nodes.md"
-heading = "Later: parallel and layer nodes (C2)"
+heading = "Layer nodes for looks"
 alt = [{ page = "color/nodes.md", heading = "If you know Resolve" }]
 status = "covered"
-facts = ["planned"]
+facts = ["Add Layer Node", "opacity"]

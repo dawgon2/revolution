@@ -307,6 +307,7 @@ fn answer(app: &mut FilmcraftApp, ui: &mut egui::Ui, n: usize, result: Option<&V
         _ => {}
     }
     super::coach::seen_lines(app, ui, a, &format!("assistant.seen.{n}"));
+    super::coach::reference_block(app, ui, a, &format!("assistant.reference.{n}"), &format!("assistant.doThis.{n}"));
     if a["source"] != "model" {
         let why = match a["fallback"]["kind"].as_str() {
             Some("notReady") => tl!("The assistant can't run here yet (its model isn't installed or this build has none). The guide's answer:"),

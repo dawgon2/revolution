@@ -512,5 +512,6 @@ kind = "resolve-word"
 origin = "agent"
 page = "mixing.md"
 heading = "The Audio Track Mixer"
+alt = [{ page = "pages.md", heading = "The pages and their panels" }]
 status = "covered"
 facts = ["Audio Track Mixer"]

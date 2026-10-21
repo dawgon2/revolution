@@ -9,6 +9,8 @@
 pub(crate) mod http;
 pub mod lock;
 pub mod memory;
+#[cfg(feature = "nearby")]
+pub mod nearby;
 mod path;
 #[cfg(feature = "net")]
 pub mod s3;

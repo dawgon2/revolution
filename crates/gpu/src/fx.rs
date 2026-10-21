@@ -27,6 +27,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use filmcraft_render::gpufx::FxOp;
 use filmcraft_render::plan::LayerFx;
 
+pub(crate) mod graph;
+
 /// Working texture format (full precision; [`FX_FORMAT_HALF`] on integrated GPUs).
 pub(crate) const FX_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// Working texture format on integrated GPUs ([`fx_format_for`]).
@@ -177,6 +179,9 @@ pub(crate) struct FxStage {
     interpret_only: bool,
     /// Fuse passes ([`fuse_passes`]; tests compare with the unfused passes).
     fuse: bool,
+    /// The grade graph pipeline (None: not built yet; Some(None): it failed, graphs render on
+    /// the CPU).
+    graph: Option<Option<graph::GraphPipe>>,
 }
 
 /// Specialised chain pipelines kept at most (the cache is cleared when full).
@@ -313,6 +318,8 @@ enum Pipe {
     Temporal,
     /// A user shader effect (its pipeline is the dispatch's `special`).
     User,
+    /// A grade graph pass (`fx/graph.wgsl`; its pipeline is the dispatch's `special`).
+    Graph,
 }
 
 /// One compute pass of a job.
@@ -435,6 +442,8 @@ struct Step {
     temporal: Option<usize>,
     /// A user shader effect's pass (its own module and bind group layout).
     user: Option<Box<filmcraft_render::gpufx::UserOp>>,
+    /// A branched grade's program (fork C2): routed by [`FxStage::route_graph`].
+    graph: Option<Arc<filmcraft_render::grade::GradeProgram>>,
 }
 
 fn step(code: u32, i1: [u32; 4], p: &[f32]) -> Step {
@@ -455,6 +464,7 @@ fn step(code: u32, i1: [u32; 4], p: &[f32]) -> Step {
         restore: false,
         temporal: None,
         user: None,
+        graph: None,
     }
 }
 
@@ -656,6 +666,12 @@ fn steps(op: &FxOp) -> Vec<Step> {
         }
         // (built by `FxStage::job`, which has the neighbours' bind groups)
         FxOp::TemporalDenoise { .. } => {}
+        // (its passes on the job's textures: `graph.rs`)
+        FxOp::GradeGraph(p) => {
+            let mut s = step(0, [0; 4], &[]);
+            s.graph = Some(Arc::clone(p));
+            out.push(s);
+        }
         FxOp::User(u) => {
             let mut s = step(0, [0; 4], &[]);
             s.user = Some(u.clone());
@@ -908,6 +924,7 @@ impl FxStage {
             timestamps: device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
             interpret_only: false,
             fuse: fuse_passes(),
+            graph: None,
         }
     }
 
@@ -1019,13 +1036,23 @@ impl FxStage {
         // the working textures must fit the budget: temporal ops degrade to ±1, then are skipped
         let px_bytes = u64::from(w).saturating_mul(u64::from(h)).saturating_mul(texel_bytes(self.format));
         let wanted = fx.ops.iter().any(|o| matches!(o, FxOp::TemporalDenoise { inputs: Some(_), .. }));
+        let fuse = self.fuse && self.box3.is_some();
+        // a grade graph (fork C2) needs its pipeline and textures for its slots
+        if graph::has_graph(&fx.ops) && !self.ensure_graph(device) {
+            return None;
+        }
         let mut chosen = None;
         for cap in [filmcraft_render::tnr::MAX_RADIUS, 1, 0] {
-            let (all, specs) = plan_steps(fx, neighbours, max, cap, self.fuse && self.box3.is_some());
+            let (all, specs) = plan_steps(fx, neighbours, max, cap, fuse);
             let n_main = textures_for(&all);
             // per temporal op: a (Y, Cb, Cr, α) texture per neighbour plus scratch for its replay
             let extra = specs.iter().map(|t| t.nbrs.len() + if t.pre.is_empty() { 1 } else { textures_for(&t.pre) }).max().unwrap_or(0);
-            let bytes = px_bytes.saturating_mul((n_main + extra) as u64);
+            let g_extra = graph::textures_needed(&all, fuse).saturating_sub(n_main);
+            let bytes = px_bytes.saturating_mul((n_main + extra + g_extra) as u64);
+            if cap == 0 && g_extra > 0 && bytes > self.budget {
+                // (`graphs_fit` sent such a layer to the CPU; never drawn without its grade)
+                return None;
+            }
             if bytes <= self.budget || cap == 0 {
                 if wanted && cap < filmcraft_render::tnr::MAX_RADIUS {
                     log::warn!(
@@ -1034,17 +1061,18 @@ impl FxStage {
                         if cap == 0 { "skipped (identity)" } else { "limited to ±1 frame" }
                     );
                 }
-                chosen = Some((all, specs, n_main, extra));
+                chosen = Some((all, specs, n_main, extra, g_extra));
                 break;
             }
         }
-        let (all, specs, n_main, extra) = chosen?;
-        let targets = self.targets(device, (w, h), n_main + extra);
+        let (all, specs, n_main, extra, g_extra) = chosen?;
+        let targets = self.targets(device, (w, h), n_main + extra + g_extra);
         let views: Vec<wgpu::TextureView> = targets.iter().map(|t| t.1.clone()).collect();
         let main: Vec<usize> = (0..n_main).collect();
         let spare: Vec<usize> = (n_main..n_main + extra).collect();
+        let pool: Vec<usize> = main.iter().copied().chain(n_main + extra..n_main + extra + g_extra).collect();
         let mut work = vec![Work::Source { bg: source_bg, target: views.first()?.clone() }];
-        let cx = RouteCx { device, queue, views: &views, size: (w, h), dummy, specs: &specs, spare: &spare };
+        let cx = RouteCx { device, queue, views: &views, size: (w, h), dummy, specs: &specs, spare: &spare, pool: &pool, fuse };
         let cur = self.route(&cx, &all, &main, 0, &mut work)?;
         let timing = self.user_timing(device, queue, &mut work, u64::from(w) * u64::from(h));
         Some(FxJob { work, result: views.get(cur)?.clone(), result_texture: targets.get(cur)?.0.clone(), timing })
@@ -1136,6 +1164,12 @@ impl FxStage {
         for s in steps {
             if s.save {
                 saved = Some(cur);
+                continue;
+            }
+            if let Some(p) = &s.graph {
+                // (the image a masked effect or a combine keeps stays untouched)
+                let keep: Vec<usize> = [saved, orig].into_iter().flatten().collect();
+                cur = self.route_graph(cx, p, cur, &keep, work)?;
                 continue;
             }
             // a user effect whose module doesn't build is skipped (the image passes through)
@@ -1557,8 +1591,8 @@ impl FxStage {
                                 Pipe::ChainMasked => &self.chain_masked,
                                 Pipe::Mask => &self.mask,
                                 Pipe::Temporal => &self.temporal,
-                                // (always has its pipeline in `special`)
-                                Pipe::User => &self.px,
+                                // (always have their pipeline in `special`)
+                                Pipe::User | Pipe::Graph => &self.px,
                             },
                         });
                         pass.set_bind_group(0, &d.bg, &[]);
@@ -1589,6 +1623,10 @@ struct RouteCx<'a> {
     specs: &'a [TemporalSpec],
     /// Textures beyond the main chain's (the temporal neighbours' and their scratch).
     spare: &'a [usize],
+    /// The textures a grade graph may use (the main chain's and the graph's own).
+    pool: &'a [usize],
+    /// Whether passes are fused (as the layer's own).
+    fuse: bool,
 }
 
 #[cfg(test)]

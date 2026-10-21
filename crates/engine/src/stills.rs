@@ -26,6 +26,10 @@ type Run = fn(&mut Session, &Value) -> Result<Value>;
 const MAX_DECODE_DIM: u32 = 4096;
 /// The largest picture file read, in bytes.
 const MAX_FILE_BYTES: u64 = 64 << 20;
+/// The widest / tallest reference picture `stills.import` decodes (a 6.2K camera JPEG fits).
+const MAX_IMPORT_DIM: u32 = 16_384;
+/// The most bytes decoding one reference picture may allocate.
+const MAX_IMPORT_ALLOC: u64 = 512 << 20;
 
 /// How the Program monitor compares the live frame with a still.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +91,7 @@ fn spec(
 pub(crate) fn commands() -> Vec<CommandSpec> {
     vec![
         spec("stills.grab", "Grab Still", r#"{"clip":id?,"label":str?}"#, has_seq, grab, true),
+        spec("stills.import", "Import Reference Still", r#"{"path":path,"label":str?}"#, always, import, true),
         spec("stills.list", "List Stills", "{}", always, list, false),
         spec("stills.apply", "Apply Still Grade", r#"{"still":id,"clips":[id]?}"#, has_seq, apply, true),
         spec("stills.delete", "Delete Still", r#"{"still":id}"#, always, delete, true),
@@ -306,6 +311,104 @@ fn grab(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "still": new_id, "picture": saved, "width": w, "height": h }))
 }
 
+/// REF.1: bring in a reference picture (PNG / JPEG / TIFF / … through the media crate's
+/// decoders, size-capped) as a still without a clip or a grade. Its picture is stored like a
+/// grab's (at most [`MAX_STILL_WIDTH`] wide); it can be compared against (`compare.set`) and
+/// matched to (`grade.shotMatch` with `still`), never applied as a grade. The picture stays on
+/// this machine (the stills folder); only its label is in the project.
+fn import(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "stills.import";
+    if cfg!(target_arch = "wasm32") {
+        return Err(bad(CMD, "reference pictures need files (not on the web)"));
+    }
+    if s.project.stills.len() >= MAX_STILLS {
+        return Err(bad(CMD, format!("a project holds at most {MAX_STILLS} stills")));
+    }
+    let path = PathBuf::from(str_p(p, "path").ok_or_else(|| bad(CMD, "need `path` (a picture file)"))?);
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let size = std::fs::metadata(&path).map_err(|e| bad(CMD, format!("can't read {name}: {e}")))?.len();
+    if size > MAX_FILE_BYTES {
+        return Err(bad(CMD, format!("{name} is larger than {} MB", MAX_FILE_BYTES >> 20)));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| bad(CMD, format!("can't read {name}: {e}")))?;
+    if !filmcraft_media::still::sniff(&name, &bytes) {
+        return Err(bad(CMD, format!("{name} is not a picture FilmCraft reads (PNG, JPEG, TIFF, WebP, BMP, GIF, Targa, DPX)")));
+    }
+    // a decoder bug on a hostile file must not take the editor down
+    let decoded = std::panic::catch_unwind(|| filmcraft_media::still::decode_raster_capped(&name, &bytes, MAX_IMPORT_DIM, MAX_IMPORT_ALLOC));
+    let raster = match decoded {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Err(bad(CMD, format!("can't read the picture: {e}"))),
+        Err(_) => return Err(bad(CMD, format!("can't read the picture {name} (damaged file)"))),
+    };
+    let img = image::RgbaImage::from_raw(raster.width, raster.height, raster.rgba).ok_or_else(|| bad(CMD, "the picture is empty"))?;
+    let img = fit_picture(img);
+    let (w, h) = img.dimensions();
+    let label = match str_p(p, "label") {
+        Some(l) => clean_label(l),
+        None => clean_label(path.file_stem().map(|n| n.to_string_lossy()).as_deref().unwrap_or("Reference")),
+    };
+    let dir = s.stills_write_dir().ok_or_else(|| bad(CMD, "couldn't make the stills folder"))?;
+    // written first, under a temporary name: a still without its picture never exists (a
+    // reference picture can't be re-rendered)
+    let nonce_name = format!(
+        ".import-{}-{:x}.png",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    );
+    let staged = dir.join(nonce_name);
+    img.save(&staged).map_err(|e| bad(CMD, format!("couldn't store the picture in the stills folder: {e}")))?;
+    let mut new_id = 0;
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)).unwrap_or(0);
+    let edited = s.edit("Import Reference Still", |pr, _| {
+        let id = pr.alloc_id();
+        new_id = id;
+        let nonce = pr.stills.iter().map(|x| x.nonce).max().map_or(0, |m| m.saturating_add(1)).max(nanos);
+        pr.stills.push(Still {
+            id,
+            label,
+            clip: None,
+            clip_name: String::new(),
+            sequence: None,
+            time: filmcraft_time::Tick::ZERO,
+            grade: None,
+            width: w,
+            height: h,
+            nonce,
+        });
+        Ok(())
+    });
+    if let Err(e) = edited {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
+    let file = s.project.stills.iter().find(|x| x.id == new_id).map(Still::file_name).unwrap_or_default();
+    for d in s.stills_dirs() {
+        let _ = std::fs::remove_file(d.join(&file));
+    }
+    if std::fs::rename(&staged, dir.join(&file)).is_err() {
+        // (rare: the folder changed under us) take the still back out, leaving no Redo for it
+        let _ = std::fs::remove_file(&staged);
+        let _ = s.undo();
+        s.history.redo.pop();
+        return Err(bad(CMD, "couldn't store the picture in the stills folder"));
+    }
+    Ok(json!({ "still": new_id, "width": w, "height": h }))
+}
+
+/// Scale a picture down (never up) so its longer side is at most [`MAX_STILL_WIDTH`].
+fn fit_picture(img: image::RgbaImage) -> image::RgbaImage {
+    let (w, h) = img.dimensions();
+    let long = w.max(h);
+    if long <= MAX_STILL_WIDTH {
+        return img;
+    }
+    let f = MAX_STILL_WIDTH as f64 / long as f64;
+    let nw = ((w as f64 * f).round() as u32).clamp(1, MAX_STILL_WIDTH);
+    let nh = ((h as f64 * f).round() as u32).clamp(1, MAX_STILL_WIDTH);
+    image::imageops::resize(&img, nw, nh, image::imageops::FilterType::Triangle)
+}
+
 fn list(s: &mut Session, _: &Value) -> Result<Value> {
     let dirs = s.stills_dirs();
     let rows: Vec<Value> = s
@@ -317,6 +420,7 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
             json!({
                 "id": st.id, "label": st.label, "clip": st.clip.map(|c| c.0), "clipName": st.clip_name,
                 "sequence": st.sequence.map(|q| q.0), "time": st.time.0, "graded": st.grade.is_some(), "nodes": nodes,
+                "reference": st.is_reference(),
                 "width": st.width, "height": st.height,
                 "picture": dirs.iter().any(|d| d.join(st.file_name()).is_file()),
             })
@@ -328,6 +432,9 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
 fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "stills.apply";
     let st = find(s, still_id(p, CMD)?, CMD)?;
+    if st.is_reference() {
+        return Err(bad(CMD, "a reference picture has no grade to apply; match to it with Shot Match (`grade.shotMatch` with `still`)"));
+    }
     let targets = grade_targets(s, p, CMD, None)?;
     let n = edit_grades(s, &targets, "Apply Still Grade", |slot| *slot = st.grade.clone())?;
     Ok(json!({ "clips": n }))

@@ -252,6 +252,11 @@ fn coach_state_settles_a_step_whose_condition_became_true() {
     // face, a noisy shot, a reference) always wait for the click
     for l in crate::coach::bundled() {
         let any = l.steps.iter().any(|st| st.already.is_some());
-        assert_eq!(any, ["first-grade", "nodes-and-flow", "which-node"].contains(&l.id.as_str()), "{}", l.id);
+        assert_eq!(
+            any,
+            ["first-grade", "nodes-and-flow", "which-node", "parallel-nodes", "layer-look", "splitter-combiner"].contains(&l.id.as_str()),
+            "{}",
+            l.id
+        );
     }
 }

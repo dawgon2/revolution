@@ -117,7 +117,7 @@ normal translation.
 | Compound Clip (New Compound Clip…) | Nest |
 | Media Pool | Project panel |
 | Source Viewer / Timeline Viewer | Source Monitor / Program Monitor |
-| Inspector | Effect Controls |
+| Keyframes (the panel with the keyframe lane; the Inspector is a panel of its own) | Effect Controls |
 | Mixer | Audio Track Mixer |
 | Render Settings, Render Queue (Add to Render Queue) | Export Options, export queue (Send to Queue) |
 | Blade Tool | Razor Tool |
@@ -192,8 +192,8 @@ always keeps its own window buttons.
 2. **Import the copy** (File ▸ Import, `file.import`): the clips are H.265 (HEVC) `.MOV` files,
    10-bit.
 3. **Check the colour.** F-Log2 clips are meant to look flat and grey before you grade them.
-   Revolution reads the colour space from the file; if a clip looks wrong after grading starts,
-   set it by hand with Interpret Footage ▸ **Fujifilm F-Log2 / F-Gamut** (`clip.interpretFootage`,
+   Revolution reads the colour space from the file, including the F-Log / F-Log2 profile the
+   X-M5 writes into its own metadata; if a clip looks wrong after grading starts, set it by hand with Interpret Footage ▸ **Fujifilm F-Log2 / F-Gamut** (`clip.interpretFootage`,
    see [color/color-management.md](color/color-management.md)).
 4. **Let the proxies build.** Heavy clips such as 6.2K get a smaller proxy in the background while
    you work ([proxies.md](proxies.md)); nothing waits for them.

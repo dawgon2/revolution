@@ -262,6 +262,7 @@ impl MpegSource {
                 None => {
                     src.unsupported_video = Some(format!("{} video in {} (Revolution has no decoder for it)", st.codec.name(), file.format.name()));
                     src.info.video = Some(VideoStreamInfo {
+                        camera_color_space: None,
                         width: 0,
                         height: 0,
                         frame_rate: FrameRate::FPS_25,
@@ -461,6 +462,7 @@ impl MpegSource {
         }
         self.info.duration = duration;
         self.info.video = Some(VideoStreamInfo {
+            camera_color_space: None,
             width,
             height,
             frame_rate: rate,

@@ -24,6 +24,11 @@ pub struct NodeView {
     /// Shown on the node (e.g. "cycle" on the output node).
     pub error: Option<String>,
     pub is_output: bool,
+    /// Bit `i` set: input port `i` carries a key (a matte), drawn as a green triangle (Resolve's
+    /// key ports); clear: a picture port, a round dot.
+    pub key_inputs: u32,
+    /// Bit `i` set: output port `i` carries a key.
+    pub key_outputs: u32,
 }
 
 /// A connection from an output port to an input port, as (node, port).
@@ -39,6 +44,16 @@ pub struct CanvasGraph {
     pub nodes: Vec<NodeView>,
     pub edges: Vec<EdgeView>,
     pub add_kinds: Vec<(String, String)>,
+    /// Extra entries of a node's right-click menu as (key, label), after the built-in ones; a
+    /// click gives [`CanvasEvent::NodeAction`].
+    pub node_actions: Vec<(String, String)>,
+    /// Extra entries of the background menu as (key, label), after the add entries (e.g. the
+    /// grade canvas's Reset Layout); a click gives [`CanvasEvent::CanvasAction`]. Automation ids
+    /// `<ns>.menu.<key>`.
+    pub canvas_actions: Vec<(String, String)>,
+    /// Register automation ids only for the nodes, ports and connections on screen (a graph
+    /// wider than its panel, like a long serial grade).
+    pub on_screen_ids: bool,
 }
 
 /// The canvas's view state (serde, so the control channel can read and set it).
@@ -80,6 +95,13 @@ pub enum CanvasEvent {
     Delete(Vec<u64>),
     SetOutput(u64),
     View(u64),
+    /// An entry of [`CanvasGraph::node_actions`] chosen on a node.
+    NodeAction {
+        node: u64,
+        action: String,
+    },
+    /// An entry of [`CanvasGraph::canvas_actions`] chosen on the background.
+    CanvasAction(String),
 }
 
 const NODE_W: f32 = 136.0;
@@ -93,6 +115,14 @@ fn node_size(n: &NodeView) -> Vec2 {
     let rows = n.inputs.len().max(n.outputs.len()).max(1) as f32;
     vec2(NODE_W, HEADER + ROW * rows + 6.0)
 }
+
+/// Whether bit `i` of a port mask is set.
+fn is_key(mask: u32, i: usize) -> bool {
+    u32::try_from(i).ok().and_then(|i| mask.checked_shr(i)).is_some_and(|m| m & 1 == 1)
+}
+
+/// The colour of key ports and key connections.
+const KEY_GREEN: Color32 = Color32::from_rgb(0x5c, 0xc0, 0x5a);
 
 fn finite_or(v: f32, d: f32) -> f32 {
     if v.is_finite() { v } else { d }
@@ -122,6 +152,27 @@ impl View {
         let y = r.min.y + (HEADER + ROW * (i as f32 + 0.5)) * self.zoom;
         pos2(if input { r.min.x } else { r.max.x }, y)
     }
+}
+
+/// Zooms (at most 1:1, at least the smallest zoom) and pans `state` so the whole graph fits a
+/// canvas of `size` points with a small margin.
+pub fn fit(state: &mut CanvasState, graph: &CanvasGraph, size: Vec2) {
+    const MARGIN: f32 = 20.0;
+    let (mut min, mut max) = (vec2(f32::MAX, f32::MAX), vec2(f32::MIN, f32::MIN));
+    for n in &graph.nodes {
+        let p = vec2(finite_or(n.pos[0], 0.0), finite_or(n.pos[1], 0.0));
+        min = min.min(p);
+        max = max.max(p + node_size(n));
+    }
+    if graph.nodes.is_empty() {
+        *state = CanvasState { selection: std::mem::take(&mut state.selection), viewed: state.viewed, ..Default::default() };
+        return;
+    }
+    let span = max - min;
+    let avail = size - Vec2::splat(MARGIN * 2.0);
+    let zoom = (avail.x / span.x.max(1.0)).min(avail.y / span.y.max(1.0));
+    state.zoom = finite_or(zoom, 1.0).clamp(MIN_ZOOM, 1.0);
+    state.pan = [finite_or(MARGIN / state.zoom - min.x, 0.0), finite_or(MARGIN / state.zoom - min.y, 0.0)];
 }
 
 /// Draws the graph and returns what the user did. `ns` prefixes every automation id
@@ -181,9 +232,12 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
         let (Some(a), Some(b)) = (node(e.from.0), node(e.to.0)) else { continue };
         let (p0, p3) = (view.port(a, false, usize::from(e.from.1)), view.port(b, true, usize::from(e.to.1)));
         let dx = ((p3.x - p0.x).abs() * 0.5).max(30.0 * state.zoom);
-        painter.add(CubicBezierShape::from_points_stroke([p0, p0 + vec2(dx, 0.0), p3 - vec2(dx, 0.0), p3], false, Color32::TRANSPARENT, edge_stroke));
+        let stroke = if is_key(a.key_outputs, usize::from(e.from.1)) { Stroke::new(edge_stroke.width, KEY_GREEN) } else { edge_stroke };
+        painter.add(CubicBezierShape::from_points_stroke([p0, p0 + vec2(dx, 0.0), p3 - vec2(dx, 0.0), p3], false, Color32::TRANSPARENT, stroke));
         let mid = pos2((p0.x + p3.x) / 2.0, (p0.y + p3.y) / 2.0);
-        reg.add(&format!("{ns}.edge.{}-{}.{}", e.from.0, e.to.0, e.to.1), Rect::from_center_size(mid, vec2(8.0, 8.0)), "Connection");
+        if !graph.on_screen_ids || rect.contains(mid) {
+            reg.add(&format!("{ns}.edge.{}-{}.{}", e.from.0, e.to.0, e.to.1), Rect::from_center_size(mid, vec2(8.0, 8.0)), "Connection");
+        }
     }
 
     // nodes
@@ -195,7 +249,10 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
     for n in &graph.nodes {
         let r = view.node_rect(n);
         let resp = ui.interact(r, base.with(("node", n.id)), Sense::click_and_drag());
-        reg.add_response(&format!("{ns}.node.{}", n.id), &resp, &n.title);
+        // (only nodes on screen register)
+        if !graph.on_screen_ids || r.intersects(rect) {
+            reg.add_response(&format!("{ns}.node.{}", n.id), &resp, &n.title);
+        }
         let selected = state.selection.contains(&n.id);
         // dragging: the position accumulates in temp memory so rounding never drifts
         let drag_id = base.with(("drag", n.id));
@@ -249,6 +306,14 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
                     ui.close();
                 }
             }
+            for (key, label) in &graph.node_actions {
+                let b = ui.button(crate::i18n::t(label));
+                reg.add_response(&format!("{ns}.nodeMenu.{key}"), &b, label);
+                if b.clicked() {
+                    events.push(CanvasEvent::NodeAction { node: n.id, action: key.clone() });
+                    ui.close();
+                }
+            }
         });
 
         // body
@@ -275,7 +340,14 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
                 let c = view.port(n, input, i);
                 let hit = Rect::from_center_size(c, Vec2::splat((PORT_R * 2.0 + 4.0) * state.zoom.max(0.8)));
                 port_hits.push((hit, n.id, input, port));
-                painter.circle_filled(c, PORT_R * state.zoom, vis.widgets.hovered.fg_stroke.color);
+                if is_key(if input { n.key_inputs } else { n.key_outputs }, i) {
+                    // a key port: a triangle pointing along the flow
+                    let s = PORT_R * state.zoom * 1.2;
+                    let pts = vec![c + vec2(-s * 0.8, -s), c + vec2(s, 0.0), c + vec2(-s * 0.8, s)];
+                    painter.add(egui::Shape::convex_polygon(pts, KEY_GREEN, Stroke::NONE));
+                } else {
+                    painter.circle_filled(c, PORT_R * state.zoom, vis.widgets.hovered.fg_stroke.color);
+                }
                 let (align, dx) = if input { (Align2::LEFT_CENTER, 8.0) } else { (Align2::RIGHT_CENTER, -8.0) };
                 painter.text(c + vec2(dx * state.zoom, 0.0), align, name, small.clone(), vis.weak_text_color());
             }
@@ -288,7 +360,9 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
         let pid = base.with(("port", id, input, port));
         let resp = ui.interact(hit, pid, Sense::click_and_drag());
         let dir = if input { "in" } else { "out" };
-        reg.add_response(&format!("{ns}.port.{id}.{dir}.{port}"), &resp, if input { "Input" } else { "Output" });
+        if !graph.on_screen_ids || rect.contains(hit.center()) {
+            reg.add_response(&format!("{ns}.port.{id}.{dir}.{port}"), &resp, if input { "Input" } else { "Output" });
+        }
         if input {
             if resp.clicked() && graph.edges.iter().any(|e| e.to == (id, port)) {
                 events.push(CanvasEvent::Disconnect { to: (id, port) });
@@ -352,6 +426,17 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
             if b.clicked() {
                 let pos = ui.data(|d| d.get_temp(menu_at)).unwrap_or([0.0, 0.0]);
                 events.push(CanvasEvent::AddRequested { kind: key.clone(), pos });
+                ui.close();
+            }
+        }
+        if !graph.canvas_actions.is_empty() && !graph.add_kinds.is_empty() {
+            ui.separator();
+        }
+        for (key, label) in &graph.canvas_actions {
+            let b = ui.button(crate::i18n::t(label));
+            reg.add_response(&format!("{ns}.menu.{key}"), &b, label);
+            if b.clicked() {
+                events.push(CanvasEvent::CanvasAction(key.clone()));
                 ui.close();
             }
         }

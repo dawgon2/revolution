@@ -657,7 +657,7 @@ page = "color/nodes.md"
 heading = "Reorder and name nodes"
 status = "partial"
 needs_clip = false
-facts = ["grade.moveNode (params node, to)", "no drag yet: use the command list, control channel or MCP"]
+facts = ["grade.moveNode (params node, to)", "dragging only moves the box on the canvas: use the command list, control channel or MCP"]
 note = "The fact is in the trailing paragraph, not in the numbered steps, so a 'how' answer shows the rename steps. Guide gap: a 'Move a node' subsection with its own step (or write the drag when it exists)."
 
 [[question]]
@@ -1264,11 +1264,12 @@ kind = "why"
 origin = "agent"
 context = "Color page, Nodes panel"
 page = "color/nodes.md"
-heading = "Later: parallel and layer nodes (C2)"
-alt = [{ page = "color/nodes.md", heading = "If you know Resolve" }]
+heading = "Parallel nodes"
+alt = [{ page = "color/nodes.md", heading = "Serial, parallel, layer, outside, splitter, key mixer: which one?" }, { page = "color/nodes.md", heading = "The node canvas" }]
 status = "covered"
 needs_clip = false
-facts = ["planned for C2 (parallel, layer, splitter / combiner, outside, key mixer)", "grades saved today open unchanged then"]
+facts = ["there is one: Add Parallel Node (grade.addParallel) in the canvas right-click menu, Alt+P with the Resolve keys", "the new node and a Parallel Mixer blend the two results"]
+note = "C2 lane 5: answered 'planned' before the node canvas shipped."
 
 [[question]]
 id = "why-paste-windows"
@@ -1497,12 +1498,159 @@ q = "where is the key output of a node"
 kind = "resolve-word"
 origin = "agent"
 context = "Color page, Nodes panel"
-page = "color/secondaries.md"
-heading = "The qualifier: select by colour"
-alt = [{ page = "glossary.md", heading = "Matte" }, { page = "color/nodes.md", heading = "Later: parallel and layer nodes (C2)" }]
+page = "color/nodes.md"
+heading = "Key input and key output"
+alt = [{ page = "color/nodes.md", heading = "Key mixer" }, { page = "color/nodes.md", heading = "The node canvas" }, { page = "color/nodes.md", heading = "Outside nodes" }, { page = "color/secondaries.md", heading = "The qualifier: select by colour" }, { page = "glossary.md", heading = "Matte" }]
 status = "covered"
 needs_clip = false
-facts = ["not shown as a separate node output yet", "key output / key mixer come with C2", "View ▸ Matte shows the matte meanwhile"]
+facts = ["a node's second output, the green triangle labelled Key", "a key mixer combines several key outputs; an outside node inverts one", "the qualifier's View set to Matte shows a node's matte"]
+note = "C2 lane 5: before the node canvas the key output was 'not shown yet'."
+
+# C2 lane 5: the branched-grade nodes (parallel, layer, outside, splitter / combiner, key mixer)
+
+[[question]]
+id = "nodes-parallel-how"
+q = "how do I add a parallel node"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Parallel nodes"
+status = "covered"
+needs_clip = false
+facts = ["right-click the canvas, Add Parallel Node (grade.addParallel)", "the mixer blends 50 / 50 by default"]
+
+[[question]]
+id = "nodes-parallel-blend"
+q = "how do I change how much each parallel node counts"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Parallel nodes"
+status = "covered"
+needs_clip = false
+facts = ["grade.setParam mix.gain.<n> on the mixer node", "a branch's share is its gain over the sum of the gains"]
+
+[[question]]
+id = "nodes-layer-look"
+q = "how do I add a layer node for a look"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Layer nodes for looks"
+status = "covered"
+needs_clip = false
+facts = ["Add Layer Node (grade.addLayer)", "layer.opacity.1 on the mixer, 0.6"]
+
+[[question]]
+id = "nodes-layer-mode"
+q = "how do I change the blend mode of a layer node"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Layer nodes for looks"
+status = "covered"
+needs_clip = false
+facts = ["layer.mode.<n> on the mixer node", "13 is Soft Light"]
+
+[[question]]
+id = "nodes-outside-how"
+q = "how do I grade everything outside my skin selection"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Outside nodes"
+status = "covered"
+needs_clip = false
+facts = ["Add Outside Node (grade.addOutside)", "it works on everything outside the first node's selection"]
+
+[[question]]
+id = "nodes-splitter-how"
+q = "how do I correct only the blue channel"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Splitter and combiner"
+status = "covered"
+needs_clip = false
+facts = ["Add Splitter / Combiner Nodes (grade.addSplitter)", "grade the node named Blue"]
+
+[[question]]
+id = "nodes-keymixer-how"
+q = "how do I combine two qualifiers into one selection"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Key mixer"
+status = "covered"
+needs_clip = false
+facts = ["Add Key Mixer (grade.addKeyMixer)", "wire the second node's Key output to the mixer, then the mixer to a node's Key input"]
+
+[[question]]
+id = "nodes-connect-how"
+q = "how do I connect two nodes on the canvas"
+kind = "how"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "The node canvas"
+status = "covered"
+needs_clip = false
+facts = ["drag from an output port to an input port (grade.connect)", "click a connected input to cut the wire (grade.disconnect)"]
+
+[[question]]
+id = "nodes-output-which"
+q = "what does Set as Output do on a node"
+kind = "where"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "The output node"
+status = "covered"
+needs_clip = false
+facts = ["the highlighted header", "right-click, Set as Output (grade.setOutput) when two nodes could be"]
+
+[[question]]
+id = "nodes-which-kind"
+q = "when should I use a parallel node instead of a serial one"
+kind = "what-for"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Serial, parallel, layer, outside, splitter, key mixer: which one?"
+status = "covered"
+needs_clip = false
+facts = ["parallel when two corrections must not affect each other", "start serial"]
+
+[[question]]
+id = "nodes-explain-branches"
+q = "what does explain grade say about parallel nodes"
+kind = "what-for"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "What the explainer says about branches"
+status = "covered"
+needs_clip = false
+facts = ["Explain grade on the Match tab", "each work on the same image; their results are blended 50 / 50"]
+
+[[question]]
+id = "nodes-old-grades"
+q = "will my old grades still open now that nodes can branch"
+kind = "why"
+origin = "agent"
+context = "Color page, node canvas"
+page = "color/nodes.md"
+heading = "Older grades open unchanged"
+status = "covered"
+needs_clip = false
+facts = ["a clip with no stored wiring is the same serial chain", "renders the same"]
 
 # ---------------------------------------------------------------------------------------------
 # G. Questions the guide doesn't answer: the coach must say so (covered = false)

@@ -17,8 +17,9 @@ pub type NodeId = u64;
 pub const MAX_NODES: usize = 256;
 /// Most edges a graph may hold.
 pub const MAX_EDGES: usize = 1024;
-/// Longest chain of nodes (sources count as depth 1).
-pub const MAX_DEPTH: usize = 64;
+/// Longest chain of nodes (sources count as depth 1): 64 nodes after a source, so a full serial
+/// grade (its virtual input + `grade::MAX_NODES` nodes, fork C2) fits.
+pub const MAX_DEPTH: usize = 65;
 
 /// One port of a node: an output port when it is an edge's `from`, an input port as its `to`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

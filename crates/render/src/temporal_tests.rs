@@ -40,6 +40,7 @@ fn info(name: &str) -> MediaInfo {
         kind: MediaKind::Movie,
         duration: FPS.tick_of(fixture::FRAMES as i64),
         video: Some(VideoStreamInfo {
+            camera_color_space: None,
             width: fixture::W as u32,
             height: fixture::H as u32,
             frame_rate: FPS,
@@ -247,7 +248,7 @@ fn the_op_is_first_in_the_layer_ops_before_every_grade_op() {
     // with a grade whose node has spatial NR and a window
     let mut node = tnr_node(1, &[("nr.luma", 0.3), ("tnr.luma", 1.0)]);
     node.windows.push(filmcraft_project::Mask::new("w", filmcraft_project::MaskPath::rect(0.0, 0.0, 8.0, 8.0)));
-    let look = Look { grade: Some(Grade { nodes: vec![node], bypass: false }), tnr: Some(tnr(&[("luma", 0.5), ("frames", 2.0)])) };
+    let look = Look { grade: Some(Grade { nodes: vec![node], bypass: false, ..Default::default() }), tnr: Some(tnr(&[("luma", 0.5), ("frames", 2.0)])) };
     let (p, seq, _) = project("tnr-ops", fixture::NOISE, look.clone());
     let ops = fx(&p, seq);
     assert!(matches!(ops.first(), Some(FxOp::TemporalDenoise { luma: 0.5, chroma: 0.0, radius: 2, motion: 0.5, inputs: None })), "{ops:?}");
@@ -257,7 +258,7 @@ fn the_op_is_first_in_the_layer_ops_before_every_grade_op() {
     // no grade at all: the op alone; a bypassed grade doesn't switch the clip setting off
     let (p, seq, _) = project("tnr-ops", fixture::NOISE, tnr(&[("chroma", 0.4)]));
     assert!(matches!(fx(&p, seq).as_slice(), [FxOp::TemporalDenoise { .. }]));
-    let bypassed = Look { grade: Some(Grade { nodes: vec![tnr_node(1, &[("saturation", 0.5)])], bypass: true }), ..look.clone() };
+    let bypassed = Look { grade: Some(Grade { nodes: vec![tnr_node(1, &[("saturation", 0.5)])], bypass: true, ..Default::default() }), ..look.clone() };
     let (p, seq, _) = project("tnr-ops", fixture::NOISE, bypassed);
     assert!(matches!(fx(&p, seq).as_slice(), [FxOp::TemporalDenoise { .. }]));
     // switched off: nothing; only node keys: nothing
@@ -265,7 +266,11 @@ fn the_op_is_first_in_the_layer_ops_before_every_grade_op() {
     off.enabled = false;
     let (p, seq, _) = project("tnr-ops", fixture::NOISE, off);
     assert!(fx(&p, seq).is_empty());
-    let (p, seq, _) = project("tnr-ops", fixture::NOISE, Some(Grade { nodes: vec![tnr_node(1, &[("tnr.luma", 1.0), ("tnr.chroma", 1.0)])], bypass: false }));
+    let (p, seq, _) = project(
+        "tnr-ops",
+        fixture::NOISE,
+        Some(Grade { nodes: vec![tnr_node(1, &[("tnr.luma", 1.0), ("tnr.chroma", 1.0)])], bypass: false, ..Default::default() }),
+    );
     assert_eq!(count(&fx(&p, seq)), 0);
 }
 
@@ -386,8 +391,8 @@ fn projects_without_temporal_nr_render_the_same_with_temporal_access() {
     // a temporal render (export, the paused frame) is bit-identical to a live one
     let grades = [
         None,
-        Some(Grade { nodes: vec![tnr_node(1, &[("saturation", 0.7), ("nr.luma", 0.2)])], bypass: false }),
-        Some(Grade { nodes: vec![tnr_node(1, &[("tnr.luma", 1.0), ("lift", 0.0)])], bypass: false }),
+        Some(Grade { nodes: vec![tnr_node(1, &[("saturation", 0.7), ("nr.luma", 0.2)])], bypass: false, ..Default::default() }),
+        Some(Grade { nodes: vec![tnr_node(1, &[("tnr.luma", 1.0), ("lift", 0.0)])], bypass: false, ..Default::default() }),
     ];
     let grades = grades.into_iter().map(Look::from).chain([Look::from(tnr(&[("frames", 2.0), ("motion", 0.9)]))]);
     let t = FPS.tick_of(3);
@@ -400,7 +405,7 @@ fn projects_without_temporal_nr_render_the_same_with_temporal_access() {
         assert_eq!(a.px, b.px, "{g:?}");
     }
     // and an old project's JSON (no tnr keys) loads to the same grade
-    let (p, _, _) = project("tnr-old", fixture::NOISE, Some(Grade { nodes: vec![tnr_node(1, &[("saturation", 0.7)])], bypass: false }));
+    let (p, _, _) = project("tnr-old", fixture::NOISE, Some(Grade { nodes: vec![tnr_node(1, &[("saturation", 0.7)])], bypass: false, ..Default::default() }));
     let back = Project::from_json(&p.to_json()).unwrap();
     assert!(!p.to_json().contains("tnr."));
     assert_eq!(back.to_json(), p.to_json());
@@ -555,7 +560,7 @@ fn clip_temporal_nr_is_ignored_on_items_that_dont_take_it() {
 /// Fork 6.7b: temporal NR isn't part of a grade, so "same grade?" ignores it (as in Resolve).
 #[test]
 fn grade_match_ignores_temporal_nr() {
-    let g = Grade { nodes: vec![tnr_node(1, &[("saturation", 1.3)])], bypass: false };
+    let g = Grade { nodes: vec![tnr_node(1, &[("saturation", 1.3)])], bypass: false, ..Default::default() };
     let mut with_keys = g.clone();
     with_keys.nodes[0].params.insert("tnr.luma".into(), Param::new(ParamValue::Float(0.8)));
     assert!(crate::grade_match::same_grade(&g, &with_keys));

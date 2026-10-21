@@ -36,7 +36,7 @@ pub fn apply(ctx: &egui::Context, style: &str) {
 
 /// Write `style` into the hicolor icon theme of the data folder `data` under the app id.
 #[cfg(target_os = "linux")]
-fn write_theme_icons(data: &std::path::Path, style: &str) -> std::io::Result<()> {
+pub(crate) fn write_theme_icons(data: &std::path::Path, style: &str) -> std::io::Result<()> {
     let hicolor = data.join("icons").join("hicolor");
     for size in SIZES {
         let Some(png) = filmcraft_ui_egui::app_logo::icon_png(style, size) else { continue };

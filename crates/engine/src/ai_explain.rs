@@ -433,6 +433,10 @@ static LOOKING: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
 #[cfg(all(feature = "llm", not(target_arch = "wasm32")))]
 impl crate::coach_assist::PictureLooker for VisionLooker {
     fn look(&self, picture: &crate::coach_assist::PictureInput, question: &str) -> std::result::Result<String, String> {
+        self.look_with(picture, &crate::coach_assist::look_prompt(question))
+    }
+
+    fn look_with(&self, picture: &crate::coach_assist::PictureInput, prompt: &str) -> std::result::Result<String, String> {
         let mut count = LOOKING.lock().unwrap_or_else(PoisonError::into_inner);
         *count = count.wrapping_add(1);
         let looks = *count;
@@ -464,7 +468,7 @@ impl crate::coach_assist::PictureLooker for VisionLooker {
             }
         };
         let asked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            vl.ask(&picture.rgb, picture.w, picture.h, crate::coach_assist::LOOK_PIXELS, &crate::coach_assist::look_prompt(question), 120, None)
+            vl.ask(&picture.rgb, picture.w, picture.h, crate::coach_assist::LOOK_PIXELS, prompt, 120, None)
         }));
         let r = match asked {
             Ok(r) => r.map_err(|e| e.to_string()),

@@ -1,0 +1,101 @@
+# Grading Coach lesson (fork COMPOSITOR-PLAN C2 lane 5: the key mixer). Format:
+# crates/engine/src/coach.rs. Written for this fork in our own words.
+id = "key-mixer"
+title = "Combine two selections (key mixer)"
+summary = "Select skin on one node and a second area on another, combine the two selections in a key mixer, and use the result to limit a third node."
+provenance = ["resolve-style", "fork"]
+order = 14
+
+[[step]]
+text = "A key mixer builds one selection out of several: it can add them, take one away from another, or keep only where they overlap. The result then limits any node you connect it to."
+why = "Real selections are rarely one qualifier: skin plus lips, or the sky minus the clouds. Combining them in one place keeps the grade readable."
+expect = { manual = true }
+
+[[step]]
+text = "Open the Color Grading workspace (Workspaces button at the top, then Color Grading)."
+why = "You need the node canvas and the Qualifier tab."
+target = "header.workspaces"
+expect = { element = "panel.ColorNodes" }
+
+[[step]]
+text = "Select a clip in the Clips strip (or the timeline)."
+why = "The grade belongs to the selected clip."
+target = ["clips.strip", "timeline.tracks"]
+expect = { command = "timeline.select", params = { clips = [{ any = true }] } }
+
+[[step]]
+text = "Add a node (Add Node or + Serial) for the first selection."
+why = "Each selection lives on its own node."
+target = ["grade.addFirst", "grade.addNode"]
+expect = { command = ["grade.addNode", "grade.insertNode"] }
+
+[[step]]
+text = "Open the Qualifier tab."
+why = "A qualifier selects pixels by hue, saturation and luminance."
+target = "grade.tab.qualifier"
+expect = { element = "grade.qual.pick" }
+
+[[step]]
+text = "Press Pick, then click skin in the picture."
+why = "This is the first selection."
+target = "grade.qual.pick"
+expect = { command = "grade.pickQualifier" }
+
+[[step]]
+text = "Add a second node with + Serial."
+why = "It holds the second selection."
+target = "grade.addNode"
+expect = { command = "grade.addNode" }
+
+[[step]]
+text = "Press Pick, then click a different area, such as the lips or a shirt."
+why = "This is the second selection."
+target = "grade.qual.pick"
+expect = { command = "grade.pickQualifier" }
+
+[[step]]
+text = "Add a third node with + Serial. It will be the one that uses the combined selection."
+why = "A selection does nothing until a node is limited by it."
+target = "grade.addNode"
+expect = { command = "grade.addNode" }
+
+[[step]]
+text = "Right-click the first node on the canvas and choose Add Key Mixer."
+why = "The key mixer takes that node's selection as its first input."
+target = "grade.canvas"
+expect = { command = "grade.addKeyMixer" }
+
+[[step]]
+text = "Drag from the second node's key output (the green triangle labelled Key) to the key mixer's second input."
+why = "Now the mixer holds both selections. By default it adds them; the setting kmix.mode.1 (set with grade.setParam) can subtract (1) or intersect (2) instead."
+target = "grade.canvas"
+expect = { command = "grade.connect" }
+
+[[step]]
+text = "Drag from the key mixer's output to the third node's key input."
+why = "The third node now only works inside the combined selection."
+target = "grade.canvas"
+expect = { command = "grade.connect" }
+
+[[step]]
+text = "Click the third node on the canvas."
+why = "It is the node that will use the combined selection."
+target = "grade.canvas"
+expect = { command = "grade.selectNode" }
+
+[[step]]
+text = "Change its Saturation."
+why = "Only the combined area is affected."
+target = "grade.param.saturation"
+expect = { command = "grade.setParam", params = { param = "saturation" } }
+
+[[step]]
+text = "Open the Match tab and press Explain grade."
+why = "The explainer describes the key mixer in words: which selection it starts with and what it adds or takes away."
+target = "grade.tab.match"
+expect = { command = "grade.explainGrade" }
+
+[[step]]
+text = "That is a key mixer: selections in, one selection out. Press Next to finish."
+why = "Change the mode of an input (add, subtract, intersect) to reshape the selection without touching the qualifiers."
+expect = { manual = true }

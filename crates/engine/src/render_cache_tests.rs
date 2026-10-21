@@ -185,7 +185,7 @@ fn smart_policy_and_queue_order() {
     let node: filmcraft_project::grade::GradeNode = serde_json::from_value(json!({"id": 1})).unwrap();
     s.edit_sequence("grade", |q, _, _| {
         let (_, it) = q.find_item_mut(ids[2]).unwrap();
-        it.grade = Some(filmcraft_project::grade::Grade { nodes: vec![node], bypass: false });
+        it.grade = Some(filmcraft_project::grade::Grade { nodes: vec![node], bypass: false, ..Default::default() });
         Ok(())
     })
     .unwrap();

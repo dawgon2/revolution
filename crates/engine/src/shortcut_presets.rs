@@ -456,8 +456,8 @@ pub const AVID: &[Entry] = &[
 /// macOS and Ctrl elsewhere, as in Resolve itself. Commands that do not exist (yet) are skipped
 /// when the preset is built.
 pub const RESOLVE: &[Entry] = &[
-    // fork: full screen (F11, the Linux / Windows convention, and FilmCraft's Ctrl+`)
-    ("window.toggleFullScreen", "F11", ""),
+    // fork: full screen on FilmCraft's Ctrl+` only in this preset: Resolve's F11 is Replace (RS4.1,
+    // owner-visible change: the F11 full-screen key of the other presets does not apply here)
     ("window.toggleFullScreen", "Ctrl+`", ""),
     // Edit
     ("edit.undo", "Cmd+Z", ""),
@@ -478,8 +478,13 @@ pub const RESOLVE: &[Entry] = &[
     ("clip.enable", "D", ""),
     ("sequence.matchFrame", "F", ""),
     // Three-point editing
-    ("source.insert", "F9", ""),
-    ("source.overwrite", "F10", ""),
+    ("edit.insert", "F9", ""),
+    ("edit.overwrite", "F10", ""),
+    ("edit.replace", "F11", ""),
+    ("edit.placeOnTop", "F12", ""),
+    ("edit.append", "Shift+F12", ""),
+    ("edit.rippleOverwrite", "Shift+F10", ""),
+    ("edit.fitToFill", "Shift+F11", ""),
     // Playback
     ("playback.toggle", "Space", ""),
     ("playback.reverse", "J", ""),
@@ -498,7 +503,7 @@ pub const RESOLVE: &[Entry] = &[
     ("markers.markOut", "O", ""),
     ("markers.markClip", "X", ""),
     ("markers.clearIn", "Alt+I", ""),
-    ("markers.clearOut", "Alt+O", ""),
+    // (markers.clearOut: Resolve's Alt+O goes to grade.addOutside below, provisional)
     ("markers.clearInOut", "Alt+X", ""),
     ("markers.goToIn", "Shift+I", ""),
     ("markers.goToOut", "Shift+O", ""),
@@ -507,16 +512,25 @@ pub const RESOLVE: &[Entry] = &[
     ("view.zoomIn", "Cmd+=", ""),
     ("view.zoomOut", "Cmd+-", ""),
     ("view.zoomToSequence", "Shift+Z", ""),
-    // Pages (Project Manager, Media, Edit, Color, Fairlight, Deliver; the page bar maps Media to
+    // Pages (Project Manager, Media, Cut, Edit, Color, Fairlight, Deliver; the page bar maps Media to
     // Assembly)
     ("projects.show", "Shift+1", ""),
     ("window.workspace.assembly", "Shift+2", ""),
+    // fork RS4: the Cut page
+    ("page.cut", "Shift+3", ""),
     ("window.workspace.editing", "Shift+4", ""),
     ("window.workspace.color", "Shift+6", ""),
     ("window.workspace.audio", "Shift+7", ""),
     ("mode.export", "Shift+8", ""),
     // Color page: nodes, bypass, stills, wipe
     ("grade.addNode", "Alt+S", ""),
+    // fork C2: Resolve's parallel / layer / outside node keys. Alt+P and Alt+O are provisional
+    // (owner question: Resolve keys Alt+P / Alt+O): the keymap has no Color-page context, so they
+    // are preset-wide and take Alt+P from clear poster frame (inherited from Premiere) and Alt+O
+    // from clear Out point (no longer listed above) in this preset only
+    ("grade.addParallel", "Alt+P", ""),
+    ("grade.addLayer", "Alt+L", ""),
+    ("grade.addOutside", "Alt+O", ""),
     ("grade.insertNode", "Shift+S", ""),
     ("grade.toggleNode", "Cmd+D", ""),
     ("grade.bypass", "Shift+D", ""),

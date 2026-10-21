@@ -17,6 +17,8 @@ pub struct PanelsState {
     pub clips: ClipsState,
     /// The Compositor panel (fork C1).
     pub comp: super::comp::CompPanelState,
+    /// The Color page's node canvas view (fork C2).
+    pub grade_nodes: crate::widgets::node_canvas::CanvasState,
 }
 
 /// The Color page's Clips panel and the Program monitor's split screen.

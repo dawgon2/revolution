@@ -620,7 +620,9 @@ fn identity_grades_render_bit_exactly_like_no_grade() {
         bypassed.bypass = true;
         let mut disabled = one_node_grade();
         disabled.nodes[0].enabled = false;
-        for g in [Grade::default(), Grade::with_node(), Grade { nodes: vec![identity.clone(), identity], bypass: false }, bypassed, disabled] {
+        for g in
+            [Grade::default(), Grade::with_node(), Grade { nodes: vec![identity.clone(), identity], bypass: false, ..Default::default() }, bypassed, disabled]
+        {
             p.sequence_mut(seq).unwrap().find_item_mut(c).unwrap().1.grade = Some(g.clone());
             assert_eq!(plan::execute_cpu(&plan::plan_frame(&p, seq, t, opts, &map)).px, base_plan.px, "plan, log {log}, {g:?}");
             assert_eq!(render_sequence(&p, seq, t, opts, &map).px, base.px, "cpu, log {log}, {g:?}");

@@ -486,6 +486,131 @@ fn coach_key_comp_end_to_end() {
     );
 }
 
+/// C2 lane 5: the branch lessons, built through the commands the canvas sends. Node ids on the
+/// demo clip: the first node is 1, each add takes the next ids (see `grade_graph.rs`).
+fn on_node(n: u64, param: &str, value: Value) -> Do {
+    Do::Exec("grade.setParam", json!({"clip": "{clip}", "node": n, "param": param, "value": value}))
+}
+
+fn explain() -> Do {
+    Do::Exec("grade.explainGrade", json!({"clip": "{clip}"}))
+}
+
+#[test]
+fn coach_parallel_nodes_end_to_end() {
+    walk(
+        "parallel-nodes",
+        &[
+            Do::Next,
+            Do::Workspace,
+            Do::Select(0),
+            Do::Click("grade.addNode"),
+            set("temperature", json!(6.0)),
+            // node 2 beside node 1, mixer 3
+            Do::Exec("grade.addParallel", json!({"clip": "{clip}", "node": "{node}"})),
+            set("saturation", json!(1.2)),
+            Do::Exec("grade.selectNode", json!({"clip": "{clip}", "node": 1})),
+            set("contrast", json!(1.1)),
+            on_node(3, "mix.gain.1", json!(0.5)),
+            explain(),
+            Do::Click("grade.toggleNode"),
+            Do::Next,
+        ],
+    );
+}
+
+#[test]
+fn coach_layer_look_end_to_end() {
+    walk(
+        "layer-look",
+        &[
+            Do::Next,
+            Do::Workspace,
+            Do::Select(0),
+            Do::Click("grade.addNode"),
+            set("temperature", json!(-6.0)),
+            Do::Exec("grade.addLayer", json!({"clip": "{clip}", "node": "{node}"})),
+            set("saturation", json!(1.3)),
+            on_node(3, "layer.opacity.1", json!(0.6)),
+            on_node(3, "layer.mode.1", json!(13.0)),
+            explain(),
+            Do::Click("grade.toggleNode"),
+            Do::Next,
+        ],
+    );
+}
+
+#[test]
+fn coach_splitter_combiner_end_to_end() {
+    walk(
+        "splitter-combiner",
+        &[
+            Do::Next,
+            Do::Workspace,
+            Do::Select(0),
+            Do::Click("grade.addNode"),
+            // splitter 2, Red 3, Green 4, Blue 5, combiner 6
+            Do::Exec("grade.addSplitter", json!({"clip": "{clip}", "node": "{node}"})),
+            Do::Exec("grade.selectNode", json!({"clip": "{clip}", "node": 5})),
+            set("gain", json!([0.0, 0.0, 0.0, 0.1])),
+            explain(),
+            Do::Click("grade.toggleNode"),
+            Do::Next,
+        ],
+    );
+}
+
+#[test]
+fn coach_outside_node_end_to_end() {
+    walk(
+        "outside-node",
+        &[
+            Do::Next,
+            Do::Workspace,
+            Do::Select(0),
+            Do::Click("grade.addNode"),
+            Do::Click("grade.tab.qualifier"),
+            Do::Exec("grade.pickQualifier", json!({"clip": "{clip}", "node": "{node}", "x": 0.5, "y": 0.5})),
+            Do::Exec("grade.addOutside", json!({"clip": "{clip}", "node": "{node}"})),
+            Do::Done,
+            set("saturation", json!(0.8)),
+            explain(),
+            Do::Click("grade.toggleNode"),
+            Do::Next,
+        ],
+    );
+}
+
+#[test]
+fn coach_key_mixer_end_to_end() {
+    let connect = |from: u64, from_port: u64, to: u64, to_port: u64| {
+        Do::Exec("grade.connect", json!({"clip": "{clip}", "from": from, "fromPort": from_port, "to": to, "toPort": to_port}))
+    };
+    let pick = || Do::Exec("grade.pickQualifier", json!({"clip": "{clip}", "node": "{node}", "x": 0.5, "y": 0.5}));
+    walk(
+        "key-mixer",
+        &[
+            Do::Next,
+            Do::Workspace,
+            Do::Select(0),
+            Do::Click("grade.addNode"),
+            Do::Click("grade.tab.qualifier"),
+            pick(),
+            Do::Click("grade.addNode"),
+            pick(),
+            Do::Click("grade.addNode"),
+            // the key mixer is node 4, fed by node 1's key
+            Do::Exec("grade.addKeyMixer", json!({"clip": "{clip}", "node": 1})),
+            connect(2, 1, 4, 1),
+            connect(4, 0, 3, 1),
+            Do::Exec("grade.selectNode", json!({"clip": "{clip}", "node": 3})),
+            set("saturation", json!(1.3)),
+            explain(),
+            Do::Next,
+        ],
+    );
+}
+
 #[test]
 fn coach_back_skip_and_exit_from_the_card() {
     let mut d = Driver::demo();
@@ -601,6 +726,28 @@ fn walked() -> (Driver, BTreeSet<String>) {
             }
         }
     }
+    // the mixer and key-input controls (fork C2b) on another clip's branched grade: a parallel
+    // mixer, a layer mixer, a key mixer and an outside node's key input
+    let other = all.get(1).copied().unwrap_or(all[0]);
+    d.exec("timeline.select", json!({"clips": [other]}));
+    d.exec("grade.addNode", json!({"clip": other}));
+    let first = d.exec("grade.get", json!({"clip": other}))["grade"]["nodes"][0]["id"].as_u64().expect("a node");
+    let r = d.exec("grade.addParallel", json!({"clip": other, "node": first}));
+    let (y, pm) = (r["nodes"][0].as_u64().expect("node"), r["nodes"][1].as_u64().expect("mixer"));
+    d.exec("grade.selectNode", json!({"clip": other, "node": pm}));
+    snap(&mut d, &mut seen);
+    let r = d.exec("grade.addLayer", json!({"clip": other, "node": y}));
+    d.exec("grade.selectNode", json!({"clip": other, "node": r["nodes"][1].as_u64().expect("mixer")}));
+    snap(&mut d, &mut seen);
+    let r = d.exec("grade.addKeyMixer", json!({"clip": other, "node": first}));
+    d.exec("grade.selectNode", json!({"clip": other, "node": r["nodes"][0].as_u64().expect("key mixer")}));
+    snap(&mut d, &mut seen);
+    let r = d.exec("grade.addOutside", json!({"clip": other, "node": first}));
+    d.exec("grade.selectNode", json!({"clip": other, "node": r["nodes"][0].as_u64().expect("outside node")}));
+    d.click("grade.tab.qualifier");
+    snap(&mut d, &mut seen);
+    d.exec("timeline.select", json!({"clips": [all[0]]}));
+    d.frames(2);
     d.click("grade.tab.primaries");
     // the Ask the coach box, with an answer that offers a lesson
     d.click("coach.ask.open");
@@ -705,10 +852,10 @@ fn walked() -> (Driver, BTreeSet<String>) {
     d.click("projects.dialog.cancel");
     try_exec(&mut d, "projects.close", json!({}));
     snap(&mut d, &mut seen);
-    // the page bar of the Resolve workflow, and each page's layout and toolbar (fork RS3)
+    // the page bar of the Resolve workflow, and each page's layout and toolbar (fork RS3; Cut: RS4)
     d.exec("settings.setWorkflow", json!({"workflow": "resolve"}));
     snap(&mut d, &mut seen);
-    for page in ["media", "color", "fairlight", "deliver", "edit"] {
+    for page in ["media", "cut", "color", "fairlight", "deliver", "edit"] {
         d.click(&format!("page.{page}"));
         snap(&mut d, &mut seen);
     }
@@ -720,6 +867,8 @@ fn walked() -> (Driver, BTreeSet<String>) {
 /// Guide ids the walk doesn't reach, each with the reason. Each must still be known to the app's
 /// check (a dynamic id) or a literal automation id in the UI source.
 const NOT_WALKED: &[(&str, &str)] = &[
+    ("coach.ask.reference", "only under an answer about a reference picture (coach_reference_tests cover its content)"),
+    ("coach.ask.doThis", "only under an answer about a reference picture (coach_reference_tests cover its content)"),
     ("update.notes", "only when an update check found a newer release (updates_ui covers it)"),
     ("update.install", "only when an update check found a newer release (updates_ui covers it)"),
     ("update.later", "only when an update check found a newer release (updates_ui covers it)"),

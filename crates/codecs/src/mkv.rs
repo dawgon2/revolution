@@ -376,6 +376,7 @@ impl MkvSource {
             let bitrate = (secs > 0.0).then(|| (t.samples.iter().map(|s| s.size as u64).sum::<u64>() as f64 * 8.0 / secs) as u64);
             let ((w, h), par) = if rotation % 2 == 1 { ((h, w), (v.pixel_aspect().1, v.pixel_aspect().0)) } else { ((w, h), v.pixel_aspect()) };
             VideoStreamInfo {
+                camera_color_space: None,
                 width: w,
                 height: h,
                 frame_rate: rate,

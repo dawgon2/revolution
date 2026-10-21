@@ -19,9 +19,16 @@ pub fn override_of(project: &Project, item: ItemId) -> Option<ColorSpace> {
     project.resolve_media(item).and_then(|(_, media, _)| media.interpret.color_space)
 }
 
-/// The colour space a frame of `item` is interpreted in.
+/// The log colour space the camera recorded in its own metadata for `item`'s media (Fujifilm
+/// F-Log / F-Log2 streams are tagged BT.709), following subclips to their media.
+pub fn camera_space_of(project: &Project, item: ItemId) -> Option<ColorSpace> {
+    project.resolve_media(item).and_then(|(_, media, _)| media.info.video.as_ref()?.camera_color_space)
+}
+
+/// The colour space a frame of `item` is interpreted in: the Interpret Footage override, else
+/// the camera's recorded log profile, else the frame's colour tags.
 pub fn source_space(project: &Project, item: ItemId, frame: &VideoFrame) -> ColorSpace {
-    override_of(project, item).unwrap_or_else(|| ColorSpace::from_info(&frame.color))
+    override_of(project, item).or_else(|| camera_space_of(project, item)).unwrap_or_else(|| ColorSpace::from_info(&frame.color))
 }
 
 /// Whether the frame needs more than the default (transfer-only) decode.
@@ -72,6 +79,31 @@ pub fn decode(project: &Project, item: ItemId, frame: &VideoFrame, n: usize, pip
         img.map_rgb(|c, _, _| t.apply(c));
     }
     img
+}
+
+/// A display-referred picture (straight sRGB RGBA8, `w × h`, e.g. a reference still) in the
+/// working space of `pipe`, as if it were a still image on the timeline. `None` when the buffer
+/// is shorter than `w × h × 4` or empty.
+pub fn picture_to_working(w: u32, h: u32, rgba: Vec<u8>, pipe: &ColorPipeline) -> Option<Image> {
+    let need = (w as usize).checked_mul(h as usize)?.checked_mul(4)?;
+    if need == 0 || rgba.len() < need {
+        return None;
+    }
+    let mut rgba = rgba;
+    rgba.truncate(need);
+    let frame = VideoFrame::rgba8(w, h, rgba);
+    let cs = ColorSpace::Srgb;
+    if !needs_management(pipe, cs, &frame) {
+        let (w, h, px) = frame.to_linear_f32_decimated(1);
+        return Some(Image { w, h, px });
+    }
+    let t = input_transform(cs, Range::Full, pipe, None);
+    let (w, h, px) = frame.to_linear_f32_decimated_with(1, Some(&t.table));
+    let mut img = Image { w, h, px };
+    if t.has_pixel_stage() {
+        img.map_rgb(|c, _, _| t.apply(c));
+    }
+    Some(img)
 }
 
 /// Working space → monitor (SDR BT.709) for a non-plain pipeline; no-op otherwise.
@@ -151,6 +183,38 @@ mod tests {
         assert_eq!(HdrMetadata { max_cll: Some(0.0), ..Default::default() }.peak_nits(), None, "0 = unknown");
         // and reference white is no lower peak than 203
         assert_eq!(HdrMetadata { max_cll: Some(80.0), ..Default::default() }.peak_nits(), Some(203.0));
+    }
+
+    #[test]
+    fn camera_log_profile_outranks_the_stream_tags_and_the_override_outranks_both() {
+        use filmcraft_media::MediaSource;
+        use filmcraft_project::{ItemKind, Label, MediaClip, MediaRef};
+        let mut p = Project::new("t");
+        let g = filmcraft_media::Generator::BlackVideo;
+        let mut info = filmcraft_media::generators::GeneratorSource::new(g.clone(), 2, 2, Default::default(), filmcraft_time::Tick(1)).info().clone();
+        if let Some(v) = info.video.as_mut() {
+            v.camera_color_space = Some(ColorSpace::FLog2FGamut);
+        }
+        let clip = MediaClip {
+            media: MediaRef::Generator(g),
+            info,
+            interpret: Default::default(),
+            mark_in: None,
+            mark_out: None,
+            markers: vec![],
+            offline: false,
+            proxy: None,
+            identity: None,
+        };
+        let id = p.add_item("fuji", Label::Iris, ItemKind::Media(clip), None);
+        // the stream says BT.709, as Fujifilm F-Log2 files do
+        let f = frame([100, 100, 100], ColorInfo::REC709);
+        assert_eq!(source_space(&p, id, &f), ColorSpace::FLog2FGamut);
+        assert!(needs_management(&ColorPipeline::REC709, ColorSpace::FLog2FGamut, &f), "log never takes the plain fast path");
+        if let Some(ItemKind::Media(m)) = p.item_mut(id).map(|i| &mut i.kind) {
+            m.interpret.color_space = Some(ColorSpace::Rec709);
+        }
+        assert_eq!(source_space(&p, id, &f), ColorSpace::Rec709, "Interpret Footage wins");
     }
 
     #[test]

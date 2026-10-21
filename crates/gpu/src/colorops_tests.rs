@@ -452,6 +452,7 @@ fn gpu_compiled_grades_match_cpu() {
             ),
         ],
         bypass: false,
+        ..Default::default()
     };
     // qualified nodes (G2.1): one per-pixel and inverted, one with a blurred matte (an HSL
     // secondary step), one showing its highlight

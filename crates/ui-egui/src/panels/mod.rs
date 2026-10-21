@@ -8,6 +8,7 @@ pub mod coach;
 pub mod color_clips;
 pub mod color_dialogs;
 pub mod comp;
+pub mod cut_page;
 pub mod dialogs;
 pub mod effect_controls;
 pub mod effects;
@@ -17,10 +18,13 @@ pub mod export_mode;
 pub mod file_dialogs;
 pub mod frame_export;
 pub mod grade;
+pub mod grade_mixer;
 pub mod graphics;
 pub mod graphics_templates;
 pub mod home;
 pub mod import_mode;
+pub mod inspector;
+pub mod inspector_video;
 pub mod interchange_export;
 pub mod keyboard;
 pub mod lumetri;
@@ -42,6 +46,7 @@ pub mod panel_state;
 pub mod presets;
 pub mod project;
 pub mod project_dialogs;
+pub mod project_transfer;
 pub mod project_views;
 pub mod reference;
 pub mod remix;
@@ -58,6 +63,7 @@ pub mod timeline;
 pub mod timeline_automation;
 pub mod timeline_captions;
 pub mod timeline_hit;
+pub mod timeline_toolbar;
 pub mod timeline_volume;
 pub mod tnr;
 pub mod tools;
@@ -90,11 +96,15 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, p: PanelKind, rect: Rect)
         PanelKind::Program if !app.session.state.edit_points.is_empty() => trim_monitor::show(app, ui, rect),
         PanelKind::Program => monitor::show(app, ui, rect, monitor::Which::Program),
         PanelKind::Source => monitor::show(app, ui, rect, monitor::Which::Source),
+        // fork RS4: Resolve's toolbar over the timeline in the Resolve workflow
+        PanelKind::Timeline if app.resolve_workflow() => timeline::show_resolve(app, ui, rect),
         PanelKind::Timeline => timeline::show(app, ui, rect),
+        PanelKind::CutTimeline => cut_page::show(app, ui, rect),
         PanelKind::Project => project::show(app, ui, rect),
         PanelKind::Tools => tools::show(app, ui, rect),
         PanelKind::Effects => effects::show(app, ui, rect),
         PanelKind::EffectControls => effect_controls::show(app, ui, rect),
+        PanelKind::Inspector => inspector::show(app, ui, rect),
         PanelKind::AudioMeters => meters::show(app, ui, rect),
         PanelKind::LumetriColor => lumetri::show(app, ui, rect),
         PanelKind::Properties if graphics::graphic_selected(app) => graphics::properties(app, ui, rect),

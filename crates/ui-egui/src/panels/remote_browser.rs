@@ -26,9 +26,9 @@ struct Draft {
 }
 
 /// One folder listing: `None` while it loads.
-type Listing = Option<Result<Vec<filmcraft_remote::Entry>, String>>;
+pub(crate) type Listing = Option<Result<Vec<filmcraft_remote::Entry>, String>>;
 
-fn listings() -> MutexGuard<'static, HashMap<(String, String), Listing>> {
+pub(crate) fn listings() -> MutexGuard<'static, HashMap<(String, String), Listing>> {
     static L: OnceLock<Mutex<HashMap<(String, String), Listing>>> = OnceLock::new();
     L.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -52,7 +52,7 @@ pub fn open(app: &mut FilmcraftApp, ctx: &egui::Context, location: Option<&str>)
     Ok(json!({"open": true, "location": id}))
 }
 
-fn refresh(app: &FilmcraftApp, ctx: &egui::Context, id: &str, path: &str) {
+pub(crate) fn refresh(app: &FilmcraftApp, ctx: &egui::Context, id: &str, path: &str) {
     let Some(loc) = app.session.prefs.remote.find(id).cloned() else { return };
     let key = (id.to_string(), path.to_string());
     listings().insert(key.clone(), None);
@@ -72,7 +72,7 @@ fn refresh(app: &FilmcraftApp, ctx: &egui::Context, id: &str, path: &str) {
     });
 }
 
-fn job_result(app: &FilmcraftApp, id: u64) -> Option<Result<(), String>> {
+pub(crate) fn job_result(app: &FilmcraftApp, id: u64) -> Option<Result<(), String>> {
     let job = app.session.jobs.iter().find(|j| j.id == id)?;
     let r = job.result.lock().unwrap_or_else(PoisonError::into_inner).clone()?;
     Some(r.map(|_| ()))
@@ -273,7 +273,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     ctx.data_mut(|m| m.insert_temp(draft_id(), open.then_some(d)));
 }
 
-fn human(bytes: u64) -> String {
+pub(crate) fn human(bytes: u64) -> String {
     let b = bytes as f64;
     if b >= 1e9 {
         format!("{:.1} GB", b / 1e9)

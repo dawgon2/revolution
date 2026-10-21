@@ -63,7 +63,7 @@ fn selected_clip(app: &FilmcraftApp) -> Option<(ClipId, TrackItem, TrackKind)> {
 }
 
 /// The selected clip (video first) and, for a video clip, the selected audio linked to it.
-fn selected_clips(app: &FilmcraftApp) -> Vec<(ClipId, TrackItem, TrackKind)> {
+pub(crate) fn selected_clips(app: &FilmcraftApp) -> Vec<(ClipId, TrackItem, TrackKind)> {
     let Some(seq) = app.session.active_sequence() else { return Vec::new() };
     let picked: Vec<(ClipId, &TrackItem, TrackKind)> = app
         .session
@@ -346,7 +346,15 @@ fn custom_setup_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, body: Rect, lane:
 /// Corner Pin's **Track Surface** row (fork Y3.3c, `tracking.cornerPin`): track the flat surface
 /// inside the four points in the clip below, backward continuously / one frame, forward one frame
 /// / continuously; clicking while a track runs stops it.
-fn corner_pin_track_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, body: Rect, lane: &Rect, clip: ClipId, idx: usize, actions: &mut Vec<(String, Value)>) {
+pub(crate) fn corner_pin_track_row(
+    app: &mut FilmcraftApp,
+    ui: &mut egui::Ui,
+    body: Rect,
+    lane: &Rect,
+    clip: ClipId,
+    idx: usize,
+    actions: &mut Vec<(String, Value)>,
+) {
     let t = app.tokens;
     let (r, _) = ui.allocate_exact_size(vec2(body.width(), ROW_H), Sense::hover());
     row_line(ui, r, lane, &t);
@@ -386,7 +394,7 @@ fn corner_pin_track_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, body: Rect, l
 /// Motion's **Attach to Track** row (fork Y3.2b, `tracking.attach`): the clip's Position (and,
 /// by the method menu, Rotation and Scale) follows what is under it in the clip below; backward
 /// continuously / one frame, forward one frame / continuously; clicking while it runs stops it.
-fn attach_track_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, body: Rect, lane: &Rect, clip: ClipId, actions: &mut Vec<(String, Value)>) {
+pub(crate) fn attach_track_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, body: Rect, lane: &Rect, clip: ClipId, actions: &mut Vec<(String, Value)>) {
     use filmcraft_project::TrackMethod;
     let t = app.tokens;
     let (r, _) = ui.allocate_exact_size(vec2(body.width(), ROW_H), Sense::hover());
@@ -852,8 +860,9 @@ pub(crate) fn param_row(
             actions.push(("effects.resetParam".into(), json!({"clip": clip.0, "effect": eff_json, "param": pd.id})));
         }
     }
-    // keyframes in the lane: draggable diamonds; right-click for interpolation
-    if param.is_animated() {
+    // keyframes in the lane: draggable diamonds; right-click for interpolation (none when the
+    // row has no lane: the Resolve-style Inspector reuses the row)
+    if param.is_animated() && lane.width() >= 1.0 {
         let y = r.center().y;
         let dur = it.duration.0.max(1) as f64;
         let rate = app.session.sequence_rate();
@@ -1186,7 +1195,7 @@ pub fn properties_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 /// one undo step, which the first change of each press begins (#201); typed values and clicks stay
 /// separate steps. A drag value only changes once the mouse moves, after the press frame, so the
 /// press that already began a step is remembered by its start time.
-fn run(app: &mut FilmcraftApp, ctx: &egui::Context, actions: Vec<(String, Value)>) {
+pub(crate) fn run(app: &mut FilmcraftApp, ctx: &egui::Context, actions: Vec<(String, Value)>) {
     let (down, press) = ctx.input(|i| (i.pointer.any_down(), i.pointer.press_start_time()));
     let key = egui::Id::new("effect-controls-drag-step");
     for (cmd, mut p) in actions {

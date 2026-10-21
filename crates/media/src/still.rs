@@ -48,6 +48,47 @@ pub fn decode_raster(name: &str, bytes: &[u8]) -> Result<Raster> {
     Ok(Raster { width, height, rgba: rgba.into_raw(), has_alpha })
 }
 
+/// Decode like [`decode_raster`], refusing pictures wider or taller than `max_dim` or whose
+/// decode would allocate more than `max_alloc` bytes (hostile or absurd files), before decoding.
+pub fn decode_raster_capped(name: &str, bytes: &[u8], max_dim: u32, max_alloc: u64) -> Result<Raster> {
+    let too_big = |w: u32, h: u32| w > max_dim || h > max_dim || u64::from(w) * u64::from(h) * 4 > max_alloc;
+    if crate::dpx::sniff(bytes) || crate::tga::sniff(name, bytes) {
+        // the size the header declares, checked before anything is decoded or allocated
+        let declared = if crate::dpx::sniff(bytes) {
+            let at = |o: usize| bytes.get(o..o + 4).and_then(|b| <[u8; 4]>::try_from(b).ok());
+            let big = bytes.get(0..4) == Some(b"SDPX".as_slice());
+            let rd = |o: usize| at(o).map(|v| if big { u32::from_be_bytes(v) } else { u32::from_le_bytes(v) });
+            rd(772).zip(rd(776))
+        } else {
+            let at = |o: usize| bytes.get(o..o + 2).and_then(|b| <[u8; 2]>::try_from(b).ok()).map(u16::from_le_bytes).map(u32::from);
+            at(12).zip(at(14))
+        };
+        match declared {
+            Some((w, h)) if !too_big(w, h) => {}
+            _ => return Err(MediaError::Decode(format!("{name}: the picture is larger than {max_dim} px or its header is damaged"))),
+        }
+        let r = decode_raster(name, bytes)?;
+        if too_big(r.width, r.height) {
+            return Err(MediaError::Decode(format!("{name}: the picture is larger than {max_dim} px")));
+        }
+        return Ok(r);
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| MediaError::Decode(format!("{name}: {e}")))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(max_dim);
+    limits.max_image_height = Some(max_dim);
+    limits.max_alloc = Some(max_alloc);
+    reader.limits(limits);
+    let img = reader.decode().map_err(|e| MediaError::Decode(format!("{name}: {e}")))?;
+    let has_alpha = img.color().has_alpha();
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 || too_big(width, height) {
+        return Err(MediaError::Decode(format!("{name}: the picture is empty or larger than {max_dim} px")));
+    }
+    Ok(Raster { width, height, rgba: rgba.into_raw(), has_alpha })
+}
+
 pub struct StillSource {
     info: MediaInfo,
     frame: Arc<VideoFrame>,
@@ -66,6 +107,7 @@ impl StillSource {
             kind: MediaKind::Still,
             duration: DEFAULT_STILL_DURATION,
             video: Some(VideoStreamInfo {
+                camera_color_space: None,
                 width: w,
                 height: h,
                 frame_rate: FrameRate::FPS_29_97,

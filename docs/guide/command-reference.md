@@ -425,3 +425,15 @@ The workflow is in [trimming.md](trimming.md). Use these when you want a key per
    instead of the lowest. `multicam.showPreviewMonitor` shows the program next to the grid (off:
    the grid fills the monitor). `multicam.transmitView` stores the setting to send the grid to a
    transmit device; there is no transmit output yet.
+
+## Branching a grade by command
+
+> id: command-reference.grade-graph | does: branches a clip grade (parallel, layer, outside, splitter, key-mixer nodes), connects ports, picks the output | cmd: grade.addParallel, grade.addLayer, grade.addOutside, grade.addSplitter, grade.addKeyMixer, grade.connect, grade.disconnect, grade.setOutput | resolve: parallel, layer and outside nodes | when: scripting a branched grade
+
+**[Resolve-style]** **[Fork]**
+
+1. `grade.addParallel`, `grade.addLayer`, `grade.addOutside`, `grade.addSplitter` and
+   `grade.addKeyMixer` branch from `node` (default: the current node) and return the new ids.
+2. `grade.connect` joins `from` / `fromPort` to `to` / `toPort` (node 0 is the grade's input);
+   `grade.disconnect` frees `to` / `toPort`; `grade.setOutput` picks the output `node`. A loop
+   or a graph with no single output is refused and nothing changes. Each is one undo step.

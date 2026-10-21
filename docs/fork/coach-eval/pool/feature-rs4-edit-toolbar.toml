@@ -1,0 +1,101 @@
+# FEATURE-POOL batch feature-rs4-edit-toolbar (FEATURE-QUEUE row "RS4 Edit page in the Resolve workflow: timeline
+# toolbar instead of the Tools panel; Resolve track headers (name + clip count); Resolve viewer transport; media
+# pool Bins column").
+# Source: pages.md (pages.edit-toolbar, with pages.panels for the Edit page layout). The Insert / Overwrite /
+# Replace commands themselves are the RS4.1 row (editing.resolve-edits), batched separately: these questions stay
+# on the toolbar, track headers, transport and Bins column.
+# Held-out test questions, written from the guide's text only (README.md beside this file). The guide doesn't say
+# what the slider's range is or whether the Bins column can be hidden, so nothing asks that.
+# No creative family (a toolbar is not a creative goal). No recipe spot check: the Dell's app build predates RS4.
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-etb-tools-gone"
+kind = "tool"
+q = "I switched the workflow to Resolve and the Tools panel next to my timeline disappeared. Where did the razor and selection tools go?"
+sources = ["pages.edit-toolbar"]
+must = ["in the Resolve workflow the Timeline panel has Resolve's toolbar across its top instead of the Tools strip", "Selection (A), Trim (T) and Blade (B) are at its left"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-etb-premiere-keeps"
+kind = "tool"
+q = "Does the Premiere workflow get the Resolve timeline toolbar too?"
+sources = ["pages.edit-toolbar"]
+must = ["no: the Premiere workflow keeps the Tools strip"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-etb-insert-where"
+kind = "tool"
+q = "the insert / overwrite / replace buttons above the edit page timeline, where do they put the clip"
+sources = ["pages.edit-toolbar"]
+must = ["the Source Viewer's clip (its In and Out)", "at the timeline's In mark, or at the playhead"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-etb-keys"
+kind = "tool"
+q = "Which F keys go with the Insert, Overwrite and Replace buttons on the Edit page toolbar?"
+sources = ["pages.edit-toolbar"]
+must = ["Insert F9, Overwrite F10, Replace F11"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-etb-detail-zoom"
+kind = "tool"
+q = "Is there a one-click way to zoom the Edit page timeline in around the playhead, like Resolve's Detail Zoom?"
+sources = ["pages.edit-toolbar"]
+must = ["yes: Detail Zoom on the right of the timeline toolbar zooms around the playhead"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-etb-fit"
+kind = "tool"
+q = "How do I see my whole timeline at once on the Edit page?"
+sources = ["pages.edit-toolbar"]
+must = ["Full Extent Zoom, on the right of the timeline toolbar"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-etb-badge-lit"
+kind = "tool"
+q = "Why is the V1 label on my track header lit up and V2's isn't?"
+sources = ["pages.edit-toolbar"]
+must = ["the track badge is lit when the track is targeted"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-etb-clip-count"
+kind = "tool"
+q = "what's the number under the track name in the resolve-style track header"
+sources = ["pages.edit-toolbar"]
+must = ["how many clips the track holds"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-etb-transport"
+kind = "tool"
+q = "In the Resolve workflow the viewer transport changed and I can't find the step-one-frame buttons. Where did they go?"
+sources = ["pages.edit-toolbar"]
+must = ["the viewers use Resolve's transport: first frame, play reverse, stop, play, last frame, loop, Mark In, Mark Out", "the other buttons stay on their keys and menus"]
+must_not = ["they were removed from the app"]
+style = "beginner"
+
+[[question]]
+id = "feat-etb-bins"
+kind = "tool"
+q = "The Media Pool in the Resolve workflow has a Bins column. How do I show just one bin's clips?"
+sources = ["pages.edit-toolbar"]
+must = ["click the bin in the Bins column (Master, then every bin) to show its clips"]
+must_not = []
+style = "pro"

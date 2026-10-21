@@ -4171,3 +4171,129 @@
 	Save Project Here	Guardar proyecto aquí
 	This folder is empty.	Esta carpeta está vacía.
 	Up	Subir
+	Import Reference Still	Importar imagen de referencia
+	Reference picture	Imagen de referencia
+	How Do I Get This Look?	¿Cómo consigo este aspecto?
+	Reference picture (measured):	Imagen de referencia (medida):
+	Seen in the reference:	Visto en la referencia:
+	In the grade:	En la corrección:
+	On set:	En el rodaje:
+	Do this: Shot Match to the reference	Hazlo: igualar plano con la referencia
+# fork C2: grade node graph (Color page node canvas)
+	Add Parallel Node	Añadir nodo en paralelo
+	Add Layer Node	Añadir nodo de capa
+	Add Outside Node	Añadir nodo exterior
+	Add Splitter / Combiner Nodes	Añadir nodos divisor / combinador
+	Add Key Mixer	Añadir mezclador de claves
+	Connect Nodes	Conectar nodos
+	Disconnect Nodes	Desconectar nodos
+	Set Grade Output	Definir salida de la corrección
+	Corrector	Corrector
+	Parallel Mixer	Mezclador en paralelo
+	Layer Mixer	Mezclador de capas
+	Splitter	Divisor
+	Combiner	Combinador
+	Key Mixer	Mezclador de claves
+	No nodes: + Serial adds one	Sin nodos: + Serial añade uno
+	Node {n}	Nodo {n}
+	Weight	Peso
+	Invert key input	Invertir la clave de entrada
+	Key gain	Ganancia de la clave
+	Key offset	Desplazamiento de la clave
+	Input {n}: {name}	Entrada {n}: {name}
+	Key input: {name}	Clave de entrada: {name}
+	This input's share of the mix	La parte de la mezcla de esta entrada
+	Each input's weight over the sum of the weights is its share of the mix.	El peso de cada entrada dividido por la suma de los pesos es su parte de la mezcla.
+	Higher inputs are on top: each one blends over the inputs below it.	Las entradas más altas quedan encima: cada una se fusiona sobre las de debajo.
+	Each key adds to, subtracts from or intersects the keys before it.	Cada clave se suma, se resta o se cruza con las claves anteriores.
+	No inputs connected: drag a node's output onto one of this mixer's inputs.	No hay entradas conectadas: arrastra la salida de un nodo a una de las entradas de este mezclador.
+	A mixer node: its settings are in the Primaries panel.	Un nodo mezclador: sus ajustes están en el panel Primarios.
+# fork C2b: node positions on the Color page canvas
+	Reset Layout	Restablecer disposición
+	Move Nodes on the Canvas	Mover nodos en el lienzo
+	Move Nodes	Mover nodos
+	Cut Page	Página Corte
+	Cut Timeline	Línea de tiempo de Corte
+	1 Clip	1 clip
+	{n} Clips	{n} clips
+	First Frame (Home)	Primer fotograma (Inicio)
+	Last Frame (End)	Último fotograma (Fin)
+	Play (L / Space)	Reproducir (L / Espacio)
+	Play Reverse (J)	Reproducir hacia atrás (J)
+	Stop (K)	Detener (K)
+	Select a clip in the media pool to edit it in	Selecciona un clip en el grupo de medios para editarlo
+	Timeline zoom	Zoom de la línea de tiempo
+	Master	Maestro
+
+# Fork RS4.2: the Resolve-style Inspector (tabs, sections, rows).
+	Inspector	Inspector
+	Transition	Transición
+	Turn Off	Desactivar
+	Turn On	Activar
+	No effects applied	No hay efectos aplicados
+	Cropping	Recorte
+	Unlink Zoom X and Y	Desvincular zoom X e Y
+	Link Zoom X and Y	Vincular zoom X e Y
+	Rotation Angle	Ángulo de rotación
+	Flip Image	Voltear imagen
+	Flip Horizontal	Voltear horizontalmente
+	Flip Vertical	Voltear verticalmente
+	Speed Change	Cambio de velocidad
+	Forward	Hacia delante
+	Codec	Códec
+	Crop Left	Recortar izquierda
+	Crop Right	Recortar derecha
+	Crop Top	Recortar arriba
+	Crop Bottom	Recortar abajo
+	Composite Mode	Modo de composición
+	Keyframes	Fotogramas clave
+	Append at End	Añadir al final
+	Close Up	Primer plano
+	Fit to Fill	Ajustar para rellenar
+	Place on Top	Colocar encima
+	Resolve Edit	Edición Resolve
+	Ripple Overwrite	Sobrescribir con desplazamiento
+	Smart Insert	Inserción inteligente
+	Source Overwrite	Sobrescribir por código de tiempo de origen
+	Replace	Reemplazar
+	Add a server to receive projects from it.	Añade un servidor para recibir proyectos desde él.
+	Add a server to send projects through it.	Añade un servidor para enviar proyectos a través de él.
+	Cancelling…	Cancelando…
+	From:	Desde:
+	Include proxies	Incluir proxies
+	Leave out unused media	Omitir los medios no usados
+	{line}, about {secs} s left	{line}, faltan unos {secs} s
+	Manage Locations	Gestionar ubicaciones
+	Manage Locations…	Gestionar ubicaciones…
+	No folders or packages here.	Aquí no hay carpetas ni paquetes.
+	Receive	Recibir
+	Receive…	Recibir…
+	Received: {name}	Recibido: {name}
+	Receive Project	Recibir proyecto
+	Receiving…	Recibiendo…
+	Remote	Remoto
+	Select a project to send.	Selecciona un proyecto para enviar.
+	Send…	Enviar…
+	Sending…	Enviando…
+	Send Project	Enviar proyecto
+	Sent: {name} to {to}	Enviado: {name} a {to}
+	Size: about {size}	Tamaño: unos {size}
+	To:	A:
+	Type the code shown on the other computer.	Escribe el código que se muestra en el otro ordenador.
+	No computer is waiting to receive. Check that Receive is open on the other computer, or type its address.	Ningún ordenador está esperando para recibir. Comprueba que Recibir está abierto en el otro ordenador o escribe su dirección.
+	Couldn't look for computers: {error}	No se pudieron buscar ordenadores: {error}
+	Looking for computers…	Buscando ordenadores…
+	Nearby computer	Ordenador cercano
+	A server…	Un servidor…
+	Code:	Código:
+	Address:	Dirección:
+	address:port, if it isn't found	dirección:puerto, si no se encuentra
+	Channel {n} at {address}	Canal {n} en {address}
+	Receive from a nearby computer	Recibir de un ordenador cercano
+	Type this code on the other computer:	Escribe este código en el otro ordenador:
+	Valid for 10 minutes, once.	Válido durante 10 minutos, una vez.
+	If it isn't found, type this computer's address with port {port}.	Si no se encuentra, escribe la dirección de este ordenador con el puerto {port}.
+	{computer} wants to send {package} ({size})	{computer} quiere enviar {package} ({size})
+	Accept	Aceptar
+	Decline	Rechazar
+	Port for receiving from a nearby computer (0 = any free port)	Puerto para recibir desde un ordenador cercano (0 = cualquier puerto libre)

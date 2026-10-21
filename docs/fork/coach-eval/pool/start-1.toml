@@ -140,11 +140,11 @@ style = "resolve-words"
 
 [[question]]
 id = "pool-s1-cut-page"
-kind = "gap"
+kind = "tool"
 q = "where's the Cut page?"
-sources = ["pages.what"]
-must = ["not shown yet: Revolution has no Cut layout (dual timeline)"]
-must_not = ["invents a Cut page"]
+sources = ["pages.cut", "pages.what"]
+must = ["Cut in the page bar (page.cut), or Shift+3 with the Resolve keys", "the whole timeline above, a zoomed-in timeline below"]
+must_not = ["says Revolution has no Cut page"]
 style = "resolve-words"
 
 [[question]]

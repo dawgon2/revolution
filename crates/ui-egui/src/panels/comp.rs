@@ -162,12 +162,14 @@ pub fn graph(c: &Comp) -> CanvasGraph {
                 bypassed: n.bypass,
                 error: if is_output { error.clone() } else { None },
                 is_output,
+                key_inputs: 0,
+                key_outputs: 0,
             }
         })
         .collect();
     let edges = c.edges.iter().map(|e| EdgeView { from: (e.from.node, e.from.index), to: (e.to.node, e.to.index) }).collect();
     let add_kinds = KINDS.iter().filter(|k| **k != "mediaOut").map(|k| ((*k).to_string(), kind_label(k).to_string())).collect();
-    CanvasGraph { nodes, edges, add_kinds }
+    CanvasGraph { nodes, edges, add_kinds, node_actions: Vec::new(), canvas_actions: Vec::new(), on_screen_ids: false }
 }
 
 fn run(app: &mut FilmcraftApp, command: &str, params: serde_json::Value) {
@@ -268,6 +270,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             CanvasEvent::SetOutput(node) => run(app, "comp.setOutput", json!({"comp": comp, "node": node})),
             // the Program monitor shows this node's output (`viewer_target`)
             CanvasEvent::View(node) => app.ui.panels.comp.canvas.viewed = Some(node),
+            CanvasEvent::NodeAction { .. } | CanvasEvent::CanvasAction(_) => {}
         }
     }
     if let (Some(node), Some(r)) = (inspected, inspector_rect) {

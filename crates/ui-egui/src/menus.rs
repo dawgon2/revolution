@@ -117,6 +117,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     uic!("window.workspace.colorgrading", "Color Grading", ["Window", "Workspaces"], None),
     // Resolve workflow pages (GRADE-PLAN G1.8; the page bar shows them)
     uic!("page.media", "Media Page", [], None),
+    uic!("page.cut", "Cut Page", [], None),
     uic!("page.edit", "Edit Page", [], None),
     uic!("page.fusion", "Fusion Page", [], None),
     uic!("page.color", "Color Page", [], None),
@@ -618,6 +619,7 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
         || (id == "file.save" && params.get("path").is_none() && app.session.path.is_none())
         || (matches!(id, "captions.import" | "captions.export") && params.get("path").is_none())
         || (id == "graphics.newFromFile" && params.get("path").is_none())
+        || (id == "stills.import" && params.get("path").is_none())
         || (crate::EXPORT_SAVE_DIALOGS.iter().any(|(c, ..)| *c == id) && params.get("path").is_none())
     {
         return app.file_dialog(id, &params);

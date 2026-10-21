@@ -23,8 +23,14 @@ PQ or HLG signal, so the same numbers look different in each.
 
 **[Revolution]**
 
-Most files announce their colour space and need nothing. If an F-Log2 clip looks grey and flat
-in the viewer, set the clip to F-Log2 explicitly:
+Most files announce their colour space and need nothing. **Fujifilm clips are detected for you:**
+the camera marks F-Log and F-Log2 video as ordinary BT.709 in the stream, but it also writes the
+profile into its own metadata, and Revolution reads that on import (checked on the X-M5, 4:2:0
+and 4:2:2). Interpret Footage then shows "Fujifilm F-Log2 / F-Gamut" (or F-Log) as the detected
+space. Clips imported before this was added keep what they had; set them by hand as below.
+
+If a log clip still looks grey and flat in the viewer (another camera, or a file that was
+re-encoded and lost the camera's metadata), set its colour space explicitly:
 
 1. In the Project panel select the clip (the footage item).
 2. Choose Clip ▸ Modify ▸ **Interpret Footage…** (`clip.interpretFootage`). The window

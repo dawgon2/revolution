@@ -70,7 +70,8 @@ fn corner_pin_track_surface_buttons_in_both_workflows() {
         if workflow == Workflow::Resolve {
             d.ok("ui.click", json!({"id": "page.edit"}));
             d.frames(2);
-            d.ok("ui.click", json!({"id": "pageToolbar.EffectControls"}));
+            // the Resolve-style Inspector (RS4.2): Corner Pin on its Effects tab
+            d.ok("ui.click", json!({"id": "pageToolbar.Inspector"}));
         } else {
             d.ok("ui.set", json!({"workspace": "Effects"}));
         }
@@ -82,13 +83,18 @@ fn corner_pin_track_surface_buttons_in_both_workflows() {
         d.exec("timeline.select", json!({"clips": [id]}));
         d.exec("effects.apply", json!({"effect": "corner_pin"}));
         d.frames(3);
-        // fold the fixed effects so the Corner Pin rows are on screen
-        for fx in ["motion", "time_remap"] {
-            d.ok("ui.click", json!({"id": format!("effectControls.effect.{fx}")}));
+        if workflow == Workflow::Resolve {
+            d.ok("ui.click", json!({"id": "inspector.tab.effects"}));
+            d.frames(2);
+        } else {
+            // fold the fixed effects so the Corner Pin rows are on screen
+            for fx in ["motion", "time_remap"] {
+                d.ok("ui.click", json!({"id": format!("effectControls.effect.{fx}")}));
+                d.frames(2);
+            }
+            d.ok("ui.click", json!({"id": "effectControls.tnr"}));
             d.frames(2);
         }
-        d.ok("ui.click", json!({"id": "effectControls.tnr"}));
-        d.frames(2);
         for b in ["back", "backFrame", "fwdFrame", "fwd"] {
             d.rect(&format!("effectControls.cornerPin.track.{b}"));
         }
@@ -109,7 +115,11 @@ fn corner_pin_track_surface_buttons_in_both_workflows() {
         assert_eq!(undo.last(), Some(&json!("Track Corner Pin")), "{workflow:?}: {undo:?}");
         // Motion's Attach to Track row: there, with its method menu; the demo has no clip below the
         // first video clip, so a click reports that instead of tracking
-        d.ok("ui.click", json!({"id": "effectControls.effect.motion"}));
+        if workflow == Workflow::Resolve {
+            d.ok("ui.click", json!({"id": "inspector.tab.video"}));
+        } else {
+            d.ok("ui.click", json!({"id": "effectControls.effect.motion"}));
+        }
         d.frames(2);
         for b in ["back", "backFrame", "fwdFrame", "fwd", "method"] {
             d.rect(&format!("effectControls.motion.attach.{b}"));

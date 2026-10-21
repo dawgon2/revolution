@@ -995,7 +995,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let src = frame(patches, gamma);
         let (node, fam) = random_grade(&mut rng, &patches, &luts, args.subtle);
         let mut out = src.clone();
-        let g = Grade { nodes: vec![node.clone()], bypass: false };
+        let g = Grade { nodes: vec![node.clone()], bypass: false, ..Default::default() };
         for op in compile_fx(&g, Tick(0), WS, GradeCtx::default(), src.w, src.h) {
             op.apply(&mut out);
         }

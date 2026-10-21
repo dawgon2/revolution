@@ -24,6 +24,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     crate::panels::media_browser::dialogs(app, ctx);
     crate::panels::share_example::show(app, ctx);
     crate::panels::remote_browser::settle_imports(app);
+    crate::panels::project_transfer::settle(app);
     crate::panels::remote_browser::show(app, ctx);
     let Some(d) = app.dialog else { return };
     if let Some(still_open) = crate::panels::file_dialogs::show(app, ctx, d) {

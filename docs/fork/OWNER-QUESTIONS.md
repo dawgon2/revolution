@@ -1026,3 +1026,33 @@ references read through ranged requests with read-ahead) touches every decoder's
 (STORAGE-PLAN keeps it listed; Phase 7's soak covers network drops). Options: (a) download first (chosen);
 (b) stream with read-ahead (≈ 10–20 h); (c) both, with a setting. Reverse: nothing to undo; (b) adds a
 `MediaRef::Remote` and a read-ahead reader in `crates/remote`.
+
+## Q58 (2026-10-20, C2.4): Resolve keys Alt+P / Alt+O already used in the Resolve preset (FYI, provisional choice, never blocks)
+
+Resolve's public manual puts Add Parallel Node on Alt+P and Add Outside Node on Alt+O (Alt+S serial, Alt+L layer).
+Our Resolve keymap preset inherited two Premiere-default bindings on those keys: Alt+P `clip.clearPosterFrame` and
+Alt+O `markers.clearOut`. **Choice for now:** in the Resolve preset only, Alt+P / Alt+O go to `grade.addParallel` /
+`grade.addOutside` (scoped to the Color page if the keymap has page contexts, otherwise preset-wide); the
+Premiere preset is unchanged; the two displaced commands stay in their menus. Options: (a) Resolve's keys win in the
+Resolve preset (chosen); (b) keep the inherited bindings and leave parallel / outside without keys; (c) other keys.
+Reverse: remove the two overrides in the Resolve preset (marked "provisional (owner question: Resolve keys Alt+P /
+Alt+O)").
+
+## Q59 (2026-10-20, S2b acceptance): both computers' firewalls (ufw) drop the nearby transfer's TCP port (FYI, owed for the plain-LAN check, never blocks)
+
+The PC ↔ Dell check found the Dell over the network (mDNS: `nearby.list` showed it, and the Dell saw the PC), but the
+transfer itself timed out both ways: `ufw` is active on both machines and drops inbound TCP to the receiver's
+port (I can't change it: no sudo). Through an SSH tunnel the same builds sent a project PC → Dell and Dell → PC and a
+300 MB package PC → Dell (SHA-256 matched), so the protocol works between the machines; only the firewall is in
+the way. **Choice for now:** the error now says "Couldn't reach <address>. A firewall on the other computer may be
+blocking it…" instead of "stopped answering", and the guide explains opening the port. **Owed (only if you want the
+plain-LAN check):** on the receiving machine `sudo ufw allow from <lan-address>/24 to any port <port> proto tcp` (the
+port is shown in the receive window; a fixed-port setting makes this a one-time rule) and `sudo ufw allow
+47820/udp` for broadcast discovery. Nothing else waits on it.
+
+## Q60 (2026-10-20, RS4.1): F11 in the Resolve keys is now Replace, not full screen (FYI, choice made, never blocks)
+
+Resolve uses F9 / F10 / F11 / F12 for Insert / Overwrite / Replace / Place on Top. The DaVinci Resolve
+Compatible preset had F11 = Full Screen; it is now **Replace** (`edit.replace`), as in Resolve, and full
+screen stays on Ctrl+` in that preset. The Premiere preset keeps F11 = Full Screen.
+To change it back: Edit ▸ Keyboard Shortcuts, bind F11 to Full Screen.

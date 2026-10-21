@@ -91,7 +91,7 @@ fn remote_checks() -> std::sync::MutexGuard<'static, std::collections::HashMap<S
 }
 
 /// Settings ▸ Remote Locations: the saved servers (Test / Remove) and the Add form.
-fn remote_rows(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft) {
+pub(crate) fn remote_rows(app: &mut FilmcraftApp, ui: &mut Ui, remote: &mut RemoteDraft, message: &mut String) {
     let t = app.tokens;
     let locations = app.session.prefs.remote.locations.clone();
     if locations.is_empty() {
@@ -119,7 +119,7 @@ fn remote_rows(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft) {
                 });
             }
             if button(app, ui, &format!("settings.remote.remove.{}", loc.id), tl!("Remove"), false) {
-                d.message = match app.session.execute("remote.remove", json!({"id": loc.id})) {
+                *message = match app.session.execute("remote.remove", json!({"id": loc.id})) {
                     Ok(_) => tlf!("Removed {name}.", name = loc.name),
                     Err(e) => e.to_string(),
                 };
@@ -132,7 +132,7 @@ fn remote_rows(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft) {
         }
     }
     group(ui, &t, tl!("Add a location"), |ui| {
-        let r = &mut d.remote;
+        let r = &mut *remote;
         if r.kind.is_empty() {
             r.kind = "webDav".into();
         }
@@ -178,14 +178,14 @@ fn remote_rows(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft) {
         });
     });
     if button(app, ui, "settings.remote.add", tl!("Add Location"), true) {
-        let r = &d.remote;
+        let r = &*remote;
         let mut p = json!({"kind": r.kind, "name": r.name, "url": r.url, "user": r.user, "root": r.root, "region": r.region});
         if !r.secret.0.is_empty() {
             p["secret"] = json!(r.secret.0);
         }
-        d.message = match app.session.execute("remote.add", p) {
+        *message = match app.session.execute("remote.add", p) {
             Ok(v) => {
-                d.remote = RemoteDraft { kind: d.remote.kind.clone(), ..Default::default() };
+                *remote = RemoteDraft { kind: remote.kind.clone(), ..Default::default() };
                 tlf!("Added {name}. Use Test to check it.", name = v["location"]["name"].as_str().unwrap_or(""))
             }
             Err(e) => e.to_string(),
@@ -884,7 +884,7 @@ fn custom(app: &mut FilmcraftApp, ui: &mut Ui, d: &mut SettingsDraft, name: &str
         }
         "renderCacheInfo" => render_cache_rows(app, ui),
         "updateInfo" => update_rows(app, ui),
-        "remoteLocations" => remote_rows(app, ui, d),
+        "remoteLocations" => remote_rows(app, ui, &mut d.remote, &mut d.message),
         "outputMapping" => {
             let ch = d.devices.as_ref().map(|x| x.output_channels).unwrap_or(0);
             let l = get(&d.values, "audioHardware.mapLeft").as_u64().unwrap_or(0) + 1;

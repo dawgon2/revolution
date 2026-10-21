@@ -43,9 +43,9 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec("grade.addNode", "Add Serial Node", r#"{"clip":id?,"after":node?,"label":str?}"#, |s, p| add(s, p, false)),
         spec("grade.insertNode", "Insert Node Before", r#"{"clip":id?,"before":node?,"label":str?}"#, |s, p| add(s, p, true)),
         query("grade.selectNode", "Select Node", r#"{"clip":id?,"node":id?}"#, select),
-        spec("grade.removeNode", "Delete Node", r#"{"clip":id?,"node":id?}"#, remove),
+        spec("grade.removeNode", "Delete Node", r#"{"clip":id?,"node":id?,"nodes":[id]?}"#, remove),
         spec("grade.moveNode", "Move Node", r#"{"clip":id?,"node":id,"to":n}"#, move_node),
-        spec("grade.toggleNode", "Enable / Disable Node", r#"{"clip":id?,"node":id?,"on":bool?}"#, toggle),
+        spec("grade.toggleNode", "Enable / Disable Node", r#"{"clip":id?,"node":id?,"nodes":[id]?,"on":bool?}"#, toggle),
         spec("grade.labelNode", "Label Node", r#"{"clip":id?,"node":id?,"label":str}"#, label),
         spec(
             "grade.setParam",
@@ -143,7 +143,7 @@ pub(crate) fn edit_grade<R>(s: &mut Session, p: &Value, cmd: &'static str, label
 }
 
 /// [`edit_grade`] that merges consecutive edits with the same `merge` key into one undo step.
-fn edit_grade_merged<R>(
+pub(crate) fn edit_grade_merged<R>(
     s: &mut Session,
     p: &Value,
     cmd: &'static str,
@@ -193,6 +193,8 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn params(_: &mut Session, _: &Value) -> Result<Value> {
     let list: Vec<Value> = filmcraft_project::grade::NODE_PARAMS
         .iter()
+        // (then the graph parameters of keys and mixers, fork C2)
+        .chain(filmcraft_project::grade::GRAPH_PARAMS)
         .map(|p| match p.kind {
             NodeParamKind::Float { identity, min, max } => {
                 json!({"key": p.key, "label": p.label, "kind": "float", "identity": identity, "min": min, "max": max})
@@ -234,34 +236,95 @@ fn add(s: &mut Session, p: &Value, before: bool) -> Result<Value> {
         }
         let mut n = GradeNode::new(id);
         n.label = label;
+        // a branched grade (fork C2): the node is wired in after / before its anchor
+        let branched = g.is_graph();
+        if branched {
+            crate::grade_graph::begin(g);
+        }
         g.nodes.insert(at.min(g.nodes.len()), n);
+        if branched {
+            if before {
+                crate::grade_graph::wire_before(g, anchor, id, cmd)?;
+            } else {
+                crate::grade_graph::wire_after(g, anchor, id, cmd)?;
+            }
+            crate::grade_graph::finish(g, cmd)?;
+        }
+        // (a grade with a hand-made layout: the node goes next to its anchor, fork C2b)
+        g.place_new(&[id], anchor);
         Ok(id)
     })?;
     s.state.grade_node = Some(crate::GradeSel { clip, node: id });
     Ok(json!({ "node": id }))
 }
 
+/// The `nodes` list of a command that takes several nodes at once (the node canvas's selection):
+/// None when absent, an error when not a list of node ids or longer than a grade can hold.
+fn nodes_arg(p: &Value, cmd: &str) -> Result<Option<Vec<u64>>> {
+    match p.get("nodes") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(a)) if a.len() <= MAX_NODES.saturating_mul(4) => {
+            let mut ids: Vec<u64> = a.iter().map(|v| v.as_u64().ok_or_else(|| bad(cmd, "`nodes` must be node ids"))).collect::<Result<_>>()?;
+            ids.dedup();
+            if ids.is_empty() {
+                return Err(bad(cmd, "`nodes` is empty"));
+            }
+            Ok(Some(ids))
+        }
+        Some(_) => Err(bad(cmd, "`nodes` must be a list of node ids")),
+    }
+}
+
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
-    let want = node_arg(p, "grade.removeNode")?;
-    let (clip, current) = current_for(s, p, "grade.removeNode")?;
-    let (id, neighbour) = edit_grade(s, p, "grade.removeNode", "Delete Node", false, |g| {
-        let id = pick(g, want, current, "grade.removeNode")?;
-        let i = g.nodes.iter().position(|n| n.id == id).ok_or_else(|| bad("grade.removeNode", format!("no node {id}")))?;
-        g.nodes.remove(i);
+    const CMD: &str = "grade.removeNode";
+    let want = node_arg(p, CMD)?;
+    let many = nodes_arg(p, CMD)?;
+    let (clip, current) = current_for(s, p, CMD)?;
+    let (gone, neighbour) = edit_grade(s, p, CMD, "Delete Node", false, |g| {
+        let ids = match many {
+            Some(ids) => ids,
+            None => vec![pick(g, want, current, CMD)?],
+        };
+        let first = ids.iter().filter_map(|id| g.nodes.iter().position(|n| n.id == *id)).min().unwrap_or(0);
+        // a branched grade (fork C2): what a node fed is fed from its input (a splitter or a
+        // combiner takes its pair with it); refused when the rest could not render
+        let branched = g.is_graph();
+        if branched {
+            crate::grade_graph::begin(g);
+        }
+        let mut gone: Vec<u64> = Vec::new();
+        for id in ids {
+            if gone.contains(&id) {
+                continue;
+            }
+            if g.node(id).is_none() {
+                return Err(bad(CMD, format!("no node {id}")));
+            }
+            if branched {
+                gone.extend(crate::grade_graph::unhook(g, id));
+            } else {
+                gone.push(id);
+            }
+            g.nodes.retain(|n| !gone.contains(&n.id));
+        }
+        if branched {
+            crate::grade_graph::finish(g, CMD)?;
+        }
         // the previous node, else the next one
-        let neighbour = g.nodes.get(i.wrapping_sub(1)).or_else(|| g.nodes.get(i)).map(|n| n.id);
-        Ok((id, neighbour))
+        let neighbour = g.nodes.get(first.wrapping_sub(1)).or_else(|| g.nodes.get(first)).map(|n| n.id);
+        Ok((gone, neighbour))
     })?;
-    if current == Some(id) {
+    if current.is_some_and(|c| gone.contains(&c)) {
         s.state.grade_node = neighbour.map(|node| crate::GradeSel { clip, node });
     }
-    Ok(Value::Null)
+    Ok(json!({ "removed": gone }))
 }
 
 fn move_node(s: &mut Session, p: &Value) -> Result<Value> {
     let id = node_id(p, "node", "grade.moveNode")?;
     let to = uint(p, "to").ok_or_else(|| bad("grade.moveNode", "need `to` (a position)"))?;
     edit_grade(s, p, "grade.moveNode", "Move Node", false, |g| {
+        crate::grade_graph::serial_only(g, "grade.moveNode")?;
         let i = g.nodes.iter().position(|n| n.id == id).ok_or_else(|| bad("grade.moveNode", format!("no node {id}")))?;
         let to = usize::try_from(to).unwrap_or(usize::MAX).min(g.nodes.len().saturating_sub(1));
         if to != i {
@@ -276,12 +339,21 @@ fn move_node(s: &mut Session, p: &Value) -> Result<Value> {
 fn toggle(s: &mut Session, p: &Value) -> Result<Value> {
     let want = node_arg(p, "grade.toggleNode")?;
     let current = current_for(s, p, "grade.toggleNode")?.1;
+    let many = nodes_arg(p, "grade.toggleNode")?;
     let on = bool_p(p, "on");
     let now = edit_grade(s, p, "grade.toggleNode", "Enable / Disable Node", false, |g| {
-        let id = pick(g, want, current, "grade.toggleNode")?;
-        let n = node_mut(g, id, "grade.toggleNode")?;
-        n.enabled = on.unwrap_or(!n.enabled);
-        Ok(n.enabled)
+        let ids = match many {
+            Some(ids) => ids,
+            None => vec![pick(g, want, current, "grade.toggleNode")?],
+        };
+        // several nodes (one undo step): each flips, unless `on` says
+        let mut last = true;
+        for id in ids {
+            let n = node_mut(g, id, "grade.toggleNode")?;
+            n.enabled = on.unwrap_or(!n.enabled);
+            last = n.enabled;
+        }
+        Ok(last)
     })?;
     Ok(json!({ "enabled": now }))
 }
@@ -398,13 +470,16 @@ fn node_input(s: &mut Session, p: &Value, cmd: &'static str) -> Result<(ClipId, 
     }
     let g = it.grade.as_ref().ok_or_else(|| bad(cmd, "the clip has no grade"))?;
     let id = pick(g, want, current, cmd)?;
-    let pos = g.nodes.iter().position(|n| n.id == id).ok_or_else(|| bad(cmd, format!("no node {id}")))?;
+    if g.node(id).is_none() {
+        return Err(bad(cmd, format!("no node {id}")));
+    }
     let tl = time_p(s, p, "").unwrap_or_else(|| s.playhead()).clamp(it.start, (it.end() - Tick(1)).max(it.start));
     // the node's input: the nodes before it, no effects after the grade
     let mut probe = (*s.project).clone();
     if let Some((_, pi)) = probe.sequence_mut(seq_id).and_then(|q| q.find_item_mut(c)) {
         if let Some(pg) = pi.grade.as_mut() {
-            pg.nodes.truncate(pos);
+            // (a graph keeps its nodes and makes the node feeding this one the output)
+            crate::grade_graph::probe_before(pg, id);
         }
         for e in pi.effects.iter_mut().filter(|e| !e.def().is_some_and(|d| d.intrinsic)) {
             e.enabled = false;
@@ -461,7 +536,7 @@ pub(crate) fn wb_clip(
     let fallback = WbClip { source: None, level: ClipLevel::working(wb_clip_level(pipe.working)) };
     let Some((_, media, _)) = s.project.resolve_media(item) else { return Ok(fallback) };
     let Some(v) = media.info.video.as_ref() else { return Ok(fallback) };
-    let cs = media.interpret.color_space.unwrap_or_else(|| filmcraft_color::ColorSpace::from_info(&v.color));
+    let cs = media.interpret.color_space.unwrap_or_else(|| v.detected_color_space());
     // (stills and generators decode to RGB, full range, as the renderer treats them)
     let range = if media.info.kind == filmcraft_media::MediaKind::Movie { v.color.range } else { filmcraft_color::Range::Full };
     let peak = filmcraft_render::colorman::source_peak_nits(&s.project, item).filter(|p| p.is_finite() && *p > 0.0).map(|p| f64::from(p.round()));
@@ -903,7 +978,33 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Append `src`'s nodes after `dst`'s with fresh ids; nodes beyond [`MAX_NODES`] are dropped.
-fn append_nodes(dst: &mut Grade, src: &Grade) {
+/// Returns false (and leaves `dst` alone) when a branched result couldn't render.
+fn append_nodes(dst: &mut Grade, src: &Grade) -> bool {
+    let old: Vec<u64> = dst.nodes.iter().map(|n| n.id).collect();
+    // (the appended nodes go to the right of the grade they join, fork C2b)
+    let right = dst.layout().iter().map(|(_, p)| p[0]).fold(f32::MIN, f32::max);
+    let ok = append_nodes_unplaced(dst, src);
+    if ok {
+        let new: Vec<u64> = dst.nodes.iter().map(|n| n.id).filter(|id| !old.contains(id)).collect();
+        let src_left = src.nodes.iter().filter_map(|n| src.stored_pos(n.id)).map(|p| p[0]).fold(f32::MAX, f32::min);
+        if src_left < f32::MAX && !old.is_empty() {
+            dst.offset_positions(&new, [right + filmcraft_project::grade::LAYOUT_COLUMN - src_left, 0.0]);
+        }
+        // a hand-made layout receiving nodes without positions: they go after its output
+        let unplaced: Vec<u64> = new.iter().copied().filter(|id| dst.stored_pos(*id).is_none()).collect();
+        if !unplaced.is_empty() {
+            let anchor = dst.output_node().ok().filter(|o| old.contains(o));
+            dst.place_new(&unplaced, anchor);
+        }
+    }
+    ok
+}
+
+fn append_nodes_unplaced(dst: &mut Grade, src: &Grade) -> bool {
+    // a branched grade on either side (fork C2): the connections come along
+    if dst.is_graph() || src.is_graph() {
+        return crate::grade_graph::append_graph(dst, src);
+    }
     for node in &src.nodes {
         if dst.nodes.len() >= MAX_NODES {
             break;
@@ -916,6 +1017,7 @@ fn append_nodes(dst: &mut Grade, src: &Grade) {
         copy.id = id;
         dst.nodes.push(copy);
     }
+    true
 }
 
 fn append(s: &mut Session, p: &Value) -> Result<Value> {
@@ -927,7 +1029,18 @@ fn append(s: &mut Session, p: &Value) -> Result<Value> {
     if full && !g.nodes.is_empty() {
         return Err(bad("grade.append", format!("a grade holds at most {MAX_NODES} nodes")));
     }
-    let n = edit_grades(s, &targets, "Append Grade", |slot| append_nodes(slot.get_or_insert_with(Grade::default), &g))?;
+    // a branched append that couldn't render on some clip is refused before anything changes
+    if let Some(q) = s.active_sequence() {
+        for c in &targets {
+            let mut trial = q.find_item(*c).and_then(|(_, it)| it.grade.clone()).unwrap_or_default();
+            if !append_nodes(&mut trial, &g) {
+                return Err(bad("grade.append", format!("appended to clip {}, the grade's nodes would not render (too many nodes or connections)", c.0)));
+            }
+        }
+    }
+    let n = edit_grades(s, &targets, "Append Grade", |slot| {
+        append_nodes(slot.get_or_insert_with(Grade::default), &g);
+    })?;
     Ok(json!({ "clips": n }))
 }
 

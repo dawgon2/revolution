@@ -160,7 +160,7 @@ mod tests {
     fn resolve_wording_applies_in_english_and_falls_back_elsewhere() {
         set_resolve(true);
         assert_eq!(Language::En.tr("Sequence Settings…"), "Timeline Settings…");
-        assert_eq!(Language::En.tr("Effect Controls"), "Inspector");
+        assert_eq!(Language::En.tr("Effect Controls"), "Keyframes");
         assert_eq!(Language::En.tr("Nest…"), "New Compound Clip…");
         // no Spanish wording in the overlay: the normal Spanish translation
         assert_eq!(Language::Es.tr("Sequence Settings…"), plain(Language::Es, "Sequence Settings…"));

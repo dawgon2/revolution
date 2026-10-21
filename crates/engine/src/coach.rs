@@ -324,6 +324,11 @@ pub const BUNDLED_FILES: &[(&str, &str)] = &[
     ("log-noise.toml", include_str!("../../../assets/lessons/log-noise.toml")),
     ("first-comp.toml", include_str!("../../../assets/lessons/first-comp.toml")),
     ("key-comp.toml", include_str!("../../../assets/lessons/key-comp.toml")),
+    ("parallel-nodes.toml", include_str!("../../../assets/lessons/parallel-nodes.toml")),
+    ("layer-look.toml", include_str!("../../../assets/lessons/layer-look.toml")),
+    ("splitter-combiner.toml", include_str!("../../../assets/lessons/splitter-combiner.toml")),
+    ("outside-node.toml", include_str!("../../../assets/lessons/outside-node.toml")),
+    ("key-mixer.toml", include_str!("../../../assets/lessons/key-mixer.toml")),
 ];
 
 /// The bundled lessons that parse, in lesson order (a broken file is left out and logged; a test

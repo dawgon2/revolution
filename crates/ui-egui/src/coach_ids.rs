@@ -28,7 +28,7 @@ pub const MAX_SEEN: usize = 50_000;
 #[rustfmt::skip]
 pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "about.*", "about.credits.header.*", "about.credits.names.*", "about.tab.*", "addTracks.*.amount", "addTracks.*.placement",
-    "addTracks.*.placement.option.*", "addTracks.*.type", "addTracks.*.type.option.*", "align.*", "assistant.lesson.*", "assistant.line.*.*", "assistant.noSteps.*", "assistant.rate.*.correction", "assistant.rate.*.down", "assistant.rate.*.share", "assistant.rate.*.up", "assistant.seen.*", "assistant.setup.*", "assistant.step.*.*", "assistant.turn.*", "audioGain.*", "audioGain.*.value",
+    "addTracks.*.placement.option.*", "addTracks.*.type", "addTracks.*.type.option.*", "align.*", "assistant.doThis.*", "assistant.lesson.*", "assistant.line.*.*", "assistant.noSteps.*", "assistant.rate.*.correction", "assistant.rate.*.down", "assistant.rate.*.share", "assistant.rate.*.up", "assistant.reference.*", "assistant.seen.*", "assistant.setup.*", "assistant.step.*.*", "assistant.turn.*", "audioGain.*", "audioGain.*.value",
     "audioMeters.channel.*", "clipMixer.*", "clips.card.*", "clips.split.*", "coach.ask.assistLine.*", "coach.ask.step.*", "coach.lessons.item.*", "comp.param.*", "comp.wheel.*", "comp.curve.*", "comp.param.*.stopwatch", "comp.mask.*", "comp.mask*.*", "colorDialog.par.*", "colorDialog.space.*", "colorDialog.working.*",
     "deleteTracks.*", "deleteTracks.*.option.*", "deleteTracks.*.option.empty", "deleteTracks.*.target", "display.*", "dock.gutter.*",
     "editCameras.enabled.*", "editCameras.name.*", "editCameras.thumb.*", "effectControls.*.*", "effectControls.*.*.eyedropper",
@@ -44,12 +44,12 @@ pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "export.queue.item.*", "export.queue.item.*.*", "export.section.*", "exportFrame.depth.*", "exportFrame.format.*",
     "exportTemplate.control.*", "find.match.*", "find.row.*.column", "find.row.*.operator", "find.row.*.text", "fxEditor.*.*",
     "fxEditor.*.close", "fxEditor.*.curve", "fxEditor.*.curve.*", "fxEditor.*.node.*", "fxEditor.*.param.*", "fxEditor.*.plot",
-    "fxEditor.*.reset", "fxEditor.*.toggle.*", "gfxTemplates.control.*", "gfxTemplates.item.*", "grade.curve.*", "grade.node.*",
+    "fxEditor.*.reset", "fxEditor.*.toggle.*", "gfxTemplates.control.*", "gfxTemplates.item.*", "grade.curve.*",
     "grade.param.**", "grade.param.**.reset", "grade.qual.show.*", "grade.tab.*", "grade.wheel.*", "grade.wheel.*.master", "grade.wheel.*.reset", "grade.window.*",
     "grade.window.*.delete", "grade.window.*.invert", "grade.window.*.softness", "grade.window.*.track.*", "grade.window.add.*",
     "graphics.*", "graphics.align.*", "graphics.arrange.*", "graphics.distribute.*", "graphics.layers.*", "graphics.layers.*.visible",
     "graphics.pin.*", "graphics.prop.*", "graphics.roll.*", "graphics.section.*", "graphics.textProperties.type.*", "graphics.time.*",
-    "guides.manage.row.*", "header.*", "header.mode.*", "import.*", "import.link.*", "labels.colors.*.color", "labels.colors.*.name",
+    "guides.manage.row.*", "header.*", "header.mode.*", "import.*", "import.link.*", "inspector.*.*", "inspector.file.*", "inspector.section.*", "inspector.tab.*", "labels.colors.*.color", "labels.colors.*.name",
     "linkMedia.*", "linkMedia.candidate.*", "linkMedia.match.*", "linkMedia.row.*", "lumetri.*", "lumetri.param.*", "lumetri.section.*",
     "lumetri.switch.*", "markers.filter.*", "markers.row.*", "mcam.audio.*", "mcam.cameraNames.*", "mediaBrowser.*",
     "mediaBrowser.columns.*", "mediaBrowser.entry.*", "mediaBrowser.fileTypes.*", "mediaBrowser.header.*", "mediaBrowser.menu.*",
@@ -59,12 +59,12 @@ pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "panel.menu.Source.recent.*", "panel.tab.*", "panel.tabs.list.*", "panel.tabs.more.*", "pausedRes.*", "playbackRes.*", "pm.mode.*",
     "pm.preset.*", "pm.seq.*", "presetManager.favorite.*", "presetManager.item.*", "program.compare.*", "program.layer.*.*",
     "program.layer.*.*.anchor", "program.layer.*.*.corner.*", "program.layer.*.*.handle.*", "program.mask.*", "program.mask.*.*",
-    "program.mask.vertex.*", "program.multicam.*", "program.multicam.angle.*", "program.split.*", "progress.cancel.*", "progress.job.*", "project.itemMenu.*",
+    "program.mask.vertex.*", "program.multicam.*", "program.multicam.angle.*", "program.split.*", "progress.cancel.*", "progress.job.*", "project.bins.*", "project.itemMenu.*",
     "project.itemMenu.kdeconnect.*", "project.menu.*", "project.menu.fontSize.*", "project.menu.restoreViewPreset.*", "project.menu.view.*", "project.searchBin.*",
     "project.tab.*", "project.tab.*.close", "projectBin.*", "projectBin.*.window", "projectDialog.*", "projectDialog.down.*",
     "projectDialog.field.*", "projectDialog.preset.*", "projectDialog.up.*", "projectSettings.*.*", "projectSettings.scratch.*",
     "projectSettings.scratch.*.browse", "projectSettings.scratch.*.same", "projectSettings.tab.*", "projects.crumb.*",
-    "projects.folder.*", "projects.menu.*", "projects.other.*", "projects.sidebar.*", "projects.sort.*", "projects.tile.*", "properties.*.*", "proxies.preset.*",
+    "projects.folder.*", "projects.menu.*", "projects.other.*", "projects.sidebar.*", "projects.sidebar.remote.*", "projects.sort.*", "projects.tile.*", "projects.transfer.entry.**", "projects.transfer.location.*", "projects.transfer.receiver.*", "properties.*.*", "proxies.preset.*",
     "quickExport.preset.*", "recovery.item.*", "reference.display.*", "reference.scope.*", "savePreset.keyframes.*", "remote.*", "remote.entry.**", "remote.location.*", "scopes.menu.*",
     "scopes.menu.brightness.*", "scopes.menu.colorSpace.*", "scopes.menu.paradeType.*", "scopes.menu.preset.*", "scopes.menu.scale.*",
     "scopes.menu.targets.*", "scopes.menu.waveformType.*", "sequenceSettings.*", "sequenceSettings.channelFormat.option.*",
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(s.len(), 2);
         assert!(s.contains("c.d") && !s.contains("e.f"));
         // ids a pattern covers aren't stored
-        s.record(["timeline.clip.42", "grade.node.7"].into_iter());
+        s.record(["timeline.clip.42", "clips.card.7"].into_iter());
         assert_eq!(s.len(), 2);
         let many: Vec<String> = (0..MAX_SEEN + 10).map(|i| format!("x.{i}")).collect();
         s.record(many.iter().map(String::as_str));

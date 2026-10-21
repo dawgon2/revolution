@@ -49,6 +49,13 @@
 //! - **v18** (fork C1): compositions (`ItemKind::Comp`, a node graph as a project item; fork ADR
 //!   0007). No-op step; older builds refuse a project that contains a comp (unknown item kind), so
 //!   the bump makes them say "too new" instead.
+//! - **v19** (fork C2): branched grades (`Grade::edges` / `Grade::output`, `GradeNode::kind`:
+//!   parallel / layer mixers, splitter / combiner, key mixer; `docs/fork/DESIGN-C2.md`). No-op
+//!   step (serial grades are unchanged and still store no edges); older builds would silently drop
+//!   the connections and node kinds, so the bump makes them refuse the file instead. Also in v19
+//!   (fork C2b, before release): optional node-canvas positions (`GradeNode::pos`,
+//!   `Grade::input_pos`), written only once a node was dragged, so an undragged grade saves as
+//!   before; older builds would only lose the layout.
 //!
 //! **Fork lineage.** Before the first upstream sync (U0) the fork numbered the grades v13 and the
 //! stills v14, both no-op steps on an upstream v12 document, while upstream used v13 for
@@ -82,7 +89,7 @@ pub type Migration = fn(Value) -> Result<Value, String>;
 /// edit a shipped one.
 pub const MIGRATIONS: &[Migration] = &[
     v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14, v14_to_v15,
-    v15_to_v16, v16_to_v17, v17_to_v18,
+    v15_to_v16, v16_to_v17, v17_to_v18, v18_to_v19,
 ];
 
 /// The schema version this build writes (and the newest it reads).
@@ -461,6 +468,10 @@ fn v17_to_v18(doc: Value) -> Result<Value, String> {
     Ok(doc)
 }
 
+fn v18_to_v19(doc: Value) -> Result<Value, String> {
+    Ok(doc)
+}
+
 /// The v16 grade-node keys that move to the clip in v17, with their clip key.
 const TNR_NODE_KEYS: [(&str, &str); 4] = [("tnr.luma", "luma"), ("tnr.chroma", "chroma"), ("tnr.frames", "frames"), ("tnr.motion", "motion")];
 
@@ -588,7 +599,7 @@ mod tests {
 
     #[test]
     fn schema_version_matches_table() {
-        assert_eq!(SCHEMA_VERSION, 18);
+        assert_eq!(SCHEMA_VERSION, 19);
     }
 
     /// A project with a media item (one audio stream), a graded clip and a still, as the fork
@@ -966,6 +977,39 @@ mod tests {
         forged["schema_version"] = 16.into();
         forged["migration_notes"] = serde_json::json!(["forged"]);
         assert!(decode(&serde_json::to_vec(&forged).unwrap()).unwrap().migration_notes.is_empty());
+    }
+
+    /// Fork C2 (schema v19): a v18 file's serial grade loads unchanged and saves without any graph
+    /// keys; a branched grade (edges, node kinds, output) round-trips.
+    #[test]
+    fn v18_serial_grades_load_unchanged_and_branched_grades_round_trip() {
+        use filmcraft_project::dag::{Edge, Port};
+        use filmcraft_project::grade::{Grade, GradeNode, NodeKind, SOURCE};
+        let serial = serde_json::json!({"nodes": [{"id": 1, "params": {"saturation": {"value": {"Float": 0.5}}}}, {"id": 2}]});
+        let mut doc: Value = serde_json::from_slice(&encode(&Project::new("Grades"), false)).unwrap();
+        doc["schema_version"] = 18.into();
+        doc["project"]["stills"] = serde_json::json!([{"id": 1, "grade": serial}]);
+        let loaded = decode(&serde_json::to_vec(&doc).unwrap()).unwrap();
+        assert_eq!(loaded.schema_version, 18);
+        let g = loaded.project.stills.first().and_then(|s| s.grade.clone()).unwrap();
+        assert!(!g.is_graph() && g.nodes.iter().all(|n| n.kind == NodeKind::Correction));
+        let again: Value = serde_json::from_slice(&encode(&loaded.project, false)).unwrap();
+        assert_eq!(again["schema_version"], SCHEMA_VERSION);
+        let grade = &again["project"]["stills"][0]["grade"];
+        assert!(grade.get("edges").is_none() && grade.get("output").is_none());
+        assert!(grade["nodes"].as_array().unwrap().iter().all(|n| n.get("kind").is_none()));
+
+        let mut b = Grade { nodes: (1..=3).map(GradeNode::new).collect(), ..Default::default() };
+        b.nodes[2].kind = NodeKind::LayerMixer;
+        let e = |f: u64, t: u64, i: u8| Edge::new(Port::new(f, 0), Port::new(t, i));
+        b.edges = vec![e(SOURCE, 1, 0), e(SOURCE, 2, 0), e(1, 3, 0), e(2, 3, 1)];
+        b.output = Some(3);
+        let mut p = loaded.project;
+        if let Some(s) = p.stills.first_mut() {
+            s.grade = Some(b.clone());
+        }
+        let back = decode(&encode(&p, false)).unwrap();
+        assert_eq!(back.project.stills.first().and_then(|s| s.grade.clone()), Some(b));
     }
 
     /// A comp item (fork C1) saves and loads; one from a hostile file is brought within its caps.

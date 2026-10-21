@@ -27,10 +27,12 @@ use filmcraft_time::Tick;
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 
+mod branches;
 #[doc(hidden)]
 pub mod cases;
 mod check;
 
+pub use branches::explain_branches;
 pub use check::{
     FactMismatch, GRAMMAR_DOC, NOOP_PHRASES, VOCABULARY, check_explanation, check_explanation_labeled, check_grammar, check_shape, check_vocabulary,
 };
@@ -1045,7 +1047,7 @@ mod tests {
 
     fn render_at(n: &GradeNode, img: &Image, t: Tick, ws: WorkingSpace) -> Image {
         let mut out = img.clone();
-        let g = Grade { nodes: vec![n.clone()], bypass: false };
+        let g = Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() };
         for op in compile_fx(&g, t, ws, GradeCtx::default(), img.w, img.h) {
             op.apply(&mut out);
         }
@@ -1085,7 +1087,7 @@ mod tests {
         show(&f, "Node 1 'Gain'");
         assert_eq!(f.controls.wheels, vec![WheelFact { wheel: "gain".into(), master: 0.1, towards: None, color_amount: 0.0 }]);
         // what the node really does to mid grey, in stops, independently of the explainer
-        let ops = crate::grade::compile(&Grade { nodes: vec![n.clone()], bypass: false }, Tick(0), R709);
+        let ops = crate::grade::compile(&Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() }, Tick(0), R709);
         let grey = filmcraft_color::ops::apply_chain(&ops, [0.18; 3]);
         let real = (grey[1] / 0.18).log2();
         assert_eq!(sixths(real), 2, "{real}");

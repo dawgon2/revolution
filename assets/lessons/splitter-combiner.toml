@@ -1,0 +1,66 @@
+# Grading Coach lesson (fork COMPOSITOR-PLAN C2 lane 5: splitter and combiner). Format:
+# crates/engine/src/coach.rs. Written for this fork in our own words.
+id = "splitter-combiner"
+title = "Grade the red, green and blue channels separately"
+summary = "Split a picture into its red, green and blue channels, correct one channel, and combine them again."
+provenance = ["resolve-style", "fork"]
+order = 12
+
+[[step]]
+text = "A splitter turns a picture into three grey pictures, one per colour channel. You correct them separately, and a combiner puts them back together into one colour picture. Adding the pair makes a node for each channel."
+why = "Some problems live in one channel only, such as a blue channel that is noisy or clipped; this is how you reach it."
+expect = { manual = true }
+
+[[step]]
+text = "Open the Color Grading workspace (Workspaces button at the top, then Color Grading)."
+why = "You need the node canvas and the Primaries panel."
+target = "header.workspaces"
+expect = { element = "panel.ColorNodes" }
+
+[[step]]
+text = "Select a clip in the Clips strip (or the timeline)."
+why = "The grade belongs to the selected clip."
+target = ["clips.strip", "timeline.tracks"]
+expect = { command = "timeline.select", params = { clips = [{ any = true }] } }
+already = "clipSelected"
+
+[[step]]
+text = "Add a first node (Add Node or + Serial)."
+why = "The splitter goes after a node, so something has to come first."
+target = ["grade.addFirst", "grade.addNode"]
+expect = { command = ["grade.addNode", "grade.insertNode"] }
+
+[[step]]
+text = "Right-click the node canvas (or the node) and choose Add Splitter / Combiner Nodes."
+why = "This adds a splitter, a node each for Red, Green and Blue, and a combiner. The Red node is selected."
+target = "grade.canvas"
+expect = { command = "grade.addSplitter" }
+
+[[step]]
+text = "Click the node named Blue on the canvas to select it."
+why = "Its picture is the blue channel as a grey image."
+target = "grade.canvas"
+expect = { command = "grade.selectNode" }
+
+[[step]]
+text = "Move the Gain wheel on the Blue node a little."
+why = "Only the blue channel changes; red and green are untouched, so the picture's colour balance shifts."
+target = "grade.wheel.gain"
+expect = { command = "grade.setParam", params = { param = { in = ["gain", "gamma", "lift", "offset", "contrast"] } } }
+
+[[step]]
+text = "Open the Match tab and press Explain grade."
+why = "The explainer says that the splitter splits the picture into red, green and blue, and that the combiner puts the channels back."
+target = "grade.tab.match"
+expect = { command = "grade.explainGrade" }
+
+[[step]]
+text = "Select the Blue node and press Disable, then Enable."
+why = "Switching the channel node off shows the picture without your blue change."
+target = "grade.toggleNode"
+expect = { command = "grade.toggleNode" }
+
+[[step]]
+text = "That is a splitter and combiner: three channel nodes in between. Press Next to finish."
+why = "Do your normal colour work before the splitter or after the combiner; use the channel nodes only for a fault that sits in one channel."
+expect = { manual = true }

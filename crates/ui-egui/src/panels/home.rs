@@ -56,7 +56,7 @@ const POSTER_LOADS_PER_FRAME: usize = 4;
 /// The sort keys (`projects.sort.<key>`; [`HomeState::sort`]).
 pub const SORT_KEYS: [&str; 3] = ["name", "modified", "created"];
 /// The right-click menu items (`projects.menu.<item>`).
-pub const MENU_ITEMS: [&str; 9] = ["open", "rename", "duplicate", "reveal", "export", "package", "trash", "remove", "locate"];
+pub const MENU_ITEMS: [&str; 10] = ["open", "rename", "duplicate", "reveal", "export", "package", "send", "trash", "remove", "locate"];
 
 /// The home screen's state (serde, so agents can read and set it).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -80,6 +80,10 @@ pub struct HomeState {
     /// A project was open when the screen opened: Close / Esc go back to it.
     pub can_return: bool,
     pub dialog: Option<HomeDialog>,
+    /// Send / Receive / Manage Locations (STORAGE-PLAN S2b).
+    pub transfer: Option<super::project_transfer::TransferDialog>,
+    /// Received packages being downloaded / imported.
+    pub receiving: Vec<super::project_transfer::PendingReceive>,
 }
 
 impl Default for HomeState {
@@ -97,6 +101,8 @@ impl Default for HomeState {
             selected: None,
             can_return: false,
             dialog: None,
+            transfer: None,
+            receiving: Vec::new(),
         }
     }
 }
@@ -181,6 +187,11 @@ fn project_ptr(app: &FilmcraftApp) -> usize {
     std::sync::Arc::as_ptr(&app.session.project) as usize
 }
 
+/// List the folder again on the next frame (a project arrived).
+pub(crate) fn mark_stale(app: &mut FilmcraftApp) {
+    app.home_rt.stale = true;
+}
+
 /// Open the home screen.
 pub fn show_home(app: &mut FilmcraftApp) {
     app.ui.home.open = true;
@@ -259,6 +270,9 @@ fn run(app: &mut FilmcraftApp, id: &str, params: Value) -> Result<Value, String>
 pub fn route(app: &mut FilmcraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !id.starts_with("projects.") {
         return None;
+    }
+    if let Some(r) = super::project_transfer::route(app, id, params) {
+        return Some(r);
     }
     let r = match id {
         "projects.show" => {
@@ -652,7 +666,7 @@ fn poster_texture(rt: &mut Runtime, ctx: &egui::Context, s: &ProjectSummary, bud
     id
 }
 
-fn date(app: &FilmcraftApp, secs: Option<u64>) -> String {
+pub(crate) fn date(app: &FilmcraftApp, secs: Option<u64>) -> String {
     let Some(secs) = secs.and_then(|s| i64::try_from(s).ok()) else { return "—".into() };
     let offset = app.session.persistence.as_ref().map_or(0, |p| (p.local_offset)(secs));
     let s = projects::iso_local(secs, offset);
@@ -853,6 +867,8 @@ pub fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, full: Rect) {
         ("projects.import", tl!("Import"), true),
         ("projects.package", tl!("Package"), readable),
         ("projects.importPackage", tl!("Import Package"), true),
+        ("projects.send", tl!("Send…"), readable || projects::project_open(&app.session)),
+        ("projects.receive", tl!("Receive…"), true),
     ] {
         // wide enough for the label on one line (translations run longer)
         let text_w = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(13.0), Color32::WHITE).size().x;
@@ -882,26 +898,39 @@ pub fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, full: Rect) {
         let side = Rect::from_min_size(body.min, vec2(SIDEBAR_W, body.height()));
         p.rect_filled(side, 0.0, t.panel_bg);
         let mut y = side.min.y + 10.0;
-        let mut row = |ui: &mut egui::Ui, auto: &mut Registry, id: &str, text: &str, active: bool, indent: f32| -> bool {
-            let r = Rect::from_min_size(pos2(side.min.x + 6.0, y), vec2(SIDEBAR_W - 12.0, 24.0));
+        let row = |ui: &mut egui::Ui, auto: &mut Registry, y: &mut f32, id: &str, text: &str, active: bool, indent: f32| -> bool {
+            let r = Rect::from_min_size(pos2(side.min.x + 6.0, *y), vec2(SIDEBAR_W - 12.0, 24.0));
             let resp = ui.interact(r, egui::Id::new(id), Sense::click());
             if active || resp.hovered() {
                 p.rect_filled(r, 3.0, if active { t.row_selected } else { t.hover });
             }
             p.text(pos2(r.min.x + 8.0 + indent, r.center().y), Align2::LEFT_CENTER, text, Tokens::ui(13.0), t.text);
             auto.add(id, r, text);
-            y += 26.0;
+            *y += 26.0;
             resp.clicked()
         };
-        if row(ui, &mut app.auto, "projects.sidebar.root", tl!("Projects"), h.folder.is_empty(), 0.0) {
+        if row(ui, &mut app.auto, &mut y, "projects.sidebar.root", tl!("Projects"), h.folder.is_empty(), 0.0) {
             acts.push(Act::Folder(String::new()));
         }
         if h.folder.is_empty() {
             for (i, f) in listing.folders.iter().enumerate().take(40) {
-                if row(ui, &mut app.auto, &format!("projects.sidebar.{i}"), &f.name, false, 14.0) {
+                if row(ui, &mut app.auto, &mut y, &format!("projects.sidebar.{i}"), &f.name, false, 14.0) {
                     acts.push(Act::Folder(f.folder.clone()));
                 }
             }
+        }
+        // STORAGE-PLAN S2b item 3: saved servers; a click browses one to receive from it
+        y += 8.0;
+        p.text(pos2(side.min.x + 14.0, y + 8.0), Align2::LEFT_CENTER, tl!("Remote"), Tokens::semibold(12.0), t.text_dim);
+        y += 22.0;
+        let open_loc = h.transfer.as_ref().filter(|d| d.kind == "receive").map(|d| d.location.clone());
+        for l in app.session.prefs.remote.locations.clone().iter().take(40) {
+            if row(ui, &mut app.auto, &mut y, &format!("projects.sidebar.remote.{}", l.id), &l.name, open_loc.as_deref() == Some(l.id.as_str()), 14.0) {
+                acts.push(Act::Cmd("projects.receive".into(), json!({"id": l.id})));
+            }
+        }
+        if row(ui, &mut app.auto, &mut y, "projects.sidebar.manageLocations", tl!("Manage Locations…"), false, 14.0) {
+            acts.push(Act::Cmd("projects.manageLocations".into(), json!({})));
         }
         body.min.x = side.max.x;
     }
@@ -932,13 +961,13 @@ pub fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, full: Rect) {
     });
     // only commit what the widgets changed if nothing else changed the state meanwhile
     if app.ui.home.open {
-        let dialog = app.ui.home.dialog.clone();
-        app.ui.home = HomeState { dialog, ..h };
+        let (dialog, transfer, receiving) = (app.ui.home.dialog.clone(), app.ui.home.transfer.clone(), std::mem::take(&mut app.ui.home.receiving));
+        app.ui.home = HomeState { dialog, transfer, receiving, ..h };
     }
 
     // ---- keys
     let typing = ctx.memory(|m| m.focused().is_some());
-    if app.ui.home.dialog.is_none() {
+    if app.ui.home.dialog.is_none() && app.ui.home.transfer.is_none() {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             acts.push(Act::Cmd("projects.close".into(), json!({})));
         } else if !typing && ctx.input(|i| i.key_pressed(egui::Key::Enter)) && app.ui.home.selected.is_some() {
@@ -946,6 +975,7 @@ pub fn draw(app: &mut FilmcraftApp, ui: &mut egui::Ui, full: Rect) {
         }
     }
     dialogs(app, &ctx, &mut acts);
+    super::project_transfer::show(app, &ctx);
     for a in acts {
         match a {
             Act::Cmd(id, params) => {
@@ -1160,6 +1190,7 @@ fn tile_response(app: &mut FilmcraftApp, resp: &egui::Response, e: &Entry, acts:
                     menu_item(ui, auto, &path, "export", tl!("Export…"), "projects.export", json!({"path": path}), acts);
                     menu_item(ui, auto, &path, "package", tl!("Package…"), "projects.package", json!({"path": path}), acts);
                     menu_item(ui, auto, &path, "package-file", tl!("Package as One File…"), "projects.package", json!({"path": path, "format": "file"}), acts);
+                    menu_item(ui, auto, &path, "send", tl!("Send…"), "projects.send", json!({"path": path}), acts);
                 }
                 ui.separator();
                 if *other {

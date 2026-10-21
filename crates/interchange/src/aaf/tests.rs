@@ -17,6 +17,7 @@ fn project() -> (Project, ItemId) {
         kind: filmcraft_media::MediaKind::Movie,
         duration: FrameRate::FPS_24.tick_of(2400),
         video: Some(filmcraft_media::VideoStreamInfo {
+            camera_color_space: None,
             width: 1280,
             height: 720,
             frame_rate: FrameRate::FPS_24,

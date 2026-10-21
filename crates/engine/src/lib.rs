@@ -22,6 +22,7 @@ pub mod coach_ask;
 pub mod coach_assist;
 pub mod coach_hints;
 pub mod coach_meaning;
+pub mod coach_reference;
 pub mod coach_share;
 pub mod color;
 pub mod commands;
@@ -38,6 +39,7 @@ pub mod fork_resolve;
 #[cfg(feature = "fork-update")] // FORK-ONLY (UPD)
 pub mod fork_update;
 pub mod grade;
+pub mod grade_graph;
 pub mod grade_tools;
 pub mod graphic_templates;
 pub mod graphics;
@@ -51,6 +53,7 @@ pub mod media_watch;
 pub mod mixer;
 pub mod multicam;
 pub mod narration;
+pub mod nearby;
 pub mod net_cache;
 pub mod netfs;
 pub mod package;
@@ -73,6 +76,7 @@ pub mod remote;
 pub mod remote_project;
 pub mod remote_transfer;
 pub mod render_cache;
+pub(crate) mod resolve_edit;
 pub mod scene_detect;
 pub mod scopes;
 pub mod sequence_extras;
@@ -558,6 +562,8 @@ pub struct Session {
     pub trash_dir: Option<std::path::PathBuf>,
     /// The project open from a remote location (STORAGE-PLAN S2), with its lock.
     pub remote_project: Option<remote_project::RemoteProject>,
+    /// Receiving from a nearby computer (STORAGE-PLAN S2b): shared with the receive job.
+    pub nearby: nearby::Nearby,
 }
 
 /// An export advanced a batch at a time on the host's thread ([`Session::pump_jobs`]).
@@ -669,6 +675,7 @@ impl Session {
             poster_requests: Vec::new(),
             trash_dir: None,
             remote_project: None,
+            nearby: Default::default(),
         }
     }
 
@@ -1305,6 +1312,8 @@ mod coach_ask_tests;
 #[cfg(test)]
 mod coach_hints_tests;
 #[cfg(test)]
+mod coach_reference_tests;
+#[cfg(test)]
 mod coach_tests;
 #[cfg(test)]
 mod color_tests;
@@ -1324,6 +1333,8 @@ mod file_tests;
 mod fork_resolve_tests;
 #[cfg(test)]
 mod gap_selection_tests;
+#[cfg(test)]
+mod grade_graph_tests;
 #[cfg(test)]
 mod grade_tests;
 #[cfg(test)]
@@ -1348,6 +1359,8 @@ mod mixer_tests;
 mod multicam_tests;
 #[cfg(test)]
 mod narration_tests;
+#[cfg(all(test, feature = "remote-net"))]
+mod nearby_tests;
 #[cfg(test)]
 mod nest_editing_tests;
 #[cfg(test)]
@@ -1382,6 +1395,8 @@ mod proxy_preset_tests;
 mod relink_tests;
 #[cfg(test)]
 mod remix_tests;
+#[cfg(test)]
+mod resolve_edit_tests;
 #[cfg(test)]
 mod ripple_delete_tests;
 #[cfg(test)]

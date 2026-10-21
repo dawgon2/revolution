@@ -37,14 +37,19 @@ const MAX_SCENE: usize = 64;
 pub(crate) fn commands() -> Vec<CommandSpec> {
     vec![
         query("grade.compareData", "Compare Grade Data", r#"{"clips":[id]?}"#, compare_data),
-        query("grade.compareShots", "Compare Shots", r#"{"clip":id?,"time":ticks?,"with":id?,"withTime":ticks?,"referenceTime":ticks?}"#, compare_shots),
+        query(
+            "grade.compareShots",
+            "Compare Shots",
+            r#"{"clip":id?,"time":ticks?,"with":id?,"withTime":ticks?,"referenceTime":ticks?,"still":id?}"#,
+            compare_shots,
+        ),
         query("grade.checkScene", "Check Scene", r#"{"clips":[id]?}"#, check_scene),
         CommandSpec {
             id: "grade.shotMatch",
             label: "Shot Match",
             menu: &["Clip", "Grade"],
             shortcut: None,
-            params: r#"{"clip":id?,"with":id?,"withTime":ticks?,"referenceTime":ticks?,"faceDetection":bool?}"#,
+            params: r#"{"clip":id?,"with":id?,"withTime":ticks?,"referenceTime":ticks?,"still":id?,"faceDetection":bool?}"#,
             enabled: has_seq,
             run: shot_match,
             journal: true,
@@ -77,10 +82,23 @@ fn clip_time(s: &Session, p: &Value, key: &str, clip: ClipId, cmd: &str) -> Resu
 /// What of a clip a measurement renders.
 #[derive(Clone, Copy)]
 struct Probe {
-    /// Keep the first this many grade nodes (None: all).
-    nodes: Option<usize>,
+    /// How much of the grade renders.
+    at: At,
     /// Keep the effect stack after the grade.
     effects: bool,
+}
+
+/// How much of a grade a measurement renders. On a branched grade (fork C2) a node's input is
+/// what feeds its RGB input and "through" makes the node the output, so no connection ever names
+/// a node that was cut away.
+#[derive(Clone, Copy)]
+enum At {
+    All,
+    Ungraded,
+    /// Node `id`'s input picture.
+    Before(u64),
+    /// Up to and including node `id`.
+    Through(u64),
 }
 
 /// The clip's layer at sequence time `t` as `probe` says, at ¼ size in working linear light.
@@ -89,8 +107,11 @@ fn clip_frame(s: &Session, clip: ClipId, t: Tick, probe: Probe, cmd: &str) -> Re
     let mut pr = (*s.project).clone();
     if let Some((_, pi)) = pr.sequence_mut(seq).and_then(|q| q.find_item_mut(clip)) {
         if let Some(g) = pi.grade.as_mut() {
-            if let Some(n) = probe.nodes {
-                g.nodes.truncate(n);
+            match probe.at {
+                At::All => {}
+                At::Ungraded => crate::grade_graph::probe_ungraded(g),
+                At::Before(id) => crate::grade_graph::probe_before(g, id),
+                At::Through(id) => crate::grade_graph::probe_through(g, id),
             }
             // (the qualifier's view replaces the picture: never measure it)
             for n in &mut g.nodes {
@@ -184,16 +205,24 @@ fn compare_data(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"groups": groups, "clips": each}))
 }
 
-/// The reference frame of a comparison or a match: `with` (a clip, as it finally looks) or
-/// `referenceTime` (the sequence frame there).
+/// The reference frame of a comparison or a match: `still` (a Gallery still's picture, e.g. an
+/// imported reference picture, REF.3), `with` (a clip, as it finally looks) or `referenceTime`
+/// (the sequence frame there).
 fn reference_frame(s: &Session, p: &Value, clip: ClipId, cmd: &str) -> Result<Image> {
+    if let Some(v) = p.get("still") {
+        let id = v.as_u64().ok_or_else(|| bad(cmd, "`still` must be a still id"))?;
+        if !s.project.stills.iter().any(|x| x.id == id) {
+            return Err(bad(cmd, format!("no still {id}")));
+        }
+        return still_working(s, id, None, cmd);
+    }
     if p.get("with").is_some() {
         let w = clip_p(p, "with").ok_or_else(|| bad(cmd, "`with` must be a clip id"))?;
         if w == clip {
             return Err(bad(cmd, "compare with another clip (or pass `referenceTime`)"));
         }
         let t = clip_time(s, p, "with", w, cmd)?;
-        return clip_frame(s, w, t, Probe { nodes: None, effects: true }, cmd);
+        return clip_frame(s, w, t, Probe { at: At::All, effects: true }, cmd);
     }
     let rt = time_p(s, p, "reference").ok_or_else(|| bad(cmd, "need `with` (a clip) or `referenceTime`"))?;
     let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
@@ -210,7 +239,7 @@ fn compare_shots(s: &mut Session, p: &Value) -> Result<Value> {
     let clip = target(s, p, CMD)?;
     let t = clip_time(s, p, "", clip, CMD)?;
     let a = measure(&reference_frame(s, p, clip, CMD)?, s, CMD)?;
-    let b = measure(&clip_frame(s, clip, t, Probe { nodes: None, effects: true }, CMD)?, s, CMD)?;
+    let b = measure(&clip_frame(s, clip, t, Probe { at: At::All, effects: true }, CMD)?, s, CMD)?;
     let mut v = comparison_json(&grade_match::compare(&a, &b));
     v["clip"] = json!(clip.0);
     Ok(v)
@@ -227,7 +256,7 @@ fn check_scene(s: &mut Session, p: &Value) -> Result<Value> {
     let mut measured = Vec::new();
     for c in clips.into_iter().take(MAX_SCENE) {
         let t = clip_time(s, &json!({}), "", c, CMD)?;
-        let Ok(img) = clip_frame(s, c, t, Probe { nodes: None, effects: true }, CMD) else { continue };
+        let Ok(img) = clip_frame(s, c, t, Probe { at: At::All, effects: true }, CMD) else { continue };
         if let Some(st) = ShotStats::measure_in(&img, working(s)?) {
             stats.push(st);
             measured.push(c);
@@ -251,7 +280,7 @@ fn shot_match(s: &mut Session, p: &Value) -> Result<Value> {
     let t = clip_time(s, p, "", clip, CMD)?;
     let reference = reference_frame(s, p, clip, CMD)?;
     // the new node goes at the end of the grade, before the effects
-    let current = clip_frame(s, clip, t, Probe { nodes: None, effects: false }, CMD)?;
+    let current = clip_frame(s, clip, t, Probe { at: At::All, effects: false }, CMD)?;
     let skin = bool_p(p, "faceDetection").unwrap_or(true);
     let m = grade_match::match_node(&current, &reference, working(s)?, skin);
     let (before, after) = (m.before, m.after);
@@ -262,7 +291,20 @@ fn shot_match(s: &mut Session, p: &Value) -> Result<Value> {
         let mut n = m.node(g.next_id());
         n.label = "Shot Match".into();
         let id = n.id;
+        // a branched grade (fork C2): the node is wired in after the output
+        let branched = g.is_graph();
+        // (the node it follows: the output of a branched grade, else the last node)
+        let anchor = if branched { g.output } else { g.nodes.last().map(|n| n.id) };
+        if branched {
+            crate::grade_graph::begin(g);
+        }
         g.nodes.push(n);
+        if branched {
+            crate::grade_graph::wire_after(g, None, id, CMD)?;
+            crate::grade_graph::finish(g, CMD)?;
+        }
+        // (a grade with a hand-made layout: the node goes next to the one it follows, fork C2b)
+        g.place_new(&[id], anchor);
         Ok(id)
     })?;
     s.state.grade_node = Some(crate::GradeSel { clip, node: id });
@@ -271,17 +313,9 @@ fn shot_match(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// One node's facts: its input (the nodes before it) and output measured at `t`.
-fn node_facts(
-    s: &Session,
-    clip: ClipId,
-    t: Tick,
-    mt: Tick,
-    pos: usize,
-    node: &GradeNode,
-    cmd: &str,
-) -> Result<(filmcraft_render::grade_explain::NodeFacts, Image, Image)> {
-    let input = clip_frame(s, clip, t, Probe { nodes: Some(pos), effects: false }, cmd)?;
-    let output = clip_frame(s, clip, t, Probe { nodes: Some(pos + 1), effects: false }, cmd)?;
+fn node_facts(s: &Session, clip: ClipId, t: Tick, mt: Tick, node: &GradeNode, cmd: &str) -> Result<(filmcraft_render::grade_explain::NodeFacts, Image, Image)> {
+    let input = clip_frame(s, clip, t, Probe { at: At::Before(node.id), effects: false }, cmd)?;
+    let output = clip_frame(s, clip, t, Probe { at: At::Through(node.id), effects: false }, cmd)?;
     let facts = filmcraft_render::grade_explain::explain_node(node, mt, &input, &output, working(s)?);
     Ok((facts, input, output))
 }
@@ -302,7 +336,7 @@ fn explain_node(s: &mut Session, p: &Value) -> Result<Value> {
     let pos = g.nodes.iter().position(|n| n.id == id).ok_or_else(|| bad(CMD, format!("no node {id}")))?;
     let node = g.nodes.get(pos).cloned().ok_or_else(|| bad(CMD, format!("no node {id}")))?;
     let mt = media_time(s, &json!({"time": t.0}), clip);
-    let (facts, input, output) = node_facts(s, clip, t, mt, pos, &node, CMD)?;
+    let (facts, input, output) = node_facts(s, clip, t, mt, &node, CMD)?;
     let label = node_label(&node, pos);
     let sentence = facts.sentence(&label);
     // (G2.11: the text to show: a checked local-AI rewrite when enabled and ready, else the
@@ -348,16 +382,32 @@ fn explain_grade(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = Vec::new();
     // (each node against the frame before it: n + 1 renders, node i's output is node i + 1's
     // input; a disabled node explains itself as disabled)
-    let mut input = clip_frame(s, clip, t, Probe { nodes: Some(0), effects: false }, CMD)?;
+    let mut input = clip_frame(s, clip, t, Probe { at: At::Ungraded, effects: false }, CMD)?;
     for (pos, n) in g.nodes.iter().enumerate().take(MAX_NODES) {
-        let output = clip_frame(s, clip, t, Probe { nodes: Some(pos + 1), effects: false }, CMD)?;
+        // (a branched grade: a node's input is what feeds it, not the node listed before it)
+        if g.is_graph() {
+            // (mixers, splitters and key mixers do no grading of their own: the branch notes
+            // below describe them)
+            if n.kind != filmcraft_project::grade::NodeKind::Correction {
+                continue;
+            }
+            input = clip_frame(s, clip, t, Probe { at: At::Before(n.id), effects: false }, CMD)?;
+        }
+        let output = clip_frame(s, clip, t, Probe { at: At::Through(n.id), effects: false }, CMD)?;
         let facts = filmcraft_render::grade_explain::explain_node(n, mt, &input, &output, ws);
         input = output;
         let label = node_label(n, pos);
         out.push(json!({"node": n.id, "label": label, "sentence": facts.sentence(&label), "summary": facts.summary()}));
         nodes.push((label, facts));
     }
-    Ok(json!({"clip": clip.0, "nodes": out, "text": filmcraft_render::grade_explain::explain_grade(&nodes)}))
+    // (a branched grade: how the branches meet, in words; serial grades have none)
+    let branches = filmcraft_render::grade_explain::explain_branches(&g, mt);
+    let mut text = filmcraft_render::grade_explain::explain_grade(&nodes);
+    if !branches.is_empty() {
+        text.push(' ');
+        text.push_str(&branches.join(" "));
+    }
+    Ok(json!({"clip": clip.0, "nodes": out, "branches": branches, "text": text}))
 }
 
 /// A premultiplied 0…1 image as an 8-bit PNG.
@@ -393,7 +443,7 @@ pub(crate) fn current_grade_facts(s: &Session) -> Option<String> {
     let node = g.nodes.get(pos)?.clone();
     let t = clip_time(s, &json!({}), "", clip, CMD).ok()?;
     let mt = media_time(s, &json!({"time": t.0}), clip);
-    let (facts, _, _) = node_facts(s, clip, t, mt, pos, &node, CMD).ok()?;
+    let (facts, _, _) = node_facts(s, clip, t, mt, &node, CMD).ok()?;
     let label = node_label(&node, pos);
     Some(format!("{} ({} of {} nodes): {}", label, pos + 1, g.nodes.len(), facts.sentence(&label)))
 }
@@ -497,18 +547,18 @@ fn picture_sheet(s: &Session, clip: ClipId, it: &filmcraft_project::TrackItem, t
     use filmcraft_render::picture_facts::PictureFacts;
     const CMD: &str = "coach.assist";
     let w = working(s).ok()?;
-    let sheet = |nodes: Option<usize>| {
-        let img = clip_frame(s, clip, t, Probe { nodes, effects: false }, CMD).ok()?;
+    let sheet = |at: At| {
+        let img = clip_frame(s, clip, t, Probe { at, effects: false }, CMD).ok()?;
         Some(PictureFacts::measure(&img, w)?.sheet())
     };
     let source = source_line(s, it.item);
     let body = if graded {
-        match (sheet(Some(0)), sheet(None)) {
+        match (sheet(At::Ungraded), sheet(At::All)) {
             (Some(b), Some(a)) => format!("before the grade:\n{b}\nafter the grade:\n{a}"),
             (b, a) => a.or(b)?,
         }
     } else {
-        format!("ungraded:\n{}", sheet(None)?)
+        format!("ungraded:\n{}", sheet(At::All)?)
     };
     Some(format!("clip \"{}\"{source}, {body}", it.name))
 }
@@ -519,7 +569,7 @@ fn picture_sheet(s: &Session, clip: ClipId, it: &filmcraft_project::TrackItem, t
 fn source_line(s: &Session, item: ItemId) -> String {
     let Some((_, media, _)) = s.project.resolve_media(item) else { return String::new() };
     let Some(v) = media.info.video.as_ref() else { return String::new() };
-    let cs = media.interpret.color_space.unwrap_or_else(|| filmcraft_color::ColorSpace::from_info(&v.color));
+    let cs = media.interpret.color_space.unwrap_or_else(|| v.detected_color_space());
     let kind = if cs.is_log() {
         "log footage, measured after the input transform"
     } else if cs.is_hdr() {
@@ -528,4 +578,67 @@ fn source_line(s: &Session, item: ItemId) -> String {
         "display-referred (not log)"
     };
     format!(" (source {}: {kind})", cs.label())
+}
+
+/// A Gallery still's picture in the active sequence's working space. An imported reference
+/// picture (a display-referred file) goes through the sRGB input transform. A grabbed still's
+/// stored picture has already been converted for the monitor, which only undoes cleanly in a
+/// plain (SDR Rec. 709) pipeline; in an HDR or wide-gamut sequence its frame is rendered again in
+/// the working space instead (from the still's sequence time, with today's grades). `fit_w`
+/// scales a file picture down to that width first (fair grain / edge comparisons).
+fn still_working(s: &Session, id: u64, fit_w: Option<u32>, cmd: &str) -> Result<Image> {
+    let st = s.project.stills.iter().find(|x| x.id == id).ok_or_else(|| bad(cmd, format!("no still {id}")))?;
+    let pipe = s.active_sequence().ok_or(EngineError::NoSequence)?.settings.color;
+    if !st.is_reference()
+        && !pipe.is_plain()
+        && let Some(seq) = st.sequence.filter(|q| s.project.sequence(*q).is_some())
+    {
+        let provider = s.media.provider(s.project.clone(), s.services.clone());
+        let opts = filmcraft_render::RenderOptions { scale: 0.25, working_output: true, ..Default::default() };
+        return Ok(filmcraft_render::render_sequence(&s.project, seq, st.time.max(Tick::ZERO), opts, &provider));
+    }
+    let pic = s.still_picture(id).ok_or_else(|| bad(cmd, format!("still {id} has no picture")))?;
+    let (mut w, mut h, mut rgba) = (pic.w, pic.h, pic.rgba);
+    if let Some(fw) = fit_w.map(|f| f.max(1))
+        && w > fw
+    {
+        let nh = ((u64::from(h) * u64::from(fw)) / u64::from(w.max(1))).clamp(1, u64::from(u32::MAX)) as u32;
+        if let Some(im) = image::RgbaImage::from_raw(w, h, std::mem::take(&mut rgba)) {
+            let small = image::imageops::resize(&im, fw, nh, image::imageops::FilterType::Triangle);
+            (w, h, rgba) = (fw, nh, small.into_raw());
+        }
+    }
+    filmcraft_render::colorman::picture_to_working(w, h, rgba, &pipe).ok_or_else(|| bad(cmd, "the still's picture is empty"))
+}
+
+/// REF.2: the look of a Gallery still (`still`, e.g. an imported reference picture) and of the
+/// clip `p["clip"]` (else the selected / topmost video clip at the playhead) as it finally looks
+/// at the playhead, measured the same way ([`filmcraft_render::look_diff`]): (theirs, yours,
+/// clip). The still is scaled to the frame's width first so grain and edges compare fairly.
+pub(crate) fn reference_looks(
+    s: &Session,
+    still: u64,
+    p: &Value,
+    cmd: &str,
+) -> Result<(filmcraft_render::look_diff::LookFacts, filmcraft_render::look_diff::LookFacts, ClipId)> {
+    use filmcraft_render::look_diff::LookFacts;
+    if !s.project.stills.iter().any(|x| x.id == still) {
+        return Err(bad(cmd, format!("no still {still}")));
+    }
+    let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+    let clip = if p.get("clip").is_some() {
+        target(s, p, cmd)?
+    } else {
+        target(s, p, cmd)
+            .ok()
+            .or_else(|| q.video_tracks.iter().rev().find_map(|t| t.item_at(s.playhead())).map(|i| i.id))
+            .ok_or_else(|| bad(cmd, "no video clip at the playhead"))?
+    };
+    let t = clip_time(s, p, "", clip, cmd)?;
+    let yours_img = clip_frame(s, clip, t, Probe { at: At::All, effects: true }, cmd)?;
+    let pipe = q.settings.color;
+    let theirs_img = still_working(s, still, Some(u32::try_from(yours_img.w).unwrap_or(u32::MAX)), cmd)?;
+    let theirs = LookFacts::measure(&theirs_img, pipe.working).ok_or_else(|| bad(cmd, "nothing to measure in the still"))?;
+    let yours = LookFacts::measure(&yours_img, pipe.working).ok_or_else(|| bad(cmd, "nothing to measure in the frame"))?;
+    Ok((theirs, yours, clip))
 }

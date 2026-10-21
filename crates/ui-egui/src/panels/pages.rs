@@ -1,13 +1,13 @@
 //! Resolve workflow page bar (fork GRADE-PLAN G1.8, restyled by RESOLVE-UI-PLAN RS3): the app
-//! name on the left; Media, Edit, Color, Fairlight and Deliver centred, each an icon over its
+//! name on the left; Media, Cut, Edit, Fusion, Color, Fairlight and Deliver centred, each an icon over its
 //! label, the current one lit and underlined in the accent; Lessons, Ask the coach and Assistant
 //! (fork, [`crate::panels::coach::bar_buttons`]), Home (the Project Manager) and Settings on the
 //! right. Each page is a built-in workspace ([`crate::dock::PAGE_WORKSPACES`],
 //! Color is Color Grading), so its panels can be rearranged and saved like any workspace. Shown
 //! only when Settings ▸ General ▸ Workflow is DaVinci Resolve.
 //!
-//! Resolve's Cut and Fusion pages are left out until FilmCraft has a Cut layout and a compositor
-//! to show (RESOLVE-UI-PLAN RS3 item 2); its Photo page is not planned.
+//! The Cut page (fork RS4) is the media pool and viewer over [`crate::panels::cut_page`]; the
+//! Fusion page is the compositor (fork C1). Resolve's Photo page is not planned.
 //!
 //! Automation ids: `page.<id>` (the pages), `pageBar.home`, `pageBar.settings`.
 
@@ -22,8 +22,10 @@ use crate::theme::Tokens;
 pub const HEIGHT: f32 = 46.0;
 
 /// (id, label, workspace, icon).
-pub const PAGES: [(&str, &str, &str, Icon); 6] = [
+pub const PAGES: [(&str, &str, &str, Icon); 7] = [
     ("media", "Media", "Media Page", Icon::Image),
+    // fork RS4: fast edits over a whole + zoomed-in timeline
+    ("cut", "Cut", "Cut Page", Icon::Razor),
     ("edit", "Edit", "Edit Page", Icon::Sequence),
     // fork C1: node comps, between Edit and Color as in Resolve
     ("fusion", "Fusion", "Compositing", Icon::Fx),

@@ -145,10 +145,10 @@ fn tnr_rows_in_effect_controls_and_the_noise_tab_agree() {
         let mut d = Driver::demo(workflow);
         let clip = first_clip(&mut d);
         d.exec("tnr.set", json!({"clip": clip, "param": "luma", "value": 0.4}));
-        // Effect Controls (relabelled Inspector in the Resolve workflow): the fixed section
+        // Effect Controls (relabelled Keyframes in the Resolve workflow, fork RS4): the fixed section
         d.ok("ui.panel.show", json!({"panel": "EffectControls"}));
         d.frames(3);
-        let title = if workflow == Workflow::Resolve { "Inspector" } else { "Effect Controls" };
+        let title = if workflow == Workflow::Resolve { "Keyframes" } else { "Effect Controls" };
         assert!(d.harness.query_by_label(title).is_some(), "{tag}: the {title} tab");
         assert!(d.element("effectControls.tnr").is_some(), "{tag}: the Temporal NR section");
         // (below the fixed effects: scroll it into view when the panel is short)

@@ -1,0 +1,84 @@
+# Grading Coach lesson (fork COMPOSITOR-PLAN C2 lane 5: one lesson per branch type; this is the
+# parallel mixer). Format: crates/engine/src/coach.rs. Written for this fork in our own words.
+id = "parallel-nodes"
+title = "Two corrections on the same picture (parallel nodes)"
+summary = "Add a parallel node so two nodes each work on the same image, then see how their results are blended."
+provenance = ["resolve-style", "fork"]
+order = 10
+
+[[step]]
+text = "In a serial chain each node works on what the node before it made. In a parallel pair, two nodes both start from the same picture and a mixer blends what they make. We will build one."
+why = "Parallel nodes let two corrections (say skin and background) be independent: neither one changes what the other one sees."
+expect = { manual = true }
+
+[[step]]
+text = "Open the Color Grading workspace (Workspaces button at the top, then Color Grading)."
+why = "You need the node canvas and the Primaries panel."
+target = "header.workspaces"
+expect = { element = "panel.ColorNodes" }
+
+[[step]]
+text = "Select a clip in the Clips strip (or the timeline)."
+why = "The grade belongs to the selected clip."
+target = ["clips.strip", "timeline.tracks"]
+expect = { command = "timeline.select", params = { clips = [{ any = true }] } }
+already = "clipSelected"
+
+[[step]]
+text = "Add a first node (Add Node or + Serial). It is the shared starting point."
+why = "A parallel node needs a node to sit beside."
+target = ["grade.addFirst", "grade.addNode"]
+expect = { command = ["grade.addNode", "grade.insertNode"] }
+
+[[step]]
+text = "Make a balance correction on it: drag Temperature or Tint."
+why = "Both parallel branches will start from this balanced picture."
+target = "grade.param.temperature"
+expect = { command = "grade.setParam", params = { param = { in = ["temperature", "tint", "offset"] } } }
+
+[[step]]
+text = "Right-click the node canvas (or the node) and choose Add Parallel Node (Alt+P in the Resolve keys)."
+why = "This adds a second correction node beside the first and a Parallel Mixer after both. The new node starts from the same picture as the first one, not from its result."
+target = "grade.canvas"
+expect = { command = "grade.addParallel" }
+
+[[step]]
+text = "The new node is selected. Raise its Saturation."
+why = "This branch now does its own job."
+target = "grade.param.saturation"
+expect = { command = "grade.setParam", params = { param = "saturation" } }
+
+[[step]]
+text = "Click the first node on the canvas to select it."
+why = "Each node keeps its own settings."
+target = "grade.canvas"
+expect = { command = "grade.selectNode" }
+
+[[step]]
+text = "Raise this node's Contrast."
+why = "The two nodes work side by side: the contrast does not feed the saturation node, and the mixer blends the two results."
+target = "grade.param.contrast"
+expect = { command = "grade.setParam", params = { param = "contrast" } }
+
+[[step]]
+text = "The mixer blends its inputs equally by default (50 / 50). To weigh one more, change a mixer input's gain: run the command grade.setParam with param mix.gain.1 (0 to 2) on the mixer node. There is no slider for it yet, so press Skip if you would rather not."
+why = "Each branch's share is its gain divided by all the gains, so doubling one gain makes it count twice as much."
+target = "grade.canvas"
+expect = { command = "grade.setParam", params = { param = { in = ["mix.gain.0", "mix.gain.1"] } } }
+
+[[step]]
+text = "Open the Match tab and press Explain grade."
+why = "The explainer now says in words that the nodes work on the same image and how their results are blended."
+target = "grade.tab.match"
+expect = { command = "grade.explainGrade" }
+
+[[step]]
+text = "Select a branch node and press Disable, then Enable."
+why = "Switching one branch off shows exactly what it contributed; the other branch is untouched."
+target = "grade.toggleNode"
+expect = { command = "grade.toggleNode" }
+
+[[step]]
+text = "That is a parallel pair: shared input, separate jobs, one mixer. Press Ctrl+Z as often as you like to take the extra node back out. Press Next to finish."
+why = "Use parallel nodes when two corrections should not influence each other; use serial nodes when one should build on the other."
+expect = { manual = true }

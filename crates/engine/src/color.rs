@@ -466,11 +466,13 @@ fn spaces(_: &mut Session, _: &Value) -> Result<Value> {
 fn color_info(s: &mut Session, p: &Value) -> Result<Value> {
     let id = item_p(p, "item").ok_or_else(|| bad("media.colorInfo", "need `item`"))?;
     let Some(ItemKind::Media(m)) = s.project.item(id).map(|i| &i.kind) else { return Err(bad("media.colorInfo", "not a media item")) };
-    let detected = m.info.video.as_ref().map(|v| ColorSpace::from_info(&v.color));
+    let detected = m.info.video.as_ref().map(|v| v.detected_color_space());
     let effective = m.interpret.color_space.or(detected);
     Ok(json!({
         "detected": detected.map(|c| c.id()),
         "detectedLabel": detected.map(|c| c.label()),
+        // the camera recorded its log profile in its own metadata (Fujifilm F-Log / F-Log2)
+        "detectedFromCamera": m.info.video.as_ref().is_some_and(|v| v.camera_color_space.is_some()),
         "metadata": m.info.video.as_ref().map(|v| json!({"transfer": format!("{:?}", v.color.transfer), "primaries": format!("{:?}", v.color.primaries), "matrix": format!("{:?}", v.color.matrix), "range": format!("{:?}", v.color.range)})),
         "override": m.interpret.color_space.map(|c| c.id()),
         "effective": effective.map(|c| c.id()),

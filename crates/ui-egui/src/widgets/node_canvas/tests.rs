@@ -13,11 +13,16 @@ fn graph() -> CanvasGraph {
         bypassed: false,
         error: None,
         is_output,
+        key_inputs: 0,
+        key_outputs: 0,
     };
     CanvasGraph {
         nodes: vec![node(1, 0.0, 0, false), node(2, 220.0, 2, false), node(3, 440.0, 1, true)],
         edges: vec![EdgeView { from: (1, 0), to: (2, 0) }],
         add_kinds: vec![("blur".into(), "Blur".into())],
+        node_actions: Vec::new(),
+        canvas_actions: Vec::new(),
+        on_screen_ids: false,
     }
 }
 
@@ -90,6 +95,32 @@ fn every_part_registers_an_automation_id() {
         assert!(r.reg.elements.iter().any(|e| e.id == id), "{id}");
     }
     assert!(!r.reg.elements.iter().any(|e| e.id == "comp.port.3.out.0"), "the output node has no output port");
+}
+
+/// Fork C2: key ports are flagged per port; nodes off screen register no automation id; `fit`
+/// brings every node into view and tames hostile positions and sizes.
+#[test]
+fn key_ports_offscreen_nodes_and_fit() {
+    assert!(is_key(0b10, 1) && !is_key(0b10, 0) && !is_key(u32::MAX, 40) && is_key(u32::MAX, 31));
+    let mut r = Rig::new();
+    r.g.on_screen_ids = true;
+    r.g.nodes[2].pos = [100_000.0, 0.0];
+    r.frame(vec![], Modifiers::default());
+    assert!(r.reg.elements.iter().any(|e| e.id == "comp.node.1"));
+    assert!(!r.reg.elements.iter().any(|e| e.id == "comp.node.3" || e.id == "comp.port.3.in.0"), "off screen");
+    let mut st = CanvasState::default();
+    fit(&mut st, &r.g, vec2(800.0, 600.0));
+    assert!(st.zoom >= MIN_ZOOM && st.zoom <= 1.0 && st.pan.iter().all(|v| v.is_finite()));
+    r.g.nodes[0].pos = [f32::NAN, f32::INFINITY];
+    fit(&mut r.state, &r.g, vec2(0.0, -5.0));
+    assert!(r.state.zoom.is_finite() && r.state.pan.iter().all(|v| v.is_finite()));
+    fit(&mut r.state, &CanvasGraph::default(), vec2(800.0, 600.0));
+    assert_eq!(r.state.zoom, 1.0);
+    // a small graph fits whole at 1:1
+    let mut r = Rig::new();
+    fit(&mut r.state, &r.g, vec2(900.0, 500.0));
+    r.frame(vec![], Modifiers::default());
+    assert!(["comp.node.1", "comp.node.2", "comp.node.3"].iter().all(|id| r.reg.elements.iter().any(|e| e.id == *id)));
 }
 
 #[test]

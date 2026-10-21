@@ -94,7 +94,8 @@ node**, so you can see and undo each step separately. Nodes appear as numbered b
 
 A node that takes the picture from the node before it and hands its result to the next one:
 node 1 → node 2 → node 3. Order matters, because each node sees what the earlier ones already
-did. Today every node in this fork is serial; parallel and layer nodes are planned.
+did. A grade starts out serial; parallel, layer, outside, splitter / combiner and key-mixer nodes
+are added when needed ([nodes](color/nodes.md)).
 
 - Resolve: serial node. Premiere: no direct equivalent; stacking several effects on a clip
   behaves similarly.
@@ -155,11 +156,11 @@ can judge whether two shots match. **Split** shows them side by side instead. Bo
 
 ## Key
 
-> id: glossary.key | does: a selection of part of the picture by colour or brightness | ui: grade.tab.qualifier | resolve: key (qualifier) | premiere: HSL Secondary key | when: changing one colour | see: color.secondaries.qualifier
+> id: glossary.key | does: a selection of part of the picture by colour or brightness | ui: grade.tab.qualifier | resolve: key (qualifier) | premiere: HSL Secondary key | when: what a key is in grading; changing one colour | see: color.secondaries.qualifier
 
 **[Standard] [Resolve-style]**
 
-A selection of part of the picture made **by its colour or brightness**, for example "the skin"
+A key, in grading, is a selection of part of the picture made **by its colour or brightness**, for example "the skin"
 or "the sky", so a node changes only that part. This fork makes keys with the **qualifier**
 (the Qualifier tab {ui:grade.tab.qualifier}). The difference from a window: a key selects by
 colour, a window by a shape you draw; the two can be combined. See [secondaries](color/secondaries.md).

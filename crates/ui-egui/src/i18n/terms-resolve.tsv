@@ -91,8 +91,9 @@ Zoom Source Monitor to Fit	Zoom Source Viewer to Fit
 Zoom Program Monitor to 100%	Zoom Timeline Viewer to 100%
 Zoom Program Monitor to Fit	Zoom Timeline Viewer to Fit
 
-# Effect Controls -> Inspector, Audio Track Mixer -> Mixer
-Effect Controls	Inspector
+# Effect Controls -> Keyframes (fork RS4: the Inspector is its own panel; Effect Controls, with its
+# keyframe lane, stands in for Resolve's Keyframes editor), Audio Track Mixer -> Mixer
+Effect Controls	Keyframes
 Audio Track Mixer	Mixer
 Audio Track Mixer menu	Mixer menu
 Master volume: use the Audio Track Mixer	Master volume: use the Mixer

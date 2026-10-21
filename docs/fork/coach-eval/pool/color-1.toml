@@ -104,11 +104,11 @@ style = "beginner"
 
 [[question]]
 id = "pool-c1-gap-layer-node"
-kind = "gap"
+kind = "tool"
 q = "Is there a layer mixer node like in Resolve?"
-sources = ["color.readme.not-yet", "color.nodes.later"]
-must = ["parallel and layer nodes are not here yet (they arrive with C2)"]
-must_not = ["invents a layer-mixer node or command"]
+sources = ["color.nodes.layer", "color.nodes.which-kind"]
+must = ["Add Layer Node (grade.addLayer) in the canvas menu: the new node sits on top of the first at an opacity and blend mode"]
+must_not = ["says layer nodes are missing"]
 style = "resolve-words"
 
 [[question]]

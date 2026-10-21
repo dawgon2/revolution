@@ -4165,3 +4165,129 @@
 	Save Project Here	将项目保存到此处
 	This folder is empty.	此文件夹为空。
 	Up	上一级
+	Import Reference Still	导入参考图片
+	Reference picture	参考图片
+	How Do I Get This Look?	如何获得这种风格？
+	Reference picture (measured):	参考图片（测量）：
+	Seen in the reference:	参考图中可见：
+	In the grade:	调色中：
+	On set:	拍摄现场：
+	Do this: Shot Match to the reference	执行：与参考进行镜头匹配
+# fork C2: grade node graph (Color page node canvas)
+	Add Parallel Node	添加并行节点
+	Add Layer Node	添加图层节点
+	Add Outside Node	添加外部节点
+	Add Splitter / Combiner Nodes	添加分离器 / 合并器节点
+	Add Key Mixer	添加键混合器
+	Connect Nodes	连接节点
+	Disconnect Nodes	断开节点
+	Set Grade Output	设置调色输出
+	Corrector	校正器
+	Parallel Mixer	并行混合器
+	Layer Mixer	图层混合器
+	Splitter	分离器
+	Combiner	合并器
+	Key Mixer	键混合器
+	No nodes: + Serial adds one	没有节点：+ Serial 可添加一个
+	Node {n}	节点 {n}
+	Weight	权重
+	Invert key input	反相键输入
+	Key gain	键增益
+	Key offset	键偏移
+	Input {n}: {name}	输入 {n}：{name}
+	Key input: {name}	键输入：{name}
+	This input's share of the mix	此输入在混合中所占的比例
+	Each input's weight over the sum of the weights is its share of the mix.	每个输入的权重除以权重之和，就是它在混合中所占的比例。
+	Higher inputs are on top: each one blends over the inputs below it.	编号较高的输入在上层：每个输入都混合在它下面的输入之上。
+	Each key adds to, subtracts from or intersects the keys before it.	每个键与它之前的键相加、相减或取交集。
+	No inputs connected: drag a node's output onto one of this mixer's inputs.	没有连接输入：把某个节点的输出拖到此混合器的一个输入上。
+	A mixer node: its settings are in the Primaries panel.	混合器节点：其设置在一级校色面板中。
+# fork C2b: node positions on the Color page canvas
+	Reset Layout	重置布局
+	Move Nodes on the Canvas	在画布上移动节点
+	Move Nodes	移动节点
+	Cut Page	剪切页面
+	Cut Timeline	剪切时间线
+	1 Clip	1 个片段
+	{n} Clips	{n} 个片段
+	First Frame (Home)	第一帧 (Home)
+	Last Frame (End)	最后一帧 (End)
+	Play (L / Space)	播放 (L / 空格)
+	Play Reverse (J)	倒放 (J)
+	Stop (K)	停止 (K)
+	Select a clip in the media pool to edit it in	在媒体池中选择一个片段以将其编辑进来
+	Timeline zoom	时间线缩放
+	Master	主媒体夹
+
+# Fork RS4.2: the Resolve-style Inspector (tabs, sections, rows).
+	Inspector	检查器
+	Transition	转场
+	Turn Off	关闭
+	Turn On	打开
+	No effects applied	未应用效果
+	Cropping	裁切
+	Unlink Zoom X and Y	取消链接缩放 X 和 Y
+	Link Zoom X and Y	链接缩放 X 和 Y
+	Rotation Angle	旋转角度
+	Flip Image	翻转图像
+	Flip Horizontal	水平翻转
+	Flip Vertical	垂直翻转
+	Speed Change	变速
+	Forward	正向
+	Codec	编解码器
+	Crop Left	左侧裁切
+	Crop Right	右侧裁切
+	Crop Top	顶部裁切
+	Crop Bottom	底部裁切
+	Composite Mode	合成模式
+	Keyframes	关键帧
+	Append at End	附加到末尾
+	Close Up	特写
+	Fit to Fill	适配填充
+	Place on Top	放在顶部
+	Resolve Edit	Resolve 编辑
+	Ripple Overwrite	波纹覆盖
+	Smart Insert	智能插入
+	Source Overwrite	源覆盖
+	Replace	替换
+	Add a server to receive projects from it.	添加一台服务器以从中接收项目。
+	Add a server to send projects through it.	添加一台服务器以通过它发送项目。
+	Cancelling…	正在取消…
+	From:	来自：
+	Include proxies	包含代理
+	Leave out unused media	不包含未使用的媒体
+	{line}, about {secs} s left	{line}，约剩 {secs} 秒
+	Manage Locations	管理位置
+	Manage Locations…	管理位置…
+	No folders or packages here.	这里没有文件夹或包。
+	Receive	接收
+	Receive…	接收…
+	Received: {name}	已接收：{name}
+	Receive Project	接收项目
+	Receiving…	正在接收…
+	Remote	远程
+	Select a project to send.	请选择要发送的项目。
+	Send…	发送…
+	Sending…	正在发送…
+	Send Project	发送项目
+	Sent: {name} to {to}	已发送：{name} 至 {to}
+	Size: about {size}	大小：约 {size}
+	To:	发送至：
+	Type the code shown on the other computer.	输入另一台电脑上显示的代码。
+	No computer is waiting to receive. Check that Receive is open on the other computer, or type its address.	没有电脑在等待接收。请确认另一台电脑已打开“接收”，或输入它的地址。
+	Couldn't look for computers: {error}	无法查找电脑：{error}
+	Looking for computers…	正在查找电脑…
+	Nearby computer	附近的电脑
+	A server…	服务器…
+	Code:	代码：
+	Address:	地址：
+	address:port, if it isn't found	地址:端口（如果找不到）
+	Channel {n} at {address}	频道 {n}，位于 {address}
+	Receive from a nearby computer	从附近的电脑接收
+	Type this code on the other computer:	在另一台电脑上输入此代码：
+	Valid for 10 minutes, once.	10 分钟内有效，仅限一次。
+	If it isn't found, type this computer's address with port {port}.	如果找不到，请输入这台电脑的地址和端口 {port}。
+	{computer} wants to send {package} ({size})	{computer} 想发送 {package}（{size}）
+	Accept	接受
+	Decline	拒绝
+	Port for receiving from a nearby computer (0 = any free port)	从附近电脑接收所用的端口（0 = 任意空闲端口）

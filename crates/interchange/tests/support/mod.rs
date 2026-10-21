@@ -14,6 +14,7 @@ pub fn media_info(name: &str, video: bool, audio: bool, rate: FrameRate, secs: i
         kind: if video { MediaKind::Movie } else { MediaKind::AudioOnly },
         duration: Tick(secs * filmcraft_time::TICKS_PER_SECOND),
         video: video.then(|| filmcraft_media::VideoStreamInfo {
+            camera_color_space: None,
             width: 1920,
             height: 1080,
             frame_rate: rate,

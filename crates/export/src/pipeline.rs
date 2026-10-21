@@ -614,6 +614,7 @@ mod temporal_tests {
             kind: MediaKind::Movie,
             duration: r.tick_of(FRAMES),
             video: Some(VideoStreamInfo {
+                camera_color_space: None,
                 width: W,
                 height: H,
                 frame_rate: r,

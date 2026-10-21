@@ -30,12 +30,13 @@ own solver and explanations).
 | [projects.md](projects.md) | The Project Manager home screen (RS2): the projects folder, opening and making projects, sort / search / views, rename / duplicate / trash, export / import, At startup show | written (RS2) |
 | [color/README.md](color/README.md) | How colour works in this fork, start here | written (G0–G1) |
 | [color/color-management.md](color/color-management.md) | F-Log2 / F-Gamut input, DaVinci Wide Gamut / Intermediate working space, Rec.709 output, highlight roll-off | written (G0–G1) |
-| [color/nodes.md](color/nodes.md) | What a node is, how the chain flows, one job per node, a starter tree for F-Log2 and other node orders with their trade-offs (CO1); later parallel / layer / splitter / outside / key mixer (C2) | written (G0–G1) |
+| [color/nodes.md](color/nodes.md) | What a node is, how the chain flows, one job per node, a starter tree for F-Log2 and other node orders with their trade-offs (CO1); the node canvas, parallel / layer / outside / splitter and combiner / key mixer nodes and what the explainer says about them (C2) | written (G0–G1, C2) |
 | [color/primaries.md](color/primaries.md) | Lift / Gamma / Gain / Offset wheels, contrast and pivot, saturation, temperature / tint | written (G0–G1) |
 | [color/curves.md](color/curves.md) | Custom and the five hue / luma / sat curves | partial (G0–G1) |
 | [color/secondaries.md](color/secondaries.md) | Qualifier, windows, tracking (G2) | written (G2.1–G2.3) |
 | [color/noise.md](color/noise.md) | Spatial noise reduction on a node (G2.4), temporal per clip (6.7 / 6.7b) | written (G2.4 spatial, 6.7b temporal) |
 | [color/matching.md](color/matching.md) | Stills, wipe / split, copy / paste / append grades, "same grade?", shot comparison, Shot Match, node explainer, AI explanations | written (G0–G2b) |
+| [color/reference-look.md](color/reference-look.md) | Reference pictures in the Gallery, "how do I get this look?": measured difference, grade recipe, on set, Do this | written (REF) |
 | [compositor.md](compositor.md) | Comps: nodes, New Comp Clip, Open in Compositor, Convert to Comp Clip, two starter comps, what is cached | done for C1 (comp size, Media In source and node names are commands only) |
 | [color/finishing.md](color/finishing.md) | Grain, highlight soft clip, node LUTs, scopes (noise reduction: noise.md) | written (grain, soft clip, LUT; scopes GUIDE-8) |
 | [color/lumetri.md](color/lumetri.md) | Lumetri Color (Premiere-style) and how it relates to the node grader | written (cloud) |

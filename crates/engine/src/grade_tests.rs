@@ -482,3 +482,21 @@ fn match_and_explain_refuse_hostile_input() {
     }
     assert!(s.execute("grade.shotMatch", json!({"clip": c.0, "with": d.0, "faceDetection": false})).is_err());
 }
+
+/// Shot Match on a grade with a hand-made layout places its node next to the node it follows
+/// (fork C2b); on an automatic layout it stays unplaced.
+#[test]
+fn shot_match_places_its_node_on_a_hand_made_layout() {
+    let (mut s, c) = demo();
+    let (_, d) = two_clips(&s);
+    let a = s.execute("grade.addNode", json!({"clip": c.0, "after": null})).unwrap()["node"].as_u64().unwrap();
+    s.execute("grade.moveNodes", json!({"clip": c.0, "nodes": [{"node": a, "x": 1000, "y": 500}]})).unwrap();
+    let id = s.execute("grade.shotMatch", json!({"clip": c.0, "with": d.0})).unwrap()["node"].as_u64().unwrap();
+    let g = grade(&s, c).unwrap();
+    assert_eq!(g.stored_pos(id), Some([1000.0 + filmcraft_project::grade::LAYOUT_COLUMN, 500.0]));
+    // an automatic layout stays automatic
+    s.execute("grade.resetLayout", json!({"clip": c.0})).unwrap();
+    let id = s.execute("grade.shotMatch", json!({"clip": c.0, "with": d.0})).unwrap()["node"].as_u64().unwrap();
+    let g = grade(&s, c).unwrap();
+    assert!(!g.has_positions() && g.stored_pos(id).is_none());
+}

@@ -1,11 +1,11 @@
 # The pages (Resolve workflow)
 
-Status: **written** (RESOLVE-UI-PLAN RS3). Applies when Settings ▸ General ▸ Workflow is
+Status: **written** (RESOLVE-UI-PLAN RS3; Cut page, timeline toolbar, track headers, transport and bins column RS4). Applies when Settings ▸ General ▸ Workflow is
 DaVinci Resolve (the fork's default); the Premiere workflow keeps its header and workspaces.
 
 ## What a page is
 
-> id: pages.what | does: the Resolve workflow's pages, one per stage of the work | ui: page.* | cmd: page.* | resolve: pages (Media, Edit, Fusion, Color, Fairlight, Deliver) | premiere: workspaces | when: choosing the Resolve workflow; finding where a tool lives | see: pages.panels
+> id: pages.what | does: the Resolve workflow's pages, one per stage of the work | ui: page.* | cmd: page.* | resolve: pages (Media, Cut, Edit, Fusion, Color, Fairlight, Deliver) | premiere: workspaces | when: choosing the Resolve workflow; finding where a tool lives | see: pages.panels
 
 **[Resolve-style]** layout, **[Fork]** mechanism
 
@@ -24,16 +24,18 @@ project, the same timeline and one undo history behind every page, only the pane
    **Settings** ({ui:pageBar.settings}, Edit ▸ Preferences ▸ General, `app.settings.general`).
 2. Along the top, the menus on a row of their own, then the page's **toolbar**: buttons with a
    label that show or hide that page's panels, the project name in the middle.
-3. Click a page in the bar to go there: **Media** ({ui:page.media}), **Edit** ({ui:page.edit}),
+3. Click a page in the bar to go there: **Media** ({ui:page.media}), **Cut** ({ui:page.cut}), **Edit** ({ui:page.edit}),
    **Fusion** ({ui:page.fusion}), **Color** ({ui:page.color}), **Fairlight**
    ({ui:page.fairlight}), **Deliver** ({ui:page.deliver}). The commands are `page.media`,
-   `page.edit`, `page.fusion`, `page.color`, `page.fairlight` and `page.deliver`; with the
-   DaVinci Resolve Compatible keys, Shift+2, 4, 6, 7 and 8 open Media, Edit, Color, Fairlight
-   and Deliver.
+   `page.cut`, `page.edit`, `page.fusion`, `page.color`, `page.fairlight` and `page.deliver`; with the
+   DaVinci Resolve Compatible keys, Shift+2, 3, 4, 6, 7 and 8 open Media, Cut, Edit, Color,
+   Fairlight and Deliver.
 
 ### If you know Resolve
 
-- **Revolution:** no Cut page yet: there is no Cut layout (the dual timeline).
+- **Revolution:** the Cut page has the dual timeline and six fast edits (below); Sync Bin,
+  source tape, the boring detector and the trim / transition / title bars of Resolve's Cut page
+  aren't there yet.
 
 The Fusion page holds Revolution's much smaller node compositor ([compositor.md](compositor.md)), not
 Fusion itself. The Photo page is not planned. Unlike Resolve, the menus
@@ -47,22 +49,102 @@ others, and every page's layout can be changed and saved (below).
 **[Resolve-style]** layouts, built from **[Revolution]** panels
 
 Resolve's panel names are used in this workflow (see "Terminology follows the workflow" in
-[getting-started.md](getting-started.md)): Media Pool is the Project panel, Inspector is Effect
-Controls, Mixer is the Audio Track Mixer.
+[getting-started.md](getting-started.md)): Media Pool is the Project panel, Mixer is the Audio
+Track Mixer. The toolbar's Inspector is a Resolve-style panel of its own (tabs Video, Audio,
+Effects, Transition, Image, File) that edits the same clip settings as Effect Controls; Effect
+Controls itself, with its keyframe lane, is called **Keyframes** here (the Edit page's toolbar
+shows and hides it, as Resolve's Keyframes button does).
 
 | Page | Workspace | Layout | Toolbar (left / right) |
 |---|---|---|---|
 | Media | Media Page | Media Browser and Source Viewer over the Media Pool; Metadata and the meters on the right | Media Browser, Media Pool / Audio Meters, Metadata, Inspector |
-| Edit | Edit Page | Media Pool (with Effects and Markers as tabs) down the left; Source Viewer and Timeline Viewer side by side over the Tools strip and the Timeline | Media Pool, Effects, Markers / Quick Export, Mixer, Metadata, Inspector |
+| Cut | Cut Page | Media Pool and Timeline Viewer (with audio meters) side by side over the Cut timeline: fast edits, the whole timeline, the zoomed-in timeline (below) | Media Pool, Effects / Quick Export, Mixer, Inspector |
+| Edit | Edit Page | Media Pool (a Bins column, then the clips) and Effects / Markers as tabs down the left; Source Viewer and Timeline Viewer side by side over the Timeline with Resolve's timeline toolbar (below) | Media Pool, Effects, Markers, Keyframes / Quick Export, Mixer, Metadata, Inspector |
 | Fusion | Compositing | the Compositor (node canvas with the selected node's settings under it) beside the Timeline Viewer, over the Media Pool and the Timeline ([compositor.md](compositor.md)) | Media Pool, Effects, Compositor / Metadata, Inspector |
 | Color | Color Grading | the node grader: Gallery, viewer, Nodes; the clips strip; Primaries and scopes ([color/README.md](color/README.md)) | Gallery, Media Pool, Clips / Nodes, Lumetri Scopes, Effects |
-| Fairlight | Fairlight Page | a small viewer and the meters with the loudness readout across the top; Tools and the Timeline; the Mixer (and Essential Sound) on the right | Media Pool, Effects, Markers / Mixer, Audio Meters, Metadata, Inspector |
+| Fairlight | Fairlight Page | a small viewer and the meters with the loudness readout across the top; the Timeline; the Mixer (and Essential Sound) on the right | Media Pool, Effects, Markers / Mixer, Audio Meters, Metadata, Inspector |
 | Deliver | Deliver Page | Render Settings down the left; the Timeline Viewer and the Render Queue over the Timeline | Render Settings / Render Queue |
 
-Differences from Resolve: the Edit page keeps Revolution's narrow Tools strip beside the timeline
-(Resolve puts the tools in a bar over it); the Fairlight page's top strip shows the Mix meters,
+Differences from Resolve: the panels keep Revolution's tab headers (title and ≡ menu); the Fairlight page's top strip shows the Mix meters,
 not one meter per track (the per-track meters are in the Mixer); Resolve's Index, Sound Library,
 Keyframes, ADR, LUTs and Lightbox have no Revolution panel yet, so their buttons are left out.
+
+## The Cut page: fast edits on a dual timeline
+
+> id: pages.cut | does: the Cut page: six fast edits from the media pool, the whole timeline above, a zoomed-in timeline under a fixed playhead | ui: page.cut, cut.smartInsert, cut.append, cut.rippleOverwrite, cut.closeUp, cut.placeOnTop, cut.sourceOverwrite, cut.blade, cut.zoomIn, cut.zoomOut | cmd: edit.smartInsert, edit.append, edit.rippleOverwrite, edit.closeUp, edit.placeOnTop, edit.sourceOverwrite, sequence.addEdit | resolve: Cut page | premiere: — (the Timeline panel and Insert / Overwrite) | when: a fast first cut; seeing the whole edit and the detail at once | see: pages.edit-toolbar
+
+**[Resolve-style]** layout and edits, drawn by **[Revolution]**'s own timeline
+
+### Why
+
+The Edit page is for precise work; the Cut page is for speed. You see the **whole timeline** at
+the top, so you always know where you are in the story, and a **zoomed-in timeline** below it
+where the playhead stays in the middle and the edit moves under it, so trimming near the playhead
+never needs zooming or scrolling. The edit buttons work straight from the media pool: no Source
+Viewer, no In and Out marks needed. Beginners can build a first cut with Append alone; editors
+used to the Edit page can use both pages on the same timeline, since every page shares it and
+its undo history.
+
+### Steps
+
+1. Click **Cut** in the page bar ({ui:page.cut}; command `page.cut`).
+2. Select a clip in the media pool (top left). With nothing selected the edit buttons are greyed
+   and the bar says so.
+3. Pick an edit in the bar over the timelines. Each is one undo step:
+   - **Smart Insert** ({ui:cut.smartInsert}, `edit.smartInsert`): inserts the clip at the cut
+     nearest the playhead, so you never split a shot by accident.
+   - **Append** ({ui:cut.append}, `edit.append`): adds the clip to the end of the timeline.
+   - **Ripple Overwrite** ({ui:cut.rippleOverwrite}, `edit.rippleOverwrite`): replaces the clip
+     under the playhead and closes up (or opens) the difference in length.
+   - **Close Up** ({ui:cut.closeUp}, `edit.closeUp`): puts the clip on the track above at the
+     playhead, scaled in for a closer framing.
+   - **Place on Top** ({ui:cut.placeOnTop}, `edit.placeOnTop`): puts the clip on the track above
+     at the playhead (a cutaway or B-roll).
+   - **Source Overwrite** ({ui:cut.sourceOverwrite}, `edit.sourceOverwrite`): puts the clip on the
+     track above, lined up by source timecode with the clip under the playhead (multi-camera
+     footage recorded with matching timecode).
+4. Move through the edit: click or drag in either ruler, or play (Space, J / K / L). The lower
+   timeline keeps the playhead centred; **+** ({ui:cut.zoomIn}) and the magnifier
+   ({ui:cut.zoomOut}) zoom it.
+5. On the left of the upper timeline: **Selection** ({ui:cut.tool.selection}), **Trim**
+   ({ui:cut.tool.trim}: dragging an edge ripples the rest), **Cut at the playhead**
+   ({ui:cut.blade}, `sequence.addEdit`), **Snapping** ({ui:cut.snap}) and **Linked Selection**
+   ({ui:cut.linked}). Dragging clips, trimming edges, deleting and the right-click menus work
+   in both timelines as on the Edit page.
+
+### Choosing between the Cut and Edit pages
+
+There is no right answer: many editors rough-cut on the Cut page and refine on the Edit page;
+others stay on one. The Cut page favours speed and the overview (no Source Viewer, fewer tracks
+shown, no track keyframes); the Edit page favours control (In / Out marks in the Source Viewer,
+patching and targeting, keyframes, captions).
+
+## The Edit page's timeline toolbar and track headers
+
+> id: pages.edit-toolbar | does: Resolve's timeline toolbar and track headers on the Edit page | ui: timeline.rtool.*, timeline.redit.*, timeline.rtoggle.*, timeline.rzoom.* | cmd: edit.insert, edit.overwrite, edit.replace, sequence.snap, sequence.linkedSelection | resolve: timeline toolbar | premiere: Tools panel, Timeline toggles | when: editing on the Edit page in the Resolve workflow | see: pages.cut
+
+**[Resolve-style]**
+
+In the Resolve workflow the Timeline panel has Resolve's toolbar across its top instead of the
+Tools strip beside it (the Premiere workflow keeps the Tools strip):
+
+1. **Selection** ({ui:timeline.rtool.selection}, A), **Trim** ({ui:timeline.rtool.trim}, T) and
+   **Blade** ({ui:timeline.rtool.blade}, B).
+2. **Insert** ({ui:timeline.redit.insert}, F9), **Overwrite** ({ui:timeline.redit.overwrite},
+   F10) and **Replace** ({ui:timeline.redit.replace}, F11): the Source Viewer's clip (its In and
+   Out) at the timeline's In mark, or at the playhead.
+3. **Snapping** ({ui:timeline.rtoggle.snap}), **Linked Selection** ({ui:timeline.rtoggle.linked})
+   and **Add Marker** ({ui:timeline.rtoggle.marker}).
+4. On the right: **Full Extent Zoom** ({ui:timeline.rzoom.fit}), **Detail Zoom** around the
+   playhead ({ui:timeline.rzoom.detail}), zoom out, the zoom slider ({ui:timeline.rzoom.slider})
+   and zoom in.
+
+Each track header shows the source patch and the track's badge (V1, A1: lit when the track is
+targeted), the lock, sync lock and output / mute / solo switches on its top line, then the
+track's name and how many clips it holds. The viewers' transport is Resolve's: first frame, play
+reverse, stop, play, last frame, loop, then Mark In and Mark Out; the other buttons stay on their
+keys and menus. The media pool shows a **Bins** column (Master, then every bin): click a bin to
+show its clips.
 
 ## Show and hide panels from the toolbar
 
@@ -77,7 +159,7 @@ need them and takes them away again when you need the room, without hunting thro
 
 ### Steps
 
-1. On the Edit page, click **Inspector** in the toolbar ({ui:pageToolbar.EffectControls}). It
+1. On the Edit page, click **Inspector** in the toolbar ({ui:pageToolbar.Inspector}). It
    opens as a column on the right; the button is lit while the panel is on screen.
 2. Click **Inspector** again to hide it.
 3. Click **Media Pool** ({ui:pageToolbar.Project}) to hide the Media Pool and give the viewers

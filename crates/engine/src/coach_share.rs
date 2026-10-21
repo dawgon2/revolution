@@ -185,6 +185,14 @@ impl Private {
                 }
             }
         }
+        // Gallery stills: an imported reference picture is named after its file
+        for st in &s.project.stills {
+            if p.overflow {
+                break;
+            }
+            p.add(&st.label, "<still>");
+            p.add(&st.clip_name, "<clip>");
+        }
         for it in s.project.items.values() {
             if p.overflow {
                 break;
@@ -440,6 +448,8 @@ pub fn example_text(r: &ShareRecord, a: Option<&AssistAnswer>, extras: Extras, f
     t.push_str("\n\n## Answer\n\n");
     match a {
         None => t.push_str("(no answer yet)\n"),
+        // REF: an answer about a reference picture may repeat what the picture shows: not shared
+        Some(a) if a.reference.is_some() => t.push_str("(about a private reference picture: the answer isn't shared)\n"),
         Some(a) => {
             let by = if a.grounded.is_some() { "the Assistant" } else { "the keyword coach" };
             t.push_str(&format!("Answered by {by}.\n\n"));

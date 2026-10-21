@@ -1,29 +1,37 @@
-//! Dev-time Linux desktop entry: the shell icon fallback.
+//! Linux desktop entry for runs that no package installed: the app-menu entry and the taskbar icon.
 //!
 //! The Linux shell (Wayland *and* X11) resolves the window to a `.desktop` file by app id (set in
 //! `main.rs` via `eframe`'s `with_app_id`) and takes the taskbar / window-list icon from its
-//! `Icon=` entry in the hicolor theme. Packaging installs both
-//! (`packaging/linux/io.github.dawgon2.Revolution.desktop` and the hicolor PNGs) — but a source-tree
-//! run has neither, so KDE/GNOME fall back to the generic Wayland icon. The fix is to ensure a
-//! user-level entry for those runs: when no entry for the app id exists in any XDG data dir,
-//! install one (plus the hicolor icon PNGs, read from this checkout's `assets/app-icon`, so
-//! nothing is embedded in the binary) into `$XDG_DATA_HOME`/`~/.local/share`. An existing
-//! packaged entry is never overridden; the user-owned dev copy is rewritten when it points at
-//! another binary (a dev build moves between checkouts). The shell picks the icon up at the *next* app start;
+//! `Icon=` entry in the hicolor theme. The packages (.deb, .rpm, AppImage, Flatpak) install both
+//! (`packaging/linux/io.github.dawgon2.Revolution.desktop` and the hicolor PNGs), but the portable
+//! tarball (and the updater, which installs it) and a source-tree run have neither, so KDE/GNOME
+//! fall back to the generic Wayland icon and the app is missing from the menu. So, when no entry
+//! for the app id exists in any XDG data dir, one is installed (plus the hicolor icons in the
+//! Settings ▸ Appearance ▸ App icon style, macOS-style rounded by default; owner, 2026-10-20,
+//! FORK-PLAN §1a.110: "I wanted it to be for everyone that downloads it") into
+//! `$XDG_DATA_HOME`/`~/.local/share`. An existing packaged entry is never overridden, nor a
+//! launcher the user made (any user entry declaring our `StartupWMClass`); our own user-level copy
+//! is rewritten when it points at another binary (the folder moved, the updater installed a new
+//! version, a dev build moved between checkouts). The shell picks it up at the *next* app start;
 //! `update-desktop-database`/`kbuildsycoca` is not needed for icon lookup.
 //!
-//! Opt-in only: nothing is written unless `FILMCRAFT_DEV_DESKTOP_ENTRY=1` is set, so ordinary
-//! `cargo run`s (agents, worktrees, CI) never touch the user's profile. Packaged runs are
-//! excluded even then — AppImage (`APPIMAGE`) mounts at a fresh `/tmp/.mount_*` each launch,
-//! so its `Exec` path changes every time and it ships its own entry, and a Flatpak
-//! (`FLATPAK_ID`) installs its entry through the manifest. `packaging/linux/install.sh` writes the packaged
-//! `Exec=` the same two-layer way as here; keep the two in sync.
+//! When: release builds (built with `FILMCRAFT_RELEASE_TAG`) always, unless
+//! `FILMCRAFT_NO_DESKTOP_ENTRY=1`; other builds only with `FILMCRAFT_DEV_DESKTOP_ENTRY=1`, so
+//! ordinary `cargo run`s (agents, worktrees, CI) never touch the user's profile. Never for an agent
+//! (`--control`), an AppImage (`APPIMAGE`: it mounts at a fresh `/tmp/.mount_*` each launch and
+//! ships its own entry) or a Flatpak (`FLATPAK_ID`: the manifest installs it).
+//! `packaging/linux/install.sh` writes the packaged `Exec=` the same two-layer way as here; keep
+//! the two in sync.
 //!
-//! Every failure is logged and skipped — a missing dev icon must never stop the app
+//! Every failure is logged and skipped — a missing icon must never stop the app
 //! ([`AGENTS.md`](/AGENTS.md) §0 "never crash").
 
-/// Install the user-level desktop entry and icons for a source-tree run (Linux).
-pub fn ensure_dev_desktop_entry() {
+/// Install the user-level desktop entry and icons (in the App icon `style`) for a run no package
+/// installed (Linux). `agent`: started with `--control` (never writes).
+pub fn ensure_dev_desktop_entry(style: &str, agent: bool) {
+    if agent || std::env::var_os("FILMCRAFT_NO_DESKTOP_ENTRY").is_some_and(|v| v == "1") {
+        return;
+    }
     // Packaged and sandboxed runs never write into the user's profile: an AppImage mounts at a
     // fresh /tmp/.mount_* every launch (the Exec path changes each time) and a Flatpak installs
     // its own entry.
@@ -33,16 +41,17 @@ pub fn ensure_dev_desktop_entry() {
     // Opt-in only: a plain `cargo run` (agents, worktrees, other checkouts) must not write into
     // the user's profile, and a packaged release never does (packages and install.sh install
     // the real entry).
-    if std::env::var_os("FILMCRAFT_DEV_DESKTOP_ENTRY").is_none_or(|v| v != "1") {
+    let release = option_env!("FILMCRAFT_RELEASE_TAG").is_some_and(|t| !t.is_empty());
+    if !release && std::env::var_os("FILMCRAFT_DEV_DESKTOP_ENTRY").is_none_or(|v| v != "1") {
         return;
     }
-    if let Err(e) = ensure() {
+    if let Err(e) = ensure(style) {
         log::warn!("desktop entry (taskbar icon) not installed: {e}");
     }
 }
 
 /// Install missing files; `Ok` whether anything was written or an entry already existed.
-fn ensure() -> Result<(), DevIconError> {
+fn ensure(style: &str) -> Result<(), DevIconError> {
     let file_name = format!("{}.desktop", crate::APP_ID);
     let user_dir = user_data_dir()?;
     let exe = std::env::current_exe().map_err(DevIconError::Io)?;
@@ -55,6 +64,10 @@ fn ensure() -> Result<(), DevIconError> {
         // '=' separates key and value, '%' introduces a field code, control characters are
         // not valid in the string layer.
         return Err(DevIconError::BadExecPath);
+    }
+    // a launcher the user (or a build script) made under another file name for this app
+    if user_launcher_exists(&user_dir.join("applications"), &file_name) {
+        return Ok(());
     }
     for dir in search_dirs(&user_dir) {
         let candidate = dir.join("applications").join(&file_name);
@@ -72,22 +85,8 @@ fn ensure() -> Result<(), DevIconError> {
         }
         break; // a dev entry from another checkout: fall through and rewrite it
     }
-    for size in ICON_SIZES {
-        let rel = std::path::Path::new("hicolor").join(format!("{size}x{size}")).join("apps").join(format!("{}.png", crate::APP_ID));
-        let dest = user_dir.join("icons").join(&rel);
-        if !dest.is_file()
-            && let Some(parent) = dest.parent()
-        {
-            // The checkout this binary was built from; a missing icon only costs the icon.
-            let src = std::path::Path::new(ICON_DIR).join(&rel);
-            if !src.is_file() {
-                log::warn!("dev desktop entry: icon {} not found; skipping it", src.display());
-                continue;
-            }
-            std::fs::create_dir_all(parent).map_err(DevIconError::Io)?;
-            std::fs::copy(&src, &dest).map_err(DevIconError::Io)?;
-        }
-    }
+    // the icons in the chosen style, from the binary (a tarball has no icon files)
+    crate::icon_style::write_theme_icons(&user_dir, style).map_err(DevIconError::Io)?;
     let applications = user_dir.join("applications");
     std::fs::create_dir_all(&applications).map_err(DevIconError::Io)?;
     let body = desktop_file_content(crate::APP_ID, "Revolution", exe);
@@ -95,13 +94,20 @@ fn ensure() -> Result<(), DevIconError> {
     Ok(())
 }
 
-/// The hicolor icon sizes installed for the taskbar (a subset large enough for panel and topbar;
-/// the shell picks the nearest size, so 256 and 512 cover both).
-const ICON_SIZES: [u16; 2] = [256, 512];
-
-/// The app icons in the source tree this binary was built from (a path, not embedded bytes:
-/// the entry is a dev-checkout convenience and release binaries must not carry the PNGs).
-const ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/app-icon");
+/// Whether `applications` holds a desktop entry other than `ours` that declares this app's
+/// `StartupWMClass` (a launcher made by hand or by a build script): then nothing is added, so the
+/// menu doesn't show Revolution twice. Unreadable files and folders count as no launcher.
+fn user_launcher_exists(applications: &std::path::Path, ours: &str) -> bool {
+    let Ok(dir) = std::fs::read_dir(applications) else { return false };
+    let wm = format!("StartupWMClass={}", crate::APP_ID);
+    dir.flatten().take(2000).any(|e| {
+        let p = e.path();
+        p.extension().is_some_and(|x| x == "desktop")
+            && p.file_name().is_some_and(|n| n != ours)
+            && std::fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() < 64 * 1024)
+            && std::fs::read_to_string(&p).is_ok_and(|b| b.lines().any(|l| l.trim() == wm))
+    })
+}
 
 /// The user data dir we install into: `$XDG_DATA_HOME`, else `$HOME/.local/share` (XDG base
 /// directory spec). Untrusted environment: an empty or relative `XDG_DATA_HOME` means the
@@ -259,13 +265,21 @@ mod tests {
 
     /// The entry mirrors the packaged one, derived from the real file so the two cannot drift:
     /// minus `TryExec` (a dev build isn't on `$PATH`), plus the quoted dev `Exec` path.
-    /// The icons the entry installs exist in the checkout.
+    /// A launcher the user made under another name (same StartupWMClass) means no second entry;
+    /// our own file name and other apps' entries don't count.
     #[test]
-    fn icon_sources_exist_in_the_checkout() {
-        for size in ICON_SIZES {
-            let p = std::path::Path::new(ICON_DIR).join(format!("hicolor/{size}x{size}/apps/io.github.dawgon2.Revolution.png"));
-            assert!(p.is_file(), "{}", p.display());
-        }
+    fn a_user_launcher_for_this_app_is_respected() {
+        let dir = std::env::temp_dir().join(format!("revolution-launcher-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ours = format!("{}.desktop", crate::APP_ID);
+        assert!(!user_launcher_exists(&dir, &ours));
+        std::fs::write(dir.join(&ours), format!("[Desktop Entry]\nStartupWMClass={}\n", crate::APP_ID)).unwrap();
+        std::fs::write(dir.join("other.desktop"), "[Desktop Entry]\nStartupWMClass=org.other.App\n").unwrap();
+        assert!(!user_launcher_exists(&dir, &ours), "our own entry and other apps' entries don't count");
+        std::fs::write(dir.join("revolution.desktop"), format!("[Desktop Entry]\nName=Revolution\nStartupWMClass={}\n", crate::APP_ID)).unwrap();
+        assert!(user_launcher_exists(&dir, &ours));
+        assert!(!user_launcher_exists(&dir.join("missing"), &ours));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

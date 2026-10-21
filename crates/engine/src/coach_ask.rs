@@ -112,6 +112,7 @@ pub const GUIDE_PAGES: &[(&str, &str)] = &[
     ("color/finishing.md", include_str!("../../../docs/guide/color/finishing.md")),
     ("color/lumetri.md", include_str!("../../../docs/guide/color/lumetri.md")),
     ("color/matching.md", include_str!("../../../docs/guide/color/matching.md")),
+    ("color/reference-look.md", include_str!("../../../docs/guide/color/reference-look.md")),
     ("color/nodes.md", include_str!("../../../docs/guide/color/nodes.md")),
     ("color/noise.md", include_str!("../../../docs/guide/color/noise.md")),
     ("color/primaries.md", include_str!("../../../docs/guide/color/primaries.md")),
@@ -150,6 +151,8 @@ const NOT_INDEXED: &[&str] = &[
     "trimming.md",
     "export-queue.md",
     "file-menu.md",
+    // REF (reference pictures): its words pulled two colour eval questions to the wrong section
+    "color/reference-look.md",
     "practice/grading.md",
     "practice/editing.md",
     "practice/audio.md",
@@ -1127,6 +1130,14 @@ pub struct Retrieved {
     /// Its compact header, when it has a valid one (what a model is sent first).
     pub header: Option<&'static Header>,
     pub score: f64,
+}
+
+/// The retrievable section whose header id is `id`, scored `score` (REF: a recipe's own sections
+/// are always sent with it). `None` for an unknown id.
+pub fn retrieved_by_id(id: &str, score: f64) -> Option<Retrieved> {
+    let a = assist();
+    let i = a.headers.iter().position(|h| h.as_ref().is_some_and(|h| h.id == id))?;
+    Some(Retrieved { section: a.sections.get(i)?, header: a.headers.get(i)?.as_ref(), score })
 }
 
 /// Pages written for readers and agents that look things up, not sent to the assistant's model:

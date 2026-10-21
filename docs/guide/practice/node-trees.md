@@ -20,24 +20,28 @@ AI3 item 0a, 0c).
 
 ## Parallel nodes: corrections side by side
 
-> id: practice.node-trees.parallel | does: feeds two or more nodes the same input and mixes their outputs | resolve: Parallel node / Parallel Mixer | premiere: — | when: two secondaries that must not affect each other's selection | see: color.nodes.later
+> id: practice.node-trees.parallel | does: feeds two or more nodes the same input and mixes their outputs | resolve: Parallel node / Parallel Mixer | premiere: — | when: two secondaries that must not affect each other's selection | see: color.nodes.parallel
 
 **[Standard]**
 
 - **Resolve:** the parallel mixer adds the nodes' changes together; each node keys from the same
   untouched picture.
-- **Revolution:** not yet (planned: [color/nodes.md](../color/nodes.md) ▸ Later). Meanwhile, put the
-  qualifier you want to protect earlier in the chain.
+- **Revolution:** **Add Parallel Node** (`grade.addParallel`) on the canvas; the mixer blends the
+  branches by weight (50 / 50 for two) instead of adding their changes together, so check the
+  picture when you rebuild a Resolve tree. See [color/nodes.md](../color/nodes.md) ▸ Parallel nodes.
+  A qualifier placed earlier in a serial chain still protects it in simple cases.
 - **Pitfalls:** two parallel nodes changing the same area add up and overshoot.
 
 ## Layer nodes: the lower one wins
 
-> id: practice.node-trees.layer | does: stacks node outputs so the bottom one replaces the top one where its key allows | resolve: Layer Mixer node, composite modes | premiere: — | when: a secondary that must override the look, blend modes between grades | see: color.nodes.later
+> id: practice.node-trees.layer | does: stacks node outputs so the bottom one replaces the top one where its key allows | resolve: Layer Mixer node, composite modes | premiere: — | when: a secondary that must override the look, blend modes between grades | see: color.nodes.layer
 
 **[Standard]**
 
-- **Revolution:** not yet (planned with parallel nodes). A late node with a qualifier or window
-  does the same job in most cases.
+- **Revolution:** **Add Layer Node** (`grade.addLayer`): each input above the first has its own
+  opacity and blend mode (`layer.opacity.<n>`, `layer.mode.<n>` through `grade.setParam`; no
+  sliders yet). See [color/nodes.md](../color/nodes.md) ▸ Layer nodes for looks. A late node with
+  a qualifier or window does the same job in simple cases.
 
 ## The outside node: everything but the selection
 
@@ -45,8 +49,10 @@ AI3 item 0a, 0c).
 
 **[Standard]**
 
-- **Revolution:** no outside node yet; invert the window or qualifier on a second node
-  (`grade.window.0.invert`, `grade.qual.invert`) with the same shape.
+- **Revolution:** **Add Outside Node** (`grade.addOutside`) takes the first node's own selection,
+  inverted ([color/nodes.md](../color/nodes.md) ▸ Outside nodes). Inverting the window or
+  qualifier on a second node (`grade.window.0.invert`, `grade.qual.invert`) also works when the
+  shapes are the same.
 - **Pitfalls:** two separately drawn shapes drift apart; copy the node and invert it instead of
   redrawing.
 

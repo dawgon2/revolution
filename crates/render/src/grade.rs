@@ -6,14 +6,26 @@
 //! positional operation like the vignette); nothing here is new grading maths. Identity
 //! parameters emit nothing, and a grade that changes nothing compiles to an empty chain, so it
 //! renders bit-exactly like no grade at all.
+//!
+//! **Node graphs (fork C2, `docs/fork/DESIGN-C2.md` §2).** A grade without edges, or whose graph
+//! is a plain chain, compiles exactly as the serial grade always did. A branched grade compiles to
+//! one [`FxOp::GradeGraph`]: a [`GradeProgram`] of passes on texture slots (`graph.rs`).
+
+use std::sync::Arc;
 
 use filmcraft_color::ops::{ColorOp, GRAIN_MAX_SIZE, Table, Tf};
 use filmcraft_color::{GradeSpace, WorkingSpace};
 use filmcraft_project::TrackItem;
-use filmcraft_project::grade::{Grade, GradeNode, MAX_WINDOWS, Qualifier};
+use filmcraft_project::grade::{Grade, GradeNode, MAX_WINDOWS, NodeKind, Qualifier};
 
 use crate::gpufx::FxOp;
 use filmcraft_time::Tick;
+
+mod graph;
+#[cfg(test)]
+mod graph_tests;
+
+pub use graph::{GradePass, GradeProgram, GradeProgramError, KeyMode, execute_graph_cpu};
 
 /// Luma weights of the saturation control (Lumetri's).
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
@@ -84,8 +96,7 @@ pub fn item_fx(
 /// [`crate::RenderOptions::temporal`]) and on a media / subclip item: elsewhere the op is left out,
 /// so a clip with only temporal NR keeps its plain fast paths (playback, graphics, nests).
 pub fn changes_picture(project: &filmcraft_project::Project, item: &TrackItem, t: Tick, temporal_access: bool) -> bool {
-    item.grade.as_ref().is_some_and(|g| g.active_nodes().any(|n| node_changes(n, t, Some(project))))
-        || (temporal_access && is_media(project, item) && temporal(item, t).is_some())
+    item.grade.as_ref().is_some_and(|g| grade_changes(g, t, Some(project))) || (temporal_access && is_media(project, item) && temporal(item, t).is_some())
 }
 
 /// Whether `item` shows media (a media clip or a subclip): the items temporal NR runs on.
@@ -171,6 +182,17 @@ pub fn strip_temporal(ops: &mut Vec<FxOp>) {
     }
 }
 
+/// Whether `g` changes the picture at `t`: a node of a serial grade (or a chain) does, and a
+/// branched graph that isn't bypassed always counts (its mixers change the picture by themselves).
+fn grade_changes(g: &Grade, t: Tick, project: Option<&filmcraft_project::Project>) -> bool {
+    match shape(g) {
+        Shape::Serial(nodes) => nodes.into_iter().any(|n| node_changes(n, t, project)),
+        // (a graph refused for its slots only shows up when compiled; it then renders ungraded)
+        Shape::Graph(_) => true,
+        Shape::Broken(_) => false,
+    }
+}
+
 /// Whether [`node_ops`] emits anything for `n` at `t` (the same conditions).
 fn node_changes(n: &GradeNode, t: Tick, project: Option<&filmcraft_project::Project>) -> bool {
     let q = n.qualifier_at(t);
@@ -210,9 +232,13 @@ pub fn compile(grade: &Grade, t: Tick, working: WorkingSpace) -> Vec<ColorOp> {
 ///
 /// A qualified node's matte is unblurred here (the per-pixel form) and windows are ignored;
 /// [`compile_fx`] blurs the matte and applies the windows.
+///
+/// A branched grade (fork C2) has no per-pixel form: it compiles to nothing here unless its graph
+/// is a plain chain; [`compile_fx`] runs it.
 pub fn compile_at(grade: &Grade, t: Tick, working: WorkingSpace, ctx: GradeCtx) -> Vec<ColorOp> {
     let gs = GradeSpace::new(working, HDR_WHITE_NITS);
-    let body: Vec<ColorOp> = parts(grade, t, &gs, ctx).into_iter().flat_map(|(_, p)| p.into_signal_ops()).collect();
+    let Shape::Serial(nodes) = shape(grade) else { return Vec::new() };
+    let body: Vec<ColorOp> = parts(nodes, t, &gs, ctx).into_iter().flat_map(|(_, p)| p.into_signal_ops()).collect();
     if body.is_empty() {
         return body;
     }
@@ -230,10 +256,68 @@ pub fn compile_at(grade: &Grade, t: Tick, working: WorkingSpace, ctx: GradeCtx) 
 /// [`FxOp::HslSecondary`] (key on the node's input, blur, the node's correction mixed in by the
 /// matte), a node with windows as an [`FxOp::Masked`] around its steps (the window coverage times
 /// the qualifier's matte). Empty when no node changes the picture or a step isn't finite.
+///
+/// A branched grade (fork C2) whose graph isn't a plain chain compiles to one
+/// [`FxOp::GradeGraph`]; a graph that can't render (a cycle, two candidate outputs, more than
+/// [`crate::comp::MAX_LIVE_TEXTURES`] pictures at once, a step that isn't finite) to nothing.
 pub fn compile_fx(grade: &Grade, t: Tick, working: WorkingSpace, ctx: GradeCtx, w: usize, h: usize) -> Vec<FxOp> {
-    let gs = GradeSpace::new(working, HDR_WHITE_NITS);
+    let order = match shape(grade) {
+        Shape::Serial(nodes) => {
+            let gs = GradeSpace::new(working, HDR_WHITE_NITS);
+            let out = serial_steps(parts(nodes, t, &gs, ctx), t, &gs, ctx, w, h, false);
+            return if out.iter().all(step_finite) { out } else { Vec::new() };
+        }
+        Shape::Graph(order) => order,
+        Shape::Broken(e) => {
+            log::debug!("grade graph not rendered: {e}");
+            return Vec::new();
+        }
+    };
+    match graph::compile(grade, &order, t, working, ctx, w, h) {
+        Ok(p) => vec![FxOp::GradeGraph(Arc::new(p))],
+        Err(e) => {
+            log::debug!("grade graph not rendered: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// How a grade compiles (its graph checked once).
+enum Shape<'a> {
+    /// A serial chain: these nodes in order (a grade without edges: its active correction nodes;
+    /// a node of another kind, only in a hostile file, is skipped as the identity; a bypassed
+    /// grade: none; a graph that is a plain chain of correction nodes).
+    Serial(Vec<&'a GradeNode>),
+    /// A real graph, in evaluation order.
+    Graph(filmcraft_project::dag::Order),
+    /// A graph that can't render (the grade renders ungraded).
+    Broken(filmcraft_project::grade::GraphError),
+}
+
+fn shape(grade: &Grade) -> Shape<'_> {
+    // (a grade without edges naming an output, only in a hostile file, stops at that node, as
+    // its graph does)
+    if grade.bypass || (!grade.is_graph() && grade.output.is_none()) {
+        return Shape::Serial(grade.active_nodes().filter(|n| n.kind == NodeKind::Correction).collect());
+    }
+    match graph::plan(grade) {
+        Ok(graph::Plan::Chain(nodes)) => Shape::Serial(nodes),
+        Ok(graph::Plan::Graph(order)) => Shape::Graph(order),
+        Err(e) => Shape::Broken(e),
+    }
+}
+
+/// The image steps of `parts` in order (see [`compile_fx`]). `signal`: the steps run on the
+/// grading signal (a graph's correction node, fork C2), so they don't encode / decode it
+/// themselves, and noise reduction (which reads working linear light) is wrapped in a decode /
+/// encode; otherwise on working linear light, exactly as a serial grade always compiled.
+#[allow(clippy::too_many_arguments)]
+fn serial_steps(parts: Vec<(&GradeNode, Part)>, t: Tick, gs: &GradeSpace, ctx: GradeCtx, w: usize, h: usize, signal: bool) -> Vec<FxOp> {
     let px_scale = if ctx.px_scale.is_finite() && ctx.px_scale > 0.0 { ctx.px_scale } else { 1.0 };
     let wrap = |body: Vec<ColorOp>| {
+        if signal {
+            return body;
+        }
         let mut ops = gs.encode_ops();
         ops.extend(body);
         ops.extend(gs.decode_ops());
@@ -247,7 +331,7 @@ pub fn compile_fx(grade: &Grade, t: Tick, working: WorkingSpace, ctx: GradeCtx, 
         correct.extend(body);
         FxOp::HslSecondary { key: wrap(vec![key]).into(), median_r: 0, denoise: 0.0, blur, correct: wrap(correct).into() }
     };
-    for (n, part) in parts(grade, t, &gs, ctx) {
+    for (n, part) in parts {
         let nr = denoise(n, t, px_scale);
         let empty = matches!(&part, Part::Signal(ops) if ops.is_empty());
         if empty && nr.is_none() {
@@ -263,7 +347,16 @@ pub fn compile_fx(grade: &Grade, t: Tick, working: WorkingSpace, ctx: GradeCtx, 
             out.push(FxOp::ColorChain(wrap(std::mem::take(&mut run)).into()));
         }
         // noise reduction first: it cleans the node's input, which its qualifier then keys
-        let mut steps: Vec<FxOp> = nr.into_iter().collect();
+        let mut steps: Vec<FxOp> = Vec::new();
+        if let Some(nr) = nr {
+            if signal {
+                steps.push(FxOp::ColorChain(gs.decode_ops().into()));
+                steps.push(nr);
+                steps.push(FxOp::ColorChain(gs.encode_ops().into()));
+            } else {
+                steps.push(nr);
+            }
+        }
         if !empty {
             steps.push(match part {
                 Part::Keyed { key, body, sigma } => keyed(key, body, sigma),
@@ -279,7 +372,7 @@ pub fn compile_fx(grade: &Grade, t: Tick, working: WorkingSpace, ctx: GradeCtx, 
     if !run.is_empty() {
         out.push(FxOp::ColorChain(wrap(run).into()));
     }
-    if out.iter().all(step_finite) { out } else { Vec::new() }
+    out
 }
 
 /// Every number of a compiled grade step is finite.
@@ -289,6 +382,7 @@ fn step_finite(o: &FxOp) -> bool {
         FxOp::ColorChain(ops) => finite(ops),
         FxOp::HslSecondary { key, correct, .. } => finite(key) && finite(correct),
         FxOp::Masked { ops, .. } => ops.iter().all(step_finite),
+        FxOp::GradeGraph(p) => p.is_finite(),
         _ => true,
     }
 }
@@ -325,11 +419,11 @@ impl Part {
 
 /// The parts of every active node, in order, up to and including the first node that shows its
 /// qualifier (the highlight / matte view replaces the picture, so later nodes don't run).
-fn parts<'a>(grade: &'a Grade, t: Tick, gs: &GradeSpace, ctx: GradeCtx) -> Vec<(&'a GradeNode, Part)> {
+fn parts<'a>(nodes: Vec<&'a GradeNode>, t: Tick, gs: &GradeSpace, ctx: GradeCtx) -> Vec<(&'a GradeNode, Part)> {
     let px_scale = if ctx.px_scale.is_finite() && ctx.px_scale > 0.0 { ctx.px_scale } else { 1.0 };
     let ctx = GradeCtx { px_scale, ..ctx };
     let mut out = Vec::new();
-    for n in grade.active_nodes() {
+    for n in nodes {
         let body = node_ops(n, t, gs, &ctx);
         // (empty parts stay: the node may still reduce noise, `compile_fx`)
         let Some(q) = n.qualifier_at(t) else {
@@ -563,17 +657,17 @@ mod tests {
         for ws in SPACES {
             assert!(compile(&Grade::default(), Tick(0), ws).is_empty());
             assert!(compile(&Grade::with_node(), Tick(0), ws).is_empty());
-            assert!(compile(&Grade { nodes: vec![identity.clone(); 3], bypass: false }, Tick(0), ws).is_empty());
+            assert!(compile(&Grade { nodes: vec![identity.clone(); 3], bypass: false, ..Default::default() }, Tick(0), ws).is_empty());
         }
     }
 
     #[test]
     fn bypassed_and_disabled_nodes_compile_to_nothing() {
         let mut lifted = node(&[("lift", ParamValue::Color([0.1, 0.0, 0.0, 0.0]))]);
-        let mut g = Grade { nodes: vec![lifted.clone()], bypass: true };
+        let mut g = Grade { nodes: vec![lifted.clone()], bypass: true, ..Default::default() };
         assert!(compile(&g, Tick(0), WorkingSpace::DaVinciWide).is_empty());
         lifted.enabled = false;
-        g = Grade { nodes: vec![lifted], bypass: false };
+        g = Grade { nodes: vec![lifted], bypass: false, ..Default::default() };
         assert!(compile(&g, Tick(0), WorkingSpace::DaVinciWide).is_empty());
     }
 
@@ -590,7 +684,7 @@ mod tests {
             ("curve.g", ParamValue::Curve(vec![[0.0, 0.1], [1.0, 1.0]])),
         ]);
         let gs = GradeSpace::new(WorkingSpace::DaVinciWide, HDR_WHITE_NITS);
-        let ops = compile(&Grade { nodes: vec![n], bypass: false }, Tick(0), WorkingSpace::DaVinciWide);
+        let ops = compile(&Grade { nodes: vec![n], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::DaVinciWide);
         let enc = gs.encode_ops();
         let dec = gs.decode_ops();
         assert_eq!(ops[..enc.len()], enc[..]);
@@ -614,7 +708,7 @@ mod tests {
             ("pivot", ParamValue::Float(0.5)),
         ]);
         // Rec. 709 working space: the grading signal is sRGB-encoded display values
-        let ops = compile(&Grade { nodes: vec![n], bypass: false }, Tick(0), WorkingSpace::Rec709);
+        let ops = compile(&Grade { nodes: vec![n], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::Rec709);
         let lin = [0.18f32, 0.18, 0.18];
         let out = filmcraft_color::ops::apply_chain(&ops, lin);
         let srgb_enc = |x: f32| if x <= 0.0031308 { 12.92 * x } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 };
@@ -636,7 +730,7 @@ mod tests {
         p.put_keyframe(Tick(0), ParamValue::Color([0.0; 4]));
         p.put_keyframe(Tick(100), ParamValue::Color([0.0, 0.0, 0.0, 0.2]));
         n.params.insert("offset".into(), p);
-        let g = Grade { nodes: vec![n], bypass: false };
+        let g = Grade { nodes: vec![n], bypass: false, ..Default::default() };
         assert!(compile(&g, Tick(0), WorkingSpace::Rec709).is_empty());
         let mid = compile(&g, Tick(50), WorkingSpace::Rec709);
         assert!(mid.iter().any(|o| matches!(o, ColorOp::Lggo { offset, .. } if (offset[0] - 0.1).abs() < 1e-6)));
@@ -646,7 +740,7 @@ mod tests {
     fn temperature_runs_in_linear_light() {
         let n = node(&[("temperature", ParamValue::Float(50.0))]);
         let gs = GradeSpace::new(WorkingSpace::DaVinciWide, HDR_WHITE_NITS);
-        let ops = compile(&Grade { nodes: vec![n], bypass: false }, Tick(0), WorkingSpace::DaVinciWide);
+        let ops = compile(&Grade { nodes: vec![n], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::DaVinciWide);
         let mut want = gs.encode_ops();
         want.extend(gs.decode_ops());
         want.push(ColorOp::Matrix { m: [[1.175, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.825]], offset: [0.0; 3] });
@@ -667,7 +761,7 @@ mod tests {
             n.params.insert("curve.master".into(), Param::new(ParamValue::Curve(vec![[0.5, f32::NAN]; 10_000])));
             nodes.push(n);
         }
-        let g = Grade { nodes, bypass: false };
+        let g = Grade { nodes, ..Default::default() };
         for ws in [WorkingSpace::Rec709, WorkingSpace::DaVinciWide, WorkingSpace::Rec2100Pq, WorkingSpace::Rec2100Hlg] {
             let ops = compile(&g, Tick(i64::MAX), ws);
             assert!(!ops.is_empty() && ops.iter().all(ColorOp::is_finite));
@@ -697,7 +791,7 @@ mod tests {
     fn zero_grain_strength_compiles_to_nothing() {
         let n = node(&[("grain.strength", ParamValue::Float(0.0)), ("grain.size", ParamValue::Float(3.0)), ("grain.softness", ParamValue::Float(1.0))]);
         for ws in SPACES {
-            assert!(compile(&Grade { nodes: vec![n.clone()], bypass: false }, Tick(5), ws).is_empty());
+            assert!(compile(&Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() }, Tick(5), ws).is_empty());
         }
     }
 
@@ -705,7 +799,7 @@ mod tests {
     fn grain_sits_at_its_nodes_place_in_the_chain() {
         let lift = node(&[("lift", ParamValue::Color([0.1, 0.0, 0.0, 0.0]))]);
         let sat = with_id(node(&[("saturation", ParamValue::Float(0.5))]), 3);
-        let g = Grade { nodes: vec![lift, grain_node(2, 0.5), sat], bypass: false };
+        let g = Grade { nodes: vec![lift, grain_node(2, 0.5), sat], bypass: false, ..Default::default() };
         let gs = GradeSpace::new(WorkingSpace::DaVinciWide, HDR_WHITE_NITS);
         let ops = compile_at(&g, Tick(77), WorkingSpace::DaVinciWide, GradeCtx { px_scale: 0.5, ..GradeCtx::default() });
         let enc = gs.encode_ops().len();
@@ -719,7 +813,7 @@ mod tests {
 
     #[test]
     fn grain_is_the_same_for_a_frame_and_new_every_frame() {
-        let g = Grade { nodes: vec![grain_node(1, 0.6)], bypass: false };
+        let g = Grade { nodes: vec![grain_node(1, 0.6)], bypass: false, ..Default::default() };
         for ws in SPACES {
             let (a, b, c) = (compile(&g, Tick(1000), ws), compile(&g, Tick(1000), ws), compile(&g, Tick(2000), ws));
             assert_eq!(patch(&a, 0.18), patch(&b, 0.18));
@@ -728,13 +822,13 @@ mod tests {
             assert!(differ > pa.len() / 2, "{differ}");
         }
         // two grain nodes on the same frame draw different patterns
-        let two = |id| compile(&Grade { nodes: vec![grain_node(id, 0.6)], bypass: false }, Tick(1000), WorkingSpace::Rec709);
+        let two = |id| compile(&Grade { nodes: vec![grain_node(id, 0.6)], bypass: false, ..Default::default() }, Tick(1000), WorkingSpace::Rec709);
         assert_ne!(patch(&two(1), 0.18), patch(&two(2), 0.18));
     }
 
     #[test]
     fn grain_is_weaker_in_shadows_and_highlights() {
-        let g = Grade { nodes: vec![grain_node(1, 1.0)], bypass: false };
+        let g = Grade { nodes: vec![grain_node(1, 1.0)], bypass: false, ..Default::default() };
         // Rec. 709: the grading signal is sRGB; 0, mid grey (sRGB 0.5) and 1 in linear light
         let ops = compile(&g, Tick(0), WorkingSpace::Rec709);
         // (measured on the signal the grain was added to)
@@ -751,7 +845,7 @@ mod tests {
         n.params.insert("grain.strength".into(), Param::new(ParamValue::Float(1e300)));
         n.params.insert("grain.size".into(), Param::new(ParamValue::Float(-1e300)));
         n.params.insert("grain.softness".into(), Param::new(ParamValue::Float(f64::NAN)));
-        let g = Grade { nodes: vec![n], bypass: false };
+        let g = Grade { nodes: vec![n], bypass: false, ..Default::default() };
         for scale in [0.0, -1.0, f32::NAN, f32::INFINITY, 1e-30, 1e30] {
             for t in [Tick(i64::MIN), Tick(-1), Tick(i64::MAX)] {
                 let ops = compile_at(&g, t, WorkingSpace::Rec2100Pq, GradeCtx { px_scale: scale, seq_time: t, clip: u64::MAX, project: None });
@@ -780,7 +874,7 @@ mod tests {
         for (size, softness) in [(1.0, 0.0), (1.0, 0.5), (1.0, 1.0), (2.0, 0.0), (2.0, 0.5), (0.5, 0.0), (4.0, 0.5)] {
             let n =
                 node(&[("grain.strength", ParamValue::Float(1.0)), ("grain.size", ParamValue::Float(size)), ("grain.softness", ParamValue::Float(softness))]);
-            let g = Grade { nodes: vec![n], bypass: false };
+            let g = Grade { nodes: vec![n], bypass: false, ..Default::default() };
             let at = |px_scale| compile_at(&g, Tick(9), WorkingSpace::Rec709, GradeCtx { px_scale, seq_time: Tick(9), clip: 4, project: None });
             let (w, k) = (256usize, 4usize);
             let full = flat(&at(1.0), w, 0.214);
@@ -800,7 +894,7 @@ mod tests {
 
     #[test]
     fn grain_seed_mixes_sequence_time_and_clip() {
-        let g = Grade { nodes: vec![grain_node(1, 0.6)], bypass: false };
+        let g = Grade { nodes: vec![grain_node(1, 0.6)], bypass: false, ..Default::default() };
         let ops = |seq: i64, clip: u64| compile_at(&g, Tick(500), WorkingSpace::Rec709, GradeCtx { px_scale: 1.0, seq_time: Tick(seq), clip, project: None });
         assert_eq!(patch(&ops(10, 1), 0.18), patch(&ops(10, 1), 0.18));
         // a hold (same clip time, later sequence time) and a stacked clip of the same source
@@ -831,7 +925,7 @@ mod tests {
         ];
         for (k, v) in cases {
             let n = node(&[(k, v.clone())]);
-            let compiled = !compile(&Grade { nodes: vec![n.clone()], bypass: false }, Tick(0), WorkingSpace::DaVinciWide).is_empty();
+            let compiled = !compile(&Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::DaVinciWide).is_empty();
             assert_eq!(node_changes(&n, Tick(0), None), compiled, "{k} {v:?}");
         }
     }
@@ -857,8 +951,9 @@ mod tests {
     #[test]
     fn a_qualifier_limits_the_node_to_its_key() {
         for ws in SPACES {
-            let plain = compile(&Grade { nodes: vec![node(&[("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.5]))])], bypass: false }, Tick(0), ws);
-            let ops = compile(&Grade { nodes: vec![qualified(&[])], bypass: false }, Tick(0), ws);
+            let plain =
+                compile(&Grade { nodes: vec![node(&[("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.5]))])], bypass: false, ..Default::default() }, Tick(0), ws);
+            let ops = compile(&Grade { nodes: vec![qualified(&[])], bypass: false, ..Default::default() }, Tick(0), ws);
             let (a, b) = (filmcraft_color::ops::apply_chain(&ops, RED), filmcraft_color::ops::apply_chain(&plain, RED));
             assert!(a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-5), "{ws:?}: {a:?} vs {b:?}");
             for c in [BLUE, GREY] {
@@ -866,7 +961,7 @@ mod tests {
                 assert!(out.iter().zip(&c).all(|(x, y)| (x - y).abs() < 1e-5), "{ws:?}: {c:?} → {out:?}");
             }
             // inverted: everything but the red
-            let inv = compile(&Grade { nodes: vec![qualified(&[("qual.invert", ParamValue::Float(1.0))])], bypass: false }, Tick(0), ws);
+            let inv = compile(&Grade { nodes: vec![qualified(&[("qual.invert", ParamValue::Float(1.0))])], bypass: false, ..Default::default() }, Tick(0), ws);
             let r = filmcraft_color::ops::apply_chain(&inv, RED);
             assert!(r.iter().zip(&RED).all(|(x, y)| (x - y).abs() < 1e-5), "{r:?}");
             let g = filmcraft_color::ops::apply_chain(&inv, GREY);
@@ -880,9 +975,12 @@ mod tests {
         let mut n = qualified(&[]);
         n.params.insert("qual.hueWidth".into(), Param::new(ParamValue::Float(1.0)));
         n.params.insert("qual.satLow".into(), Param::new(ParamValue::Float(0.0)));
-        let plain =
-            compile(&Grade { nodes: vec![node(&[("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.5]))])], bypass: false }, Tick(0), WorkingSpace::DaVinciWide);
-        let ops = compile(&Grade { nodes: vec![n], bypass: false }, Tick(0), WorkingSpace::DaVinciWide);
+        let plain = compile(
+            &Grade { nodes: vec![node(&[("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.5]))])], bypass: false, ..Default::default() },
+            Tick(0),
+            WorkingSpace::DaVinciWide,
+        );
+        let ops = compile(&Grade { nodes: vec![n], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::DaVinciWide);
         for c in [RED, BLUE, GREY, [0.0; 3], [1.0; 3], [20.0, 0.0, 5.0]] {
             let (a, b) = (filmcraft_color::ops::apply_chain(&ops, c), filmcraft_color::ops::apply_chain(&plain, c));
             assert!(a.iter().zip(&b).all(|(x, y)| (x - y).abs() <= 1e-5 * y.abs().max(1.0)), "{c:?}: {a:?} vs {b:?}");
@@ -892,7 +990,7 @@ mod tests {
     #[test]
     fn sat_high_excludes_saturated_colours() {
         let n = qualified(&[("qual.hueWidth", ParamValue::Float(1.0)), ("qual.satLow", ParamValue::Float(0.0)), ("qual.satHigh", ParamValue::Float(0.3))]);
-        let ops = compile(&Grade { nodes: vec![n], bypass: false }, Tick(0), WorkingSpace::Rec709);
+        let ops = compile(&Grade { nodes: vec![n], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::Rec709);
         let out = filmcraft_color::ops::apply_chain(&ops, RED);
         assert!(out.iter().zip(&RED).all(|(x, y)| (x - y).abs() < 1e-5), "{out:?}");
         let grey = filmcraft_color::ops::apply_chain(&ops, GREY);
@@ -902,13 +1000,13 @@ mod tests {
     #[test]
     fn a_qualifier_alone_changes_nothing_and_highlight_stops_the_chain() {
         let only = node(&[("qual.on", ParamValue::Float(1.0)), ("qual.hue", ParamValue::Float(0.3))]);
-        let g = Grade { nodes: vec![only.clone()], bypass: false };
+        let g = Grade { nodes: vec![only.clone()], bypass: false, ..Default::default() };
         assert!(compile(&g, Tick(0), WorkingSpace::DaVinciWide).is_empty());
         assert!(!changes_picture_of(&g));
         let mut shown = qualified(&[("qual.show", ParamValue::Float(2.0))]);
         shown.id = 1;
         let later = with_id(node(&[("saturation", ParamValue::Float(0.0))]), 2);
-        let g = Grade { nodes: vec![shown, later], bypass: false };
+        let g = Grade { nodes: vec![shown, later], bypass: false, ..Default::default() };
         assert!(changes_picture_of(&g));
         let ops = compile(&g, Tick(0), WorkingSpace::Rec709);
         assert!(!ops.iter().any(|o| matches!(o, ColorOp::Saturation { .. })), "later nodes don't run under the matte view");
@@ -924,12 +1022,12 @@ mod tests {
     #[test]
     fn compile_fx_fuses_unblurred_nodes_and_keys_blurred_ones() {
         let lift = node(&[("lift", ParamValue::Color([0.1, 0.0, 0.0, 0.0]))]);
-        let g = Grade { nodes: vec![lift.clone(), with_id(qualified(&[]), 2)], bypass: false };
+        let g = Grade { nodes: vec![lift.clone(), with_id(qualified(&[]), 2)], bypass: false, ..Default::default() };
         let fx = compile_fx(&g, Tick(0), WorkingSpace::DaVinciWide, GradeCtx::default(), 64, 32);
         let want = compile(&g, Tick(0), WorkingSpace::DaVinciWide);
         assert!(matches!(fx.as_slice(), [FxOp::ColorChain(ops)] if ops[..] == want[..]), "{fx:?}");
         let blurred = with_id(qualified(&[("qual.blur", ParamValue::Float(0.5))]), 2);
-        let g = Grade { nodes: vec![lift, blurred, with_id(node(&[("saturation", ParamValue::Float(0.5))]), 3)], bypass: false };
+        let g = Grade { nodes: vec![lift, blurred, with_id(node(&[("saturation", ParamValue::Float(0.5))]), 3)], bypass: false, ..Default::default() };
         let fx = compile_fx(&g, Tick(0), WorkingSpace::DaVinciWide, GradeCtx::default(), 64, 32);
         assert!(matches!(fx.as_slice(), [FxOp::ColorChain(_), FxOp::HslSecondary { blur, .. }, FxOp::ColorChain(_)] if !blur.is_empty()), "{fx:?}");
         assert!(fx.iter().all(FxOp::gpu_ok));
@@ -937,7 +1035,7 @@ mod tests {
         let flat = |c: [f32; 3]| {
             let mut img = crate::Image::new(8, 8);
             img.px.chunks_mut(4).for_each(|p| p.copy_from_slice(&[c[0], c[1], c[2], 1.0]));
-            let only = Grade { nodes: vec![with_id(qualified(&[("qual.blur", ParamValue::Float(0.5))]), 2)], bypass: false };
+            let only = Grade { nodes: vec![with_id(qualified(&[("qual.blur", ParamValue::Float(0.5))]), 2)], bypass: false, ..Default::default() };
             for op in compile_fx(&only, Tick(0), WorkingSpace::Rec709, GradeCtx::default(), 8, 8) {
                 op.apply(&mut img);
             }
@@ -946,7 +1044,11 @@ mod tests {
         let b = flat(BLUE);
         assert!(b.iter().zip(&BLUE).all(|(x, y)| (x - y).abs() < 1e-4), "{b:?}");
         let r = flat(RED);
-        let plain = compile(&Grade { nodes: vec![node(&[("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.5]))])], bypass: false }, Tick(0), WorkingSpace::Rec709);
+        let plain = compile(
+            &Grade { nodes: vec![node(&[("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.5]))])], bypass: false, ..Default::default() },
+            Tick(0),
+            WorkingSpace::Rec709,
+        );
         let want = filmcraft_color::ops::apply_chain(&plain, RED);
         assert!(r.iter().zip(&want).all(|(x, y)| (x - y).abs() < 1e-3), "{r:?} vs {want:?}");
     }
@@ -974,7 +1076,7 @@ mod tests {
         let mut m = Mask::new("w", MaskPath::rect(0.0, 0.0, 16.0, 16.0));
         m.feather = Param::new(ParamValue::Float(0.0));
         n.windows.push(m);
-        let g = Grade { nodes: vec![n.clone()], bypass: false };
+        let g = Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() };
         let fx = compile_fx(&g, Tick(0), WorkingSpace::Rec709, GradeCtx::default(), 32, 16);
         assert!(matches!(fx.as_slice(), [FxOp::Masked { ops, .. }] if matches!(ops.as_slice(), [FxOp::ColorChain(_)])), "{fx:?}");
         assert!(fx.iter().all(FxOp::gpu_ok));
@@ -984,27 +1086,30 @@ mod tests {
         assert!(outside.iter().zip(&GREY).all(|(a, b)| (a - b).abs() < 1e-5), "{outside:?}");
         // inverted window: the other half
         n.windows[0].inverted = true;
-        let img = run_fx(&Grade { nodes: vec![n.clone()], bypass: false }, GREY);
+        let img = run_fx(&Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() }, GREY);
         assert!(px(&img, 28, 8)[1] > GREY[1] + 0.01 && (px(&img, 4, 8)[1] - GREY[1]).abs() < 1e-5);
         // a window and a qualifier: only where both select (grey isn't red)
         n.windows[0].inverted = false;
         let mut q = qualified(&[]);
         q.windows = n.windows.clone();
-        let img = run_fx(&Grade { nodes: vec![q.clone()], bypass: false }, GREY);
+        let img = run_fx(&Grade { nodes: vec![q.clone()], bypass: false, ..Default::default() }, GREY);
         assert!((px(&img, 4, 8)[1] - GREY[1]).abs() < 1e-5);
-        let img = run_fx(&Grade { nodes: vec![q], bypass: false }, RED);
+        let img = run_fx(&Grade { nodes: vec![q], bypass: false, ..Default::default() }, RED);
         assert!(px(&img, 4, 8)[0] > RED[0] + 0.01 && (px(&img, 28, 8)[0] - RED[0]).abs() < 1e-5);
         // windows don't enter the per-pixel chain, and a node with only windows changes nothing
         let mut empty = GradeNode::new(1);
         empty.windows = n.windows.clone();
-        assert!(compile_fx(&Grade { nodes: vec![empty], bypass: false }, Tick(0), WorkingSpace::Rec709, GradeCtx::default(), 32, 16).is_empty());
+        assert!(
+            compile_fx(&Grade { nodes: vec![empty], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::Rec709, GradeCtx::default(), 32, 16)
+                .is_empty()
+        );
     }
 
     #[test]
     fn noise_reduction_runs_at_the_nodes_input_and_inside_its_windows() {
         use filmcraft_project::{Mask, MaskPath};
         let nr = node(&[("nr.luma", ParamValue::Float(0.5)), ("nr.chroma", ParamValue::Float(0.25))]);
-        let g = Grade { nodes: vec![nr.clone()], bypass: false };
+        let g = Grade { nodes: vec![nr.clone()], bypass: false, ..Default::default() };
         assert!(changes_picture_of(&g));
         let ctx = GradeCtx { px_scale: 0.5, ..GradeCtx::default() };
         let fx = compile_fx(&g, Tick(0), WorkingSpace::DaVinciWide, ctx, 32, 16);
@@ -1016,7 +1121,7 @@ mod tests {
         n.params.insert("gain".into(), Param::new(ParamValue::Color([0.0, 0.0, 0.0, 0.5])));
         n.windows.push(Mask::new("w", MaskPath::rect(0.0, 0.0, 16.0, 16.0)));
         let lift = |id| with_id(node(&[("lift", ParamValue::Color([0.1, 0.0, 0.0, 0.0]))]), id);
-        let g = Grade { nodes: vec![lift(1), with_id(n, 2), lift(3)], bypass: false };
+        let g = Grade { nodes: vec![lift(1), with_id(n, 2), lift(3)], bypass: false, ..Default::default() };
         let fx = compile_fx(&g, Tick(0), WorkingSpace::DaVinciWide, GradeCtx::default(), 32, 16);
         assert!(
             matches!(fx.as_slice(), [FxOp::ColorChain(_), FxOp::Masked { ops, .. }, FxOp::ColorChain(_)] if matches!(ops.as_slice(), [FxOp::Denoise { .. }, FxOp::ColorChain(_)])),
@@ -1025,8 +1130,11 @@ mod tests {
         assert!(fx.iter().all(FxOp::gpu_ok));
         // zero strengths: nothing
         let off = node(&[("nr.luma", ParamValue::Float(0.0)), ("nr.size", ParamValue::Float(3.0))]);
-        assert!(compile_fx(&Grade { nodes: vec![off.clone()], bypass: false }, Tick(0), WorkingSpace::DaVinciWide, GradeCtx::default(), 8, 8).is_empty());
-        assert!(!changes_picture_of(&Grade { nodes: vec![off], bypass: false }));
+        assert!(
+            compile_fx(&Grade { nodes: vec![off.clone()], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::DaVinciWide, GradeCtx::default(), 8, 8)
+                .is_empty()
+        );
+        assert!(!changes_picture_of(&Grade { nodes: vec![off], bypass: false, ..Default::default() }));
     }
 
     #[test]
@@ -1049,7 +1157,7 @@ mod tests {
         assert!((half.eval(1.2) - (1.2 + tab.eval(1.2)) / 2.0).abs() < 1e-3);
         // a node: the op sits after the curves, and 0 compiles to nothing
         let n = node(&[("hl.rolloff", ParamValue::Float(0.6)), ("hl.knee", ParamValue::Float(0.8))]);
-        let ops = compile(&Grade { nodes: vec![n], bypass: false }, Tick(0), WorkingSpace::DaVinciWide);
+        let ops = compile(&Grade { nodes: vec![n], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::DaVinciWide);
         assert!(ops.iter().any(|o| matches!(o, ColorOp::Table(_))));
         let out = filmcraft_color::ops::apply_chain(&ops, [50.0, 0.18, 0.0]);
         let plain = filmcraft_color::ops::apply_chain(&ops, [0.18; 3]);
@@ -1057,13 +1165,13 @@ mod tests {
         assert!(out[0] < 50.0 && out.iter().all(|v| v.is_finite()), "{out:?}");
         let full = node(&[("hl.rolloff", ParamValue::Float(1.0)), ("hl.knee", ParamValue::Float(0.8))]);
         for ws in SPACES {
-            let ops = compile(&Grade { nodes: vec![full.clone()], bypass: false }, Tick(0), ws);
+            let ops = compile(&Grade { nodes: vec![full.clone()], bypass: false, ..Default::default() }, Tick(0), ws);
             let o = filmcraft_color::ops::apply_chain(&ops, [8.0, 1.5, 0.3]);
             assert!(o[0] <= 1.0 + 1e-3 && o[1] <= 1.0 + 1e-3 && o[1] > 0.6, "{ws:?}: {o:?}");
         }
         assert!(plain.iter().all(|v| (v - 0.18).abs() < 1e-4), "mid grey untouched: {plain:?}");
         let off = node(&[("hl.rolloff", ParamValue::Float(0.0)), ("hl.knee", ParamValue::Float(0.6))]);
-        assert!(compile(&Grade { nodes: vec![off], bypass: false }, Tick(0), WorkingSpace::DaVinciWide).is_empty());
+        assert!(compile(&Grade { nodes: vec![off], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::DaVinciWide).is_empty());
         for (k, a) in [(f32::NAN, f32::NAN), (-5.0, 9.0), (1.0, 1.0)] {
             let t = soft_clip(k, a);
             assert!(t.values.iter().all(|v| v.is_finite()));
@@ -1075,16 +1183,20 @@ mod tests {
         let mut n = node(&[("lut.mix", ParamValue::Float(0.5))]);
         n.lut = "builtin:look-unknown-for-sure".into();
         // an unknown reference applies nothing (but the clip still takes the effect path)
-        assert!(compile(&Grade { nodes: vec![n.clone()], bypass: false }, Tick(0), WorkingSpace::Rec709).is_empty());
+        assert!(compile(&Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::Rec709).is_empty());
         let Some(b) = crate::luts::builtins().iter().find(|b| b.id.starts_with("look-")) else { return };
         n.lut = format!("builtin:{}", b.id);
         n.params.insert("saturation".into(), Param::new(ParamValue::Float(0.5)));
-        let ops = compile(&Grade { nodes: vec![n.clone()], bypass: false }, Tick(0), WorkingSpace::Rec709);
+        let ops = compile(&Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::Rec709);
         let sat = ops.iter().position(|o| matches!(o, ColorOp::Saturation { .. }));
         let lut = ops.iter().position(|o| matches!(o, ColorOp::Lut { intensity, .. } if (*intensity - 0.5).abs() < 1e-6));
         assert!(sat.is_some() && lut.is_some() && sat < lut, "{ops:?}");
         n.params.insert("lut.mix".into(), Param::new(ParamValue::Float(0.0)));
-        assert!(!compile(&Grade { nodes: vec![n], bypass: false }, Tick(0), WorkingSpace::Rec709).iter().any(|o| matches!(o, ColorOp::Lut { .. })));
+        assert!(
+            !compile(&Grade { nodes: vec![n], bypass: false, ..Default::default() }, Tick(0), WorkingSpace::Rec709)
+                .iter()
+                .any(|o| matches!(o, ColorOp::Lut { .. }))
+        );
     }
 
     #[test]
@@ -1099,7 +1211,7 @@ mod tests {
             n.windows.push(m);
         }
         n.windows.push(Mask::new("empty", MaskPath { vertices: Vec::new(), closed: true }));
-        let g = Grade { nodes: vec![n], bypass: false };
+        let g = Grade { nodes: vec![n], bypass: false, ..Default::default() };
         for scale in [0.0, f32::NAN, 1e-30, 1e30] {
             let fx = compile_fx(&g, Tick(0), WorkingSpace::DaVinciWide, GradeCtx { px_scale: scale, ..GradeCtx::default() }, 8, 8);
             if let Some(FxOp::Masked { masks, .. }) = fx.first() {
@@ -1129,7 +1241,7 @@ mod tests {
             m.params.insert((*k).into(), Param::new(ParamValue::Float(if i % 2 == 0 { 1e300 } else { -1e300 })));
         }
         for n in [n, m] {
-            let g = Grade { nodes: vec![n], bypass: false };
+            let g = Grade { nodes: vec![n], bypass: false, ..Default::default() };
             for ws in [WorkingSpace::Rec709, WorkingSpace::DaVinciWide, WorkingSpace::Rec2100Pq] {
                 for op in compile_fx(&g, Tick(0), ws, GradeCtx { px_scale: f32::NAN, ..GradeCtx::default() }, 0, 0) {
                     assert!(op.gpu_ok(), "{op:?}");

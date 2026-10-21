@@ -442,6 +442,8 @@ pub struct FilmcraftApp {
     pub shortcut_editor: panels::shortcuts_dialog::EditorState,
     pub toast: Option<(String, f64)>,
     pub tl: panels::timeline::TlState,
+    /// The Cut page's two timeline views (fork RS4).
+    pub cut: panels::cut_page::CutState,
     /// Commands from outside the UI (native menu bar), invoked on the UI thread.
     pub command_inbox: Option<Receiver<String>>,
     /// A V key press (or a Ctrl+V paste) reached the app and its release hasn't yet.
@@ -877,6 +879,7 @@ impl FilmcraftApp {
             shortcut_editor: Default::default(),
             toast: None,
             tl: Default::default(),
+            cut: Default::default(),
             command_inbox: None,
             v_down: false,
             gpu: None,
@@ -1797,6 +1800,19 @@ impl FilmcraftApp {
                     app.session.execute("graphics.newFromFile", json!({"path": path})).map_err(|e| e.to_string())
                 })
             }
+            "stills.import" => self.pick(FileDialog::open_files(filmcraft_media::STILL_EXTENSIONS), |app, paths| {
+                // every picture chosen; the first error answers (the others are imported anyway)
+                let mut out = Ok(Value::Null);
+                for path in paths {
+                    match app.session.execute("stills.import", json!({"path": path})) {
+                        Ok(v) if out.is_ok() => out = Ok(v),
+                        Ok(_) => {}
+                        Err(e) if out.is_ok() => out = Err(e.to_string()),
+                        Err(e) => app.session.toast(e.to_string()),
+                    }
+                }
+                out
+            }),
             "captions.import" => self.pick(FileDialog::open_files(&["srt", "vtt", "scc", "mcc", "stl", "ttml", "dfxp", "xml"]), |app, paths| {
                 let Some(path) = paths.into_iter().next() else { return Ok(Value::Null) };
                 app.session.execute("captions.import", json!({"path": path})).map_err(|e| e.to_string())
@@ -1870,6 +1886,25 @@ impl FilmcraftApp {
             let p = f.path();
             if p.exists() {
                 paths.push(p.to_string_lossy().to_string());
+            }
+        }
+        // pictures dropped on the Gallery strip become reference stills (REF.1)
+        if !paths.is_empty()
+            && let Some((strip, pass)) = ctx.data(|d| d.get_temp::<(egui::Rect, u64)>(egui::Id::new(crate::panels::stills::STRIP_RECT)))
+            && ctx.cumulative_pass_nr().saturating_sub(pass) <= 1
+            && self.drop_pointer(ctx).is_some_and(|p| strip.contains(p))
+        {
+            // (only pictures: anything else dropped there is imported as media, as anywhere else)
+            let is_picture = |p: &String| {
+                let ext = std::path::Path::new(p).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                filmcraft_media::STILL_EXTENSIONS.contains(&ext.as_str())
+            };
+            let (pictures, rest): (Vec<String>, Vec<String>) = std::mem::take(&mut paths).into_iter().partition(is_picture);
+            paths = rest;
+            for p in pictures {
+                if let Err(e) = self.session.execute("stills.import", json!({"path": p})) {
+                    self.session.toast(e.to_string());
+                }
             }
         }
         if !paths.is_empty() {

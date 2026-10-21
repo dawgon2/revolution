@@ -245,6 +245,11 @@ App icon** switches it:
 - **Square**: the same picture as a plain square, edge to edge. Some panels and icon themes
   (square or flat ones) look tidier with it.
 
+Every way of installing Revolution gets the rounded icon: the packages (.deb, .rpm, AppImage,
+Flatpak, the Windows installer) install it, and the portable `.tar.gz` adds its own app-menu entry
+and icon to your user folder the first time it starts (again after you move the folder or update;
+never over a packaged entry or a launcher you made; `FILMCRAFT_NO_DESKTOP_ENTRY=1` stops it).
+
 The window's own icon changes at once. On Linux the launcher, taskbar and app-switcher icon come
 from your icon theme, so Revolution also writes the chosen icon to your user icon folder
 (`~/.local/share/icons/hicolor`). Some desktops cache icons: if the old one stays, it changes

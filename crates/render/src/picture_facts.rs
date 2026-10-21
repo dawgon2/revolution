@@ -63,7 +63,7 @@ pub struct PictureFacts {
     pub skin_offset_deg: Option<f32>,
 }
 
-fn working_gamut(working: WorkingSpace) -> Gamut {
+pub(crate) fn working_gamut(working: WorkingSpace) -> Gamut {
     match working {
         WorkingSpace::Rec709 => Gamut::Bt709,
         WorkingSpace::Rec2100Pq | WorkingSpace::Rec2100Hlg => Gamut::Bt2020,
@@ -72,7 +72,7 @@ fn working_gamut(working: WorkingSpace) -> Gamut {
 }
 
 /// Luminance of Rec. 709-primaries linear RGB.
-fn luma(c: [f32; 3]) -> f32 {
+pub(crate) fn luma(c: [f32; 3]) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
@@ -98,7 +98,7 @@ fn mccamy_cct(c: [f32; 3]) -> Option<f32> {
 }
 
 /// The value at fraction `q` (0…1) of a sorted slice.
-fn quantile(sorted: &[f32], q: f32) -> Option<f32> {
+pub(crate) fn quantile(sorted: &[f32], q: f32) -> Option<f32> {
     let last = sorted.len().checked_sub(1)?;
     sorted.get(((last as f32) * q.clamp(0.0, 1.0)).round() as usize).copied()
 }

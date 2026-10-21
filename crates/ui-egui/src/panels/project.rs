@@ -295,8 +295,70 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     let inst = shown_inst(app);
     let v = view_of(app, inst);
+    // fork RS4: Resolve's media pool has its bins down the left (Master, then the bins)
+    if app.resolve_workflow() && inst == Inst::Main && rect.width() >= BINS_MIN_PANEL_W {
+        let side = Rect::from_min_max(rect.min, pos2(rect.min.x + BINS_W, rect.max.y));
+        bins_sidebar(app, ui, side, v.bin);
+        rect.min.x = side.max.x + 1.0;
+    }
     body(app, ui, rect, &v, &mut actions);
     run(app, ui.ctx(), actions);
+}
+
+/// Width of the Resolve workflow's bins column, and the narrowest media pool that shows it.
+pub const BINS_W: f32 = 150.0;
+const BINS_MIN_PANEL_W: f32 = 380.0;
+/// Deepest bin level the column lists (deeper bins are reached from their parent).
+const BINS_MAX_DEPTH: usize = 6;
+
+/// The bins column (fork RS4, Resolve's Bins list): Master (the project's top), then every bin,
+/// indented under its parent; the one shown is lit. A click shows that bin in the media pool.
+/// Automation ids: `project.bins.master`, `project.bins.<bin id>`.
+fn bins_sidebar(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, shown: BinId) {
+    let t = app.tokens;
+    let p = ui.painter_at(r);
+    p.rect_filled(r, 0.0, t.panel_bg);
+    p.line_segment([r.right_top(), r.right_bottom()], Stroke::new(1.0, t.separator));
+    p.text(pos2(r.min.x + 10.0, r.min.y + 14.0), Align2::LEFT_CENTER, tl!("Bins"), Tokens::semibold(11.5), t.text);
+    fn walk(bin: &filmcraft_project::Bin, depth: usize, out: &mut Vec<(BinId, String, usize)>) {
+        for c in &bin.children {
+            if let filmcraft_project::BinEntry::Bin(b) = c {
+                out.push((b.id, b.name.clone(), depth));
+                if depth < BINS_MAX_DEPTH {
+                    walk(b, depth + 1, out);
+                }
+            }
+        }
+    }
+    let root = &app.session.project.root;
+    let mut rows = vec![(root.id, tl!("Master").to_string(), 0usize)];
+    walk(root, 1, &mut rows);
+    let mut y = r.min.y + 28.0;
+    let mut go = None;
+    for (id, name, depth) in rows {
+        if y + 22.0 > r.max.y {
+            break;
+        }
+        let row = Rect::from_min_size(pos2(r.min.x + 1.0, y), vec2(r.width() - 2.0, 22.0));
+        let resp = ui.interact(row, egui::Id::new(("project-bins", id.0)), Sense::click());
+        let key = if id == root.id { "master".to_string() } else { id.0.to_string() };
+        app.auto.add(&format!("project.bins.{key}"), row, &name);
+        if id == shown {
+            p.rect_filled(row, 0.0, t.row_selected);
+        } else if resp.hovered() {
+            p.rect_filled(row, 0.0, t.hover);
+        }
+        let x = row.min.x + 10.0 + depth as f32 * 12.0;
+        icons::paint(&p, Rect::from_center_size(pos2(x + 7.0, row.center().y), vec2(13.0, 13.0)), Icon::Folder, t.icon);
+        p.with_clip_rect(row).text(pos2(x + 20.0, row.center().y), Align2::LEFT_CENTER, &name, Tokens::ui(11.5), if id == shown { t.text } else { t.text_dim });
+        if resp.clicked() {
+            go = Some(id.0);
+        }
+        y += 22.0;
+    }
+    if let Some(b) = go {
+        navigate(app, Inst::Main, Some(b));
+    }
 }
 
 /// The offer bar for files a paired phone shared (KDE Connect, L2.10, Settings ▸ Media ▸ Files

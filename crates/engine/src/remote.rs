@@ -23,6 +23,8 @@ pub struct RemotePrefs {
     pub locations: Vec<Location>,
     /// The user allowed keeping secrets in a file (not encrypted) when no keyring works.
     pub secrets_in_file: bool,
+    /// Receiving from a nearby computer listens on this TCP port (0 = any free port).
+    pub nearby_port: u16,
 }
 
 impl RemotePrefs {

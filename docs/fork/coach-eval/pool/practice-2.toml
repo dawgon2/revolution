@@ -21,11 +21,11 @@ style = "resolve-words"
 
 [[question]]
 id = "pool-r2-layer-workaround"
-kind = "gap"
+kind = "tool"
 q = "I need a secondary that overrides the look like a layer mixer, how?"
-sources = ["practice.node-trees.layer"]
-must = ["no layer node yet", "a late node with a qualifier or window after the look does the same in most cases"]
-must_not = ["invents a layer mixer"]
+sources = ["practice.node-trees.layer", "color.nodes.layer"]
+must = ["Add Layer Node (grade.addLayer): the node above sits on top of the look at an opacity and blend mode", "a late node with a qualifier or window after the look does the same in simple cases"]
+must_not = ["says there is no layer node"]
 style = "resolve-words"
 
 [[question]]

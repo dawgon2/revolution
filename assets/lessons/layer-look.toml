@@ -1,0 +1,78 @@
+# Grading Coach lesson (fork COMPOSITOR-PLAN C2 lane 5: the layer mixer). Format:
+# crates/engine/src/coach.rs. Written for this fork in our own words.
+id = "layer-look"
+title = "A look on a layer, mixed in at part strength"
+summary = "Put a creative look on a layer node above your base grade, then set how strongly and how it blends in."
+provenance = ["resolve-style", "fork"]
+order = 11
+
+[[step]]
+text = "A layer mixer stacks pictures like layers in an image editor: the node on top sits over the one below, at an opacity and with a blend mode you choose. It is a good way to keep a look separate from the base grade and mix it in at part strength."
+why = "You can dial the look from 0 to 100 % without touching the technical grade underneath."
+expect = { manual = true }
+
+[[step]]
+text = "Open the Color Grading workspace (Workspaces button at the top, then Color Grading)."
+why = "You need the node canvas and the Primaries panel."
+target = "header.workspaces"
+expect = { element = "panel.ColorNodes" }
+
+[[step]]
+text = "Select a clip in the Clips strip (or the timeline)."
+why = "The grade belongs to the selected clip."
+target = ["clips.strip", "timeline.tracks"]
+expect = { command = "timeline.select", params = { clips = [{ any = true }] } }
+already = "clipSelected"
+
+[[step]]
+text = "Add a first node for the base grade (Add Node or + Serial)."
+why = "The layer sits on top of this node's result."
+target = ["grade.addFirst", "grade.addNode"]
+expect = { command = ["grade.addNode", "grade.insertNode"] }
+
+[[step]]
+text = "Do the base correction: drag Temperature, Tint or Contrast."
+why = "The base should look right before a look goes on top."
+target = "grade.param.temperature"
+expect = { command = "grade.setParam", params = { param = { in = ["temperature", "tint", "contrast", "offset", "gain", "gamma"] } } }
+
+[[step]]
+text = "Right-click the node canvas (or the node) and choose Add Layer Node (Alt+L in the Resolve keys)."
+why = "This adds a new node and a Layer Mixer. The new node is the layer on top; the first node is the layer below."
+target = "grade.canvas"
+expect = { command = "grade.addLayer" }
+
+[[step]]
+text = "The new node is selected. Give it the look: change Saturation, or move the Gamma wheel."
+why = "Whatever this node changes is the look; the mixer decides how much of it shows."
+target = "grade.param.saturation"
+expect = { command = "grade.setParam", params = { param = { in = ["saturation", "gamma", "gain", "lift", "temperature", "tint", "contrast"] } } }
+
+[[step]]
+text = "Set how much of the look shows: run grade.setParam with param layer.opacity.1 (0 to 1) on the layer mixer. There is no slider for it yet, so press Skip if you would rather not."
+why = "At 0.6 the look is mixed in at 60 %; at 0 it is off."
+target = "grade.canvas"
+expect = { command = "grade.setParam", params = { param = "layer.opacity.1" } }
+
+[[step]]
+text = "Choose how the look blends: run grade.setParam with param layer.mode.1 (13 is Soft Light, 0 is Normal)."
+why = "Normal replaces what is below; modes like Soft Light or Overlay add the look's contrast and colour to it instead."
+target = "grade.canvas"
+expect = { command = "grade.setParam", params = { param = "layer.mode.1" } }
+
+[[step]]
+text = "Open the Match tab and press Explain grade."
+why = "The explainer says it in words, for example that the look sits on top of the base node at 60 % opacity, Soft Light."
+target = "grade.tab.match"
+expect = { command = "grade.explainGrade" }
+
+[[step]]
+text = "Select the look node and press Disable, then Enable."
+why = "Switching the layer off shows the base grade alone: a quick before and after of just the look."
+target = "grade.toggleNode"
+expect = { command = "grade.toggleNode" }
+
+[[step]]
+text = "That is a layer look: a base grade, a layer on top, and one opacity control. Press Next to finish."
+why = "Copy the look node to other shots to give them the same look while each keeps its own base grade."
+expect = { manual = true }

@@ -50,4 +50,10 @@ impl Still {
     pub fn file_name(&self) -> String {
         format!("still-{}.png", self.id)
     }
+
+    /// A reference picture brought in from a file (`stills.import`): no clip, no sequence and
+    /// no grade, only a picture to look at, compare against and match to.
+    pub fn is_reference(&self) -> bool {
+        self.clip.is_none() && self.sequence.is_none()
+    }
 }

@@ -436,7 +436,8 @@ mod tests {
             (
                 "grade",
                 with(&|p| {
-                    first(p, seq).grade = Some(filmcraft_project::grade::Grade { nodes: vec![filmcraft_project::grade::GradeNode::new(1)], bypass: false })
+                    first(p, seq).grade =
+                        Some(filmcraft_project::grade::Grade { nodes: vec![filmcraft_project::grade::GradeNode::new(1)], bypass: false, ..Default::default() })
                 }),
             ),
             ("tnr", with(&|p| first(p, seq).temporal_nr = Some(Default::default()))),
@@ -455,8 +456,10 @@ mod tests {
             assert_eq!(auto_keeps_one_gpu(ExportEngines::Dual, p, seq), None, "{name}: Dual forces both");
         }
         // a bypassed or empty grade changes nothing
-        let bypassed =
-            with(&|p| first(p, seq).grade = Some(filmcraft_project::grade::Grade { nodes: vec![filmcraft_project::grade::GradeNode::new(1)], bypass: true }));
+        let bypassed = with(&|p| {
+            first(p, seq).grade =
+                Some(filmcraft_project::grade::Grade { nodes: vec![filmcraft_project::grade::GradeNode::new(1)], bypass: true, ..Default::default() })
+        });
         assert_eq!(auto_keeps_one_gpu(ExportEngines::Auto, &bypassed, seq), None);
         // nested: an effect inside a nested sequence counts; a self-nesting loop ends
         let mut nested = cases[0].1.clone();

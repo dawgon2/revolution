@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut files: Vec<PathBuf> =
         std::fs::read_dir(&pool)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "jsonl")).collect();
     files.sort();
-    let ctx = AssistContext { style: AssistStyle::Pick, ..Default::default() };
+    let ctx = AssistContext { reference: None, reference_picture: None, reference_seen: None, style: AssistStyle::Pick, ..Default::default() };
     let (mut train, mut val) = (Vec::new(), Vec::new());
     let mut skipped: BTreeMap<&str, usize> = BTreeMap::new();
     let mut target_lens: BTreeMap<usize, usize> = BTreeMap::new();

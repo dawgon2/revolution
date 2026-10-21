@@ -426,6 +426,7 @@ fn assistant_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, action: &mut Option
         return;
     }
     seen_lines(app, ui, &a, "coach.ask.assistSeen");
+    reference_block(app, ui, &a, "coach.ask.reference", "coach.ask.doThis");
     if a["source"] != "model" {
         let why = match a["fallback"]["kind"].as_str() {
             Some("notReady") => {
@@ -788,6 +789,62 @@ fn hint_card(app: &mut FilmcraftApp, ctx: &egui::Context, above: f32) -> Option<
         app.ui.status = e.to_string();
     }
     Some(rect)
+}
+
+/// REF: the reference picture's part of an answer (`coach.assist` `reference`, written by
+/// Revolution from measurements, not the model): theirs vs yours, the grade recipe, what belongs
+/// on set, a warning when a grade can't get there, what the picture model saw, and **Do this**
+/// (Shot Match to the reference: one ordinary node), with automation ids `block_id` and `do_id`.
+pub(crate) fn reference_block(app: &mut FilmcraftApp, ui: &mut egui::Ui, a: &Value, block_id: &str, do_id: &str) {
+    let r = &a["reference"];
+    if !r.is_object() {
+        return;
+    }
+    let t = app.tokens;
+    let strs = |v: &Value, n: usize| -> Vec<String> {
+        v.as_array().map(|l| l.iter().filter_map(Value::as_str).take(n).map(str::to_string).collect()).unwrap_or_default()
+    };
+    let measured = strs(&r["measured"], 8);
+    let grade: Vec<String> =
+        r["grade"].as_array().map(|l| l.iter().filter_map(|s| s["text"].as_str()).take(12).map(str::to_string).collect()).unwrap_or_default();
+    let on_set = strs(&r["onSet"], 8);
+    let mut clicked = false;
+    let resp = ui
+        .vertical(|ui| {
+            ui.separator();
+            if !measured.is_empty() {
+                ui.label(RichText::new(tl!("Reference picture (measured):")).small().strong().color(t.text_dim));
+                for l in &measured {
+                    ui.label(RichText::new(l).small().color(t.text_dim));
+                }
+            }
+            if let Some(seen) = r["seen"].as_str().filter(|s| !s.is_empty()) {
+                ui.label(RichText::new(tl!("Seen in the reference:")).small().strong().color(t.text_dim));
+                ui.label(RichText::new(seen).small().color(t.text_dim));
+            }
+            ui.label(RichText::new(tl!("In the grade:")).strong().color(t.text));
+            for (i, l) in grade.iter().enumerate() {
+                ui.label(RichText::new(format!("{}. {l}", i + 1)).color(t.text));
+            }
+            ui.label(RichText::new(tl!("On set:")).strong().color(t.text));
+            for l in &on_set {
+                ui.label(RichText::new(format!("• {l}")).color(t.text));
+            }
+            if let Some(n) = r["tooDifferent"].as_str() {
+                ui.label(RichText::new(n).italics().color(t.text_dim));
+            }
+            let b = ui.button(tl!("Do this: Shot Match to the reference"));
+            app.auto.add_response(do_id, &b, "Do this: Shot Match to the reference");
+            clicked = b.clicked();
+        })
+        .response;
+    app.auto.add_response(block_id, &resp, "Reference picture");
+    if clicked
+        && let Some(cmd) = r["doThis"]["command"].as_str()
+        && let Err(e) = app.session.execute(cmd, r["doThis"]["params"].clone())
+    {
+        app.ui.status = e.to_string();
+    }
 }
 
 /// AI4.1d: "On this frame (measured)": the frame's measured facts that fit the question

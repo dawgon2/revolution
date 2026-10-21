@@ -343,7 +343,7 @@ fn can_label(s: &Session) -> std::result::Result<(), String> {
 fn has_project_items(s: &Session) -> std::result::Result<(), String> {
     if s.project.items.values().any(|i| !matches!(i.kind, ItemKind::Graphic { .. })) { Ok(()) } else { Err("the project is empty".into()) }
 }
-fn is_clip_item(p: &Project, id: ItemId) -> bool {
+pub(crate) fn is_clip_item(p: &Project, id: ItemId) -> bool {
     p.item(id).is_some_and(|i| matches!(i.kind, ItemKind::Media(_) | ItemKind::Subclip { .. } | ItemKind::Sequence(_) | ItemKind::AdjustmentLayer { .. }))
 }
 fn has_clip_items(s: &Session) -> std::result::Result<(), String> {
@@ -764,6 +764,7 @@ fn offline_file(s: &mut Session, p: &Value) -> Result<Value> {
         kind: if has_v { filmcraft_media::MediaKind::Movie } else { filmcraft_media::MediaKind::AudioOnly },
         duration,
         video: has_v.then(|| filmcraft_media::VideoStreamInfo {
+            camera_color_space: None,
             width,
             height,
             frame_rate: rate,

@@ -159,7 +159,7 @@ fn measure_all(src: &Image, list: Vec<(String, GradeNode)>) -> Vec<EvalCase> {
     list.into_iter()
         .map(|(label, n)| {
             let mut out = src.clone();
-            let g = Grade { nodes: vec![n.clone()], bypass: false };
+            let g = Grade { nodes: vec![n.clone()], bypass: false, ..Default::default() };
             for op in compile_fx(&g, Tick(0), WS, GradeCtx::default(), src.w, src.h) {
                 op.apply(&mut out);
             }

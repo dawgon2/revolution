@@ -33,7 +33,7 @@ pub const MAX_PACKAGE_BYTES: u64 = 4 << 40;
 /// Tries per upload / download range on a transient error.
 const TRIES: u32 = 3;
 
-fn data_folder(s: &Session) -> PathBuf {
+pub(crate) fn data_folder(s: &Session) -> PathBuf {
     s.prefs_path.as_deref().and_then(Path::parent).map(Path::to_path_buf).or_else(crate::autosave::data_dir).unwrap_or_else(std::env::temp_dir)
 }
 
@@ -42,14 +42,14 @@ fn location(cmd: &str, s: &Session, p: &Value) -> Result<Location> {
     s.prefs.remote.find(id).cloned().ok_or_else(|| bad(cmd, format!("no remote location {id:?}")))
 }
 
-fn new_job(s: &mut Session, label: String) -> Job {
+pub(crate) fn new_job(s: &mut Session, label: String) -> Job {
     let id = s.jobs.iter().map(|j| j.id).max().unwrap_or(0).saturating_add(1);
     let job = Job { id, label, progress: Arc::new(Progress::default()), result: Arc::new(Mutex::new(None)) };
     s.jobs.push(job.clone());
     job
 }
 
-fn finish(job: &Job, r: std::result::Result<Report, String>) {
+pub(crate) fn finish(job: &Job, r: std::result::Result<Report, String>) {
     if let Err(e) = &r {
         *job.progress.error.lock().unwrap_or_else(PoisonError::into_inner) = Some(e.clone());
     }
@@ -57,16 +57,16 @@ fn finish(job: &Job, r: std::result::Result<Report, String>) {
     job.progress.finished.store(true, Ordering::Relaxed);
 }
 
-fn status(job: &Job, text: &str) {
+pub(crate) fn status(job: &Job, text: &str) {
     *job.progress.status.lock().unwrap_or_else(PoisonError::into_inner) = text.into();
 }
 
-fn report(path: &str, bytes: u64) -> Report {
+pub(crate) fn report(path: &str, bytes: u64) -> Report {
     Report { path: path.into(), frames: 0, seconds: 0.0, bytes, render_fps: 0.0, extra_files: Vec::new() }
 }
 
 /// Waits (bounded by the job's own end) for the packaging job to finish.
-fn wait_for(job: &Job, cancel: &Progress) -> std::result::Result<(), String> {
+pub(crate) fn wait_for(job: &Job, cancel: &Progress) -> std::result::Result<(), String> {
     loop {
         if let Some(r) = job.result.lock().unwrap_or_else(PoisonError::into_inner).clone() {
             return r.map(|_| ());

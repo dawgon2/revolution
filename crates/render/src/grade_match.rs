@@ -679,7 +679,7 @@ fn apply_ops(img: &Image, ops: &[ColorOp]) -> Image {
 
 /// `img` (working linear light) graded by `node` alone, on the CPU ([`crate::grade::compile`]).
 pub fn grade_with_node(img: &Image, node: &GradeNode, working: WorkingSpace) -> Image {
-    let grade = Grade { nodes: vec![node.clone()], bypass: false };
+    let grade = Grade { nodes: vec![node.clone()], bypass: false, ..Default::default() };
     apply_ops(img, &crate::grade::compile(&grade, Tick(0), working))
 }
 
@@ -734,7 +734,7 @@ mod tests {
     }
 
     fn g(nodes: Vec<GradeNode>) -> Grade {
-        Grade { nodes, bypass: false }
+        Grade { nodes, ..Default::default() }
     }
 
     fn assert_same(a: &Grade, b: &Grade, same: bool) {
@@ -787,7 +787,7 @@ mod tests {
         byp.bypass = true;
         assert_same(&ab, &byp, false);
         assert_same(&byp, &Grade::default(), true);
-        assert_same(&byp, &Grade { nodes: vec![GradeNode::new(3)], bypass: true }, true);
+        assert_same(&byp, &Grade { nodes: vec![GradeNode::new(3)], bypass: true, ..Default::default() }, true);
         // windows matter, their names don't
         let mut w1 = ab.clone();
         let mut m = Mask::new("Window 1", MaskPath::default());

@@ -1,0 +1,66 @@
+# FEATURE-POOL batch feature-tarball-menu-entry (FEATURE-QUEUE row "§1a.110: the portable .tar.gz adds its own
+# app-menu entry and macOS-style (or Square) icon on first start, refreshed after moving / updating; never over a
+# packaged entry or a user launcher; `FILMCRAFT_NO_DESKTOP_ENTRY=1` stops it").
+# Source: linux.md (linux.app-icon, one paragraph), with install.md (install.portable) for the folder steps.
+# Held-out test questions, written from the guide's text (README.md beside this file). Small on purpose: the guide
+# gives this feature one paragraph; the icon shape itself is already asked in feature-pm-window-icon.
+# The guide doesn't say where in the user folder the entry goes or that agents (`--control`), AppImage and Flatpak
+# runs skip it (dev_icon.rs does), so no question asks that.
+# No creative family (a menu entry is not a creative goal). No coach question (no heading of its own).
+# No recipe spot check: the Dell's app build (2026-10-14) predates the entry, and it needs a release build.
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-tme-appeared"
+kind = "tool"
+q = "I just unpacked the tar.gz, ran it once, and now Revolution is in my app menu. Did it install something?"
+sources = ["linux.app-icon"]
+must = ["the portable .tar.gz adds its own app-menu entry and icon to your user folder the first time it starts"]
+must_not = ["it installed system-wide"]
+style = "beginner"
+
+[[question]]
+id = "feat-tme-stop"
+kind = "tool"
+q = "how do i stop the portable build from putting itself in the menu"
+sources = ["linux.app-icon"]
+must = ["set FILMCRAFT_NO_DESKTOP_ENTRY=1"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-tme-moved"
+kind = "tool"
+q = "I moved my portable Revolution folder to another drive. Does the menu entry still start it?"
+sources = ["linux.app-icon"]
+must = ["yes: the entry and icon are added again after you move the folder (or update)"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-tme-own-launcher"
+kind = "tool"
+q = "I already wrote my own .desktop launcher for the tarball build. Will Revolution overwrite it with its own?"
+sources = ["linux.app-icon"]
+must = ["no: it never writes over a launcher you made"]
+must_not = ["it replaces your launcher"]
+style = "pro"
+
+[[question]]
+id = "feat-tme-packaged"
+kind = "tool"
+q = "Revolution is installed from the .rpm and I also run a portable copy to try a newer release. Does the portable one take over the packaged menu entry?"
+sources = ["linux.app-icon", "install.portable"]
+must = ["no: the portable folder never writes over a packaged entry"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-tme-icon-shape"
+kind = "tool"
+q = "Premiere's installer puts its icon everywhere. The Revolution tarball has no installer, so which icon does its menu entry get?"
+sources = ["linux.app-icon"]
+must = ["the rounded macOS-style icon, like every way of installing Revolution", "Settings ▸ Appearance ▸ App icon can switch it to Square"]
+must_not = []
+style = "premiere-words"

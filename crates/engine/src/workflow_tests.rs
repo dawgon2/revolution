@@ -186,6 +186,19 @@ fn resolve_preset_maps_editing_and_grade_commands() {
     assert_eq!(key("grade.insertNode").as_deref(), Some("Shift+S"));
     assert_eq!(key("grade.toggleNode").as_deref(), Some("Cmd+D"));
     assert_eq!(key("grade.bypass").as_deref(), Some("Shift+D"));
+    // fork C2: Resolve's node keys, Alt+P parallel, Alt+L layer, Alt+O outside (provisional, owner
+    // question: Resolve keys Alt+P / Alt+O); the Premiere preset keeps its own Alt+P / Alt+O
+    let at = |s: &Session, k: &str, plat| s.shortcuts.resolve(&Chord::parse(k).unwrap(), None, plat).map(|b| b.command.clone());
+    for plat in [Platform::Mac, Platform::Linux] {
+        assert_eq!(at(&s, "Alt+L", plat).as_deref(), Some("grade.addLayer"));
+        assert_eq!(at(&s, "Alt+P", plat).as_deref(), Some("grade.addParallel"));
+        assert_eq!(at(&s, "Alt+O", plat).as_deref(), Some("grade.addOutside"));
+    }
+    let mut prem = Session::default();
+    with_ui_commands(&mut prem);
+    prem.execute("shortcuts.loadPreset", json!({"name": "Premiere Pro Compatible"})).unwrap();
+    assert_eq!(at(&prem, "Alt+P", Platform::Mac).as_deref(), Some("clip.clearPosterFrame"));
+    assert_eq!(at(&prem, "Alt+O", Platform::Mac).as_deref(), Some("markers.clearOut"));
     assert!(s.shortcuts.for_command("edit.rippleDelete").iter().any(|b| b.keys == "Shift+Backspace"));
     // Shift+D belongs to bypass, not to the Premiere default transition; Cmd+D is not a transition
     let hit = s.shortcuts.resolve(&Chord::parse("Shift+D").unwrap(), None, Platform::Mac).map(|b| b.command.clone());
@@ -204,7 +217,7 @@ fn resolve_preset_maps_editing_and_grade_commands() {
     // every id the table lists is a real command, except the frontend's and the stills / compare
     // commands that ship separately (unknown ids are skipped when the preset is built)
     for (c, _, _) in crate::shortcut_presets::RESOLVE {
-        let ui = ["playback.", "window.workspace.", "window.toggleFullScreen", "mode.", "tool.", "view."].iter().any(|p| c.starts_with(p));
+        let ui = ["playback.", "page.", "window.workspace.", "window.toggleFullScreen", "mode.", "tool.", "view."].iter().any(|p| c.starts_with(p));
         let later = ["stills.grab", "compare.set"].contains(c);
         assert!(ui || later || crate::commands::find(c).is_some(), "unknown command {c}");
     }

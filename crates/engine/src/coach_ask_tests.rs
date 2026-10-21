@@ -292,7 +292,7 @@ fn intros_fold_into_the_first_section_and_stubs_are_not_answers() {
 
 /// Questions of the eval set that must pass (DIAGNOSIS.md §1 rule). This may only go up; raise it
 /// when the guide or the coach improves (FORK-PLAN §1a.47).
-const EVAL_FLOOR: usize = 100;
+const EVAL_FLOOR: usize = 114;
 
 #[derive(Deserialize)]
 struct EvalFile {
@@ -691,7 +691,7 @@ fn retrieval_finds_the_advanced_sets_sources() {
 /// The measured recall@5 of [`retrieve`] on advanced.toml (raise it when retrieval improves).
 const RETRIEVAL_FLOOR: usize = 87;
 /// The measured recall@1 (70 / 85; 65 before the quoted-`when:` boost, the grain-finish header and the cleanup / quickest / late synonyms).
-const RETRIEVAL_FLOOR_FIRST: usize = 73;
+const RETRIEVAL_FLOOR_FIRST: usize = 74;
 
 /// Hostile questions: empty, huge, only stopwords or symbols, a huge `k`: no panic, at most
 /// [`MAX_RETRIEVE`] sections, scores finite and best first.

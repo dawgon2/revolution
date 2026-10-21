@@ -4,7 +4,23 @@ Jobs for the cloud routine (branch `cloud-work`, only while the PC is down; FORK
 CPU-verifiable, chosen not to overlap with what the PC run is doing. Take them top to bottom; note
 each in `docs/fork/CLOUD-LOG.md` with what is UNVERIFIED ON GPU.
 
-**PC is doing now (2026-10-15 evening, scheduled run): AI4 (AI-PLAN Phase AI4) in `crates/render/src/picture_facts.rs`, `crates/engine/src/{coach_assist,grade_tools}.rs`, `crates/ui-egui/src/panels/{coach,assistant}.rs`; the Dell lane does AI-POOL in `docs/fork/coach-eval/pool/`. Don't touch those. Earlier: AI3.3b GPU inference in `crates/llm`.**
+**PC is doing now (2026-10-20, scheduled runs): REF accepted (`ref-1`), then C2 (COMPOSITOR-PLAN; start: `docs/fork/DESIGN-C2.md` §5 lane 1, the grade model → DAG in `crates/project/src/grade*.rs`, schema v19, then `crates/render` grade-graph evaluation and the Color page node canvas). Don't touch the grade model / compiler, `crates/project/src/dag.rs`, `crates/render/src/comp*.rs`, `crates/gpu/src/comp.rs` or `widgets/node_canvas.rs` while C2 runs.**
+
+New jobs (2026-10-20), take these first:
+- **REF-ASK-DROP (`crates/ui-egui/src/panels/coach.rs` Ask box only):** drop or paste a picture (PNG / JPEG from the
+  clipboard or a file) onto the Ask box: run `stills.import`, set it as the compared still (`compare.set`), and prefill
+  "How do I get this look?". Done = UI test in `crates/ui-egui/tests/ui/coach_ui.rs` (drop via `OsFile` like
+  `stills_ui.rs`), guide line in `docs/guide/color/reference-look.md` (keep `ai_pool` floors: run
+  `cargo test -p filmcraft-engine --test ai_pool`), es + zh-cn strings. GPU owed: none.
+- **C2-GUIDE (docs only, `docs/guide/practice/node-trees.md`):** a [Standard] / [Resolve-style] section "Serial, parallel or
+  layer?" (when each fits, beginner vs pro, why), written for features C2 will ship; mark controls that don't exist yet
+  as "coming in C2" in plain words (no `{ui:}` ids, no command ids until they exist). Done = section with provenance,
+  `coach_ask` + `ai_pool` tests green. GPU owed: none.
+- **REF-EVAL (engine tests only):** 6 more generated reference looks in `crates/engine/src/coach_reference_tests.rs`
+  (bleach bypass, day for night, pastel, high-contrast B&W, golden hour, neon night) each asserting the expected
+  `LookTag`s and a grounded recipe (`assert_grounded`); tune nothing in `look_diff.rs` without a note in CLOUD-LOG.
+  GPU owed: none.
+
 `crates/hevc`, `crates/codecs` (hybrid / hw factory), `crates/export/src/lanes/`, or the Dell lane's
 Linux desktop files (`apps/filmcraft/src/{desktop,mpris,cards,kdeconnect,portal*}.rs`). Earlier rules:
 **Don't touch** `crates/ui-egui/src/{app.rs,menus.rs,theme.rs,workspaces*,i18n/mod.rs}`,

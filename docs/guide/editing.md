@@ -215,3 +215,39 @@ finished multicam edit into plain clips.
 
 Heavy footage: playing four 6.2K angles at once is far beyond what one graphics card decodes in
 real time, so multicam is where proxies help most ([proxies.md](proxies.md)).
+
+## Resolve edit commands
+
+> id: editing.resolve-edits | does: places, replaces and fits a clip with Resolve's edit set | cmd: edit.insert, edit.overwrite, edit.replace, edit.placeOnTop, edit.append, edit.rippleOverwrite, edit.fitToFill, edit.smartInsert, edit.closeUp, edit.sourceOverwrite | resolve: Insert, Overwrite, Replace, Place on Top, Append, Ripple Overwrite, Fit to Fill, Smart Insert, Close Up, Source Overwrite | premiere: Insert, Overwrite, Replace With Clip | when: you edit the Resolve way, or on the Cut page | see: editing.three-point
+
+### Why
+
+**[Resolve-style]**
+
+Resolve has one command for each common way of getting a clip onto the timeline. They all work
+from the same three things: the source (the Source monitor's clip with its In and Out), the
+destination tracks (the ones patched in the track headers) and the record point (the timeline In
+mark when there is one, otherwise the playhead). Each also takes an optional `clip` (a project item
+id) so a clip picked in the Media Pool can be edited in without opening it first.
+
+### What each one does
+
+**[Resolve-style]** · each is one undo step
+
+- `edit.insert` (F9) and `edit.overwrite` (F10) are the three-point Insert and Overwrite.
+- `edit.replace` (F11) swaps the clip under the playhead on the destination track for the source,
+  lining up the Source monitor frame with the timeline playhead. The new clip is as long as the
+  old one, or shorter if the media runs out.
+- `edit.placeOnTop` (F12) overwrites onto the track above the highest one that has a clip at the
+  record point, adding a track when needed.
+- `edit.append` (Shift+F12) puts the source at the end of the timeline.
+- `edit.rippleOverwrite` (Shift+F10) swaps the clip under the playhead for the whole source and
+  moves everything after it by the difference in length.
+- `edit.fitToFill` (Shift+F11) needs a timeline In and Out and changes the clip's speed so the
+  whole marked source fills them.
+- `edit.smartInsert` (Cut page) inserts at the clip boundary nearest the playhead.
+- `edit.closeUp` (Cut page) puts the source on the track above at the playhead, zoomed in to 150%.
+- `edit.sourceOverwrite` (Cut page) puts the source on the track above so its source timecode meets
+  the timecode of the clip under the playhead; it stops with a message when they do not overlap.
+
+In the Resolve key preset F11 is Replace, so full screen there is Ctrl+`.

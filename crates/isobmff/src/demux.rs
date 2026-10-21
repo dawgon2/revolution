@@ -163,10 +163,18 @@ impl Track {
     }
 }
 
+/// Most bytes kept of one binary `udta` atom ([`Metadata::binary`]).
+pub const MAX_UDTA_BINARY: usize = 256 * 1024;
+/// Most binary `udta` atoms kept.
+pub const MAX_UDTA_BINARY_ATOMS: usize = 8;
+
 /// Text metadata from `udta` (QuickTime `©xxx` atoms and iTunes-style `meta/ilst`, incl. `keys`).
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Metadata {
     pub entries: Vec<(String, String)>,
+    /// Camera makers' binary `udta` atoms whose layout callers parse (Fujifilm `MVTG`), raw:
+    /// at most [`MAX_UDTA_BINARY_ATOMS`], each skipped when over [`MAX_UDTA_BINARY`] bytes.
+    pub binary: Vec<(FourCc, Vec<u8>)>,
 }
 
 impl Metadata {
@@ -177,7 +185,14 @@ impl Metadata {
     pub fn title(&self) -> Option<&str> {
         self.get("©nam").or_else(|| self.get("com.apple.quicktime.title")).or_else(|| self.get("title"))
     }
+    /// The payload of the binary `udta` atom `kind`, if the file has one.
+    pub fn binary(&self, kind: &[u8; 4]) -> Option<&[u8]> {
+        self.binary.iter().find(|(k, _)| &k.0 == kind).map(|(_, v)| v.as_slice())
+    }
 }
+
+/// The binary `udta` atoms kept for callers (see [`Metadata::binary`]).
+const UDTA_BINARY_KINDS: [&[u8; 4]; 1] = [b"MVTG"];
 
 /// A parsed MP4/MOV file (headers and sample tables; media data stays in the source).
 #[derive(Clone, Debug, PartialEq)]
@@ -878,6 +893,8 @@ fn parse_udta(p: &[u8], md: &mut Metadata) {
             if let Some(s) = b.payload.get(4..4 + n) {
                 md.entries.push((b.kind.to_string_lossy(), String::from_utf8_lossy(s).into_owned()));
             }
+        } else if UDTA_BINARY_KINDS.contains(&&b.kind.0) && b.payload.len() <= MAX_UDTA_BINARY && md.binary.len() < MAX_UDTA_BINARY_ATOMS {
+            md.binary.push((b.kind, b.payload.to_vec()));
         }
     }
 }
@@ -971,6 +988,19 @@ mod tests {
         parse_udta(&b.buf, &mut md);
         assert_eq!(md.title(), Some("hi"));
         assert_eq!(md.get("©ART"), Some("me"));
+    }
+
+    #[test]
+    fn metadata_keeps_fujifilm_mvtg_bytes_capped() {
+        let mut b = crate::bytes::BoxBuf::new();
+        b.leaf(b"MVTG", &[1, 2, 3]);
+        b.leaf(b"XYZW", &[9; 4]);
+        b.leaf(b"MVTG", &vec![0; MAX_UDTA_BINARY + 1]);
+        let mut md = Metadata::default();
+        parse_udta(&b.buf, &mut md);
+        assert_eq!(md.binary(b"MVTG"), Some(&[1u8, 2, 3][..]));
+        assert_eq!(md.binary(b"XYZW"), None, "only known maker atoms are kept");
+        assert_eq!(md.binary.len(), 1, "an oversized atom is skipped");
     }
 
     use crate::bytes::BoxBuf;

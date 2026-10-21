@@ -122,6 +122,11 @@ pub enum Icon {
     Eyedropper,
     /// Linear (gradient) mask: a frame with a graduated band across it.
     LinearMask,
+    /// Resolve-workflow transport (fork RS4): play backwards, stop, first frame, last frame.
+    PlayReverse,
+    Stop,
+    ToStart,
+    ToEnd,
 }
 
 pub struct Pen16<'a> {
@@ -326,6 +331,18 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(6.0, 13.5), (10.0, 13.5)]);
         }
         Play => pen.fill(&[(4.5, 2.8), (13.0, 8.0), (4.5, 13.2)]),
+        PlayReverse => pen.fill(&[(11.5, 2.8), (3.0, 8.0), (11.5, 13.2)]),
+        Stop => pen.rect_fill(4.0, 4.0, 12.0, 12.0),
+        ToStart => {
+            pen.rect_fill(2.5, 3.5, 4.0, 12.5);
+            pen.fill(&[(9.0, 3.5), (4.5, 8.0), (9.0, 12.5)]);
+            pen.fill(&[(14.0, 3.5), (9.5, 8.0), (14.0, 12.5)]);
+        }
+        ToEnd => {
+            pen.rect_fill(12.0, 3.5, 13.5, 12.5);
+            pen.fill(&[(2.0, 3.5), (6.5, 8.0), (2.0, 12.5)]);
+            pen.fill(&[(7.0, 3.5), (11.5, 8.0), (7.0, 12.5)]);
+        }
         Pause => {
             pen.rect_fill(4.0, 3.0, 6.8, 13.0);
             pen.rect_fill(9.2, 3.0, 12.0, 13.0);
@@ -903,6 +920,10 @@ mod tests {
         Clock,
         Eyedropper,
         LinearMask,
+        PlayReverse,
+        Stop,
+        ToStart,
+        ToEnd,
     ];
 
     /// Paint `icon` at `ppp` device pixels per point into a rect of `size` points whose corner is

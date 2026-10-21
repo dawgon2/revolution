@@ -278,7 +278,7 @@ fn add_nr_node(s: &mut Session, seq: ItemId) {
             for (k, v) in [("nr.luma", 0.3), ("nr.chroma", 0.3), ("nr.size", 1.5)] {
                 n.params.insert(k.into(), filmcraft_project::Param::new(ParamValue::Float(v)));
             }
-            it.grade = Some(filmcraft_project::grade::Grade { nodes: vec![n], bypass: false });
+            it.grade = Some(filmcraft_project::grade::Grade { nodes: vec![n], bypass: false, ..Default::default() });
         }
         Ok(())
     })

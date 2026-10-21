@@ -405,3 +405,120 @@ fn opening_another_project_discards_the_temporary_stills_folder() {
     }
     assert!(s.state.stills_tmp.is_none());
 }
+
+// ---- REF.1 / REF.3: reference pictures ----
+
+/// Write a `w × h` PNG filled by `f(x, y)` into a scratch folder.
+fn write_png(tag: &str, w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 4]) -> std::path::PathBuf {
+    let p = scratch_dir(tag).join(format!("{tag}.png"));
+    image::RgbaImage::from_fn(w, h, |x, y| image::Rgba(f(x, y))).save(&p).unwrap();
+    p
+}
+
+#[test]
+fn import_reference_picture_is_a_still_without_a_grade() {
+    let (mut s, a, _) = demo();
+    let p = write_png("ref-teal", 2400, 1000, |x, _| [20, 90 + (x % 50) as u8, 110, 255]);
+    let undo = s.history.undo.len();
+    let r = s.execute("stills.import", json!({"path": p.to_string_lossy()})).unwrap();
+    let id = r["still"].as_u64().unwrap();
+    assert_eq!(s.history.undo.len(), undo + 1, "one undo step");
+    // stored no wider than a grab, aspect kept
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(1920), Some(800)), "{r}");
+    let st = s.project.stills.iter().find(|x| x.id == id).unwrap();
+    assert!(st.is_reference() && st.grade.is_none());
+    assert_eq!(st.label, "ref-teal");
+    let pic = s.still_picture(id).unwrap();
+    assert_eq!((pic.w, pic.h), (1920, 800));
+    let list = s.execute("stills.list", json!({})).unwrap();
+    assert_eq!(list["stills"][0]["reference"], json!(true), "{list}");
+    assert_eq!(list["stills"][0]["picture"], json!(true), "{list}");
+    // compare against it like any still; never apply it as a grade
+    s.execute("compare.set", json!({"still": id, "mode": "wipe"})).unwrap();
+    let before = grade(&s, a);
+    assert!(s.execute("stills.apply", json!({"still": id, "clips": [a.0]})).is_err());
+    assert_eq!(grade(&s, a), before);
+    // a label of our own
+    let r = s.execute("stills.import", json!({"path": p.to_string_lossy(), "label": "Look\nA"})).unwrap();
+    let id2 = r["still"].as_u64().unwrap();
+    assert_eq!(s.project.stills.iter().find(|x| x.id == id2).unwrap().label, "LookA");
+}
+
+#[test]
+fn import_refuses_hostile_and_odd_files() {
+    let (mut s, _, _) = demo();
+    let d = scratch_dir("ref-bad");
+    let write = |name: &str, b: &[u8]| {
+        let p = d.join(name);
+        std::fs::write(&p, b).unwrap();
+        p.to_string_lossy().into_owned()
+    };
+    // a PNG header claiming 100 000 × 100 000 px (refused before any allocation)
+    let mut huge = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    huge.extend_from_slice(&100_000u32.to_be_bytes());
+    huge.extend_from_slice(&100_000u32.to_be_bytes());
+    huge.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    let cases = [
+        json!({}),
+        json!({"path": 5}),
+        json!({"path": d.join("missing.png").to_string_lossy()}),
+        json!({"path": write("notes.txt", b"hello, not a picture")}),
+        json!({"path": write("cut.jpg", &[0xFF, 0xD8, 0xFF, 0xE0, 0, 16, b'J', b'F'])}),
+        json!({"path": write("cut.png", &b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0"[..])}),
+        json!({"path": write("huge.png", &huge)}),
+        json!({"path": write("tiff.tif", b"II*\0\x08\0\0\0\xff\xff")}),
+        json!({"path": d.to_string_lossy()}),
+        // an RLE Targa header declaring 60 000 × 60 000 px (refused before decoding)
+        json!({"path": write("huge.tga", &[0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x60, 0xEA, 0x60, 0xEA, 32, 8, 0x80, 1, 2, 3, 4])}),
+    ];
+    let (undo, redo) = (s.history.undo.len(), s.history.redo.len());
+    for c in cases {
+        assert!(s.execute("stills.import", c.clone()).is_err(), "{c}");
+    }
+    assert!(s.project.stills.is_empty());
+    assert_eq!((s.history.undo.len(), s.history.redo.len()), (undo, redo), "a refused import leaves no undo or redo step");
+    let left: Vec<_> = s.stills_dirs().iter().filter_map(|d| std::fs::read_dir(d).ok()).flatten().flatten().map(|e| e.file_name()).collect();
+    assert!(left.is_empty(), "nothing left in the stills folder: {left:?}");
+    // a 1 × 1 picture is fine
+    let p = write_png("ref-dot", 1, 1, |_, _| [255, 0, 0, 255]);
+    s.execute("stills.import", json!({"path": p.to_string_lossy()})).unwrap();
+}
+
+#[test]
+fn shot_match_on_a_reference_still_moves_the_clip_toward_it() {
+    let (mut s, a, _) = demo();
+    // an orange / teal reference: warm subject, cool background
+    let p = write_png("ref-look", 640, 360, |x, y| if (200..440).contains(&x) && (60..300).contains(&y) { [230, 150, 90, 255] } else { [30, 80, 95, 255] });
+    let id = s.execute("stills.import", json!({"path": p.to_string_lossy()})).unwrap()["still"].as_u64().unwrap();
+    let cmp0 = s.execute("grade.compareShots", json!({"clip": a.0, "still": id})).unwrap();
+    let undo = s.history.undo.len();
+    let m = s.execute("grade.shotMatch", json!({"clip": a.0, "still": id, "faceDetection": false})).unwrap();
+    assert_eq!(s.history.undo.len(), undo + 1);
+    assert_eq!(grade(&s, a).unwrap().nodes.last().map(|n| n.label.as_str()), Some("Shot Match"));
+    let (before, after) = (m["before"].as_f64().unwrap(), m["after"].as_f64().unwrap());
+    assert!(after < before, "the match moves toward the reference: {m}");
+    let cmp1 = s.execute("grade.compareShots", json!({"clip": a.0, "still": id})).unwrap();
+    assert_ne!(cmp0, cmp1, "the comparison changes after the match");
+    // bad still ids
+    for bad in [json!("x"), json!(987_654_321u64)] {
+        assert!(s.execute("grade.shotMatch", json!({"clip": a.0, "still": bad})).is_err());
+        assert!(s.execute("grade.compareShots", json!({"clip": a.0, "still": bad})).is_err());
+    }
+}
+
+/// Fork C2 review: Shot Match on a branched grade wires its node in after the output, so the
+/// grade still renders (a bare node with no connections made the output ambiguous).
+#[test]
+fn shot_match_on_a_branched_grade_wires_in_after_the_output() {
+    use filmcraft_project::dag::{Edge, Port};
+    let (mut s, a, _) = demo();
+    let n = s.execute("grade.addNode", json!({"clip": a.0})).unwrap()["node"].as_u64().unwrap();
+    let m = s.execute("grade.addParallel", json!({"clip": a.0, "node": n})).unwrap()["nodes"][1].as_u64().unwrap();
+    let p = write_png("ref-branch", 64, 36, |x, _| if x < 32 { [230, 150, 90, 255] } else { [30, 80, 95, 255] });
+    let id = s.execute("stills.import", json!({"path": p.to_string_lossy()})).unwrap()["still"].as_u64().unwrap();
+    let sm = s.execute("grade.shotMatch", json!({"clip": a.0, "still": id, "faceDetection": false})).unwrap()["node"].as_u64().unwrap();
+    let g = grade(&s, a).unwrap();
+    assert!(g.edges.contains(&Edge::new(Port::new(m, 0), Port::new(sm, 0))), "{:?}", g.edges);
+    assert_eq!(g.output_node(), Ok(sm));
+    assert!(g.graph_order().is_ok());
+}

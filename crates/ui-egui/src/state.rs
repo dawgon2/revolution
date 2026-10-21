@@ -543,6 +543,10 @@ pub struct UiState {
     /// share of the panel). Dragging the divider sets it (#643).
     #[serde(default)]
     pub effect_controls_split: f32,
+    /// The Resolve-style Inspector's tab ("video", "audio", "effects", "transition", "file"; empty:
+    /// the first that applies to the selection).
+    #[serde(default)]
+    pub inspector_tab: String,
     pub show_menu_bar: bool,
     /// The header bar (Home, Import, Edit, Export, workspaces). An app that embeds FilmCraft can hide it.
     #[serde(default = "shown")]
@@ -1097,6 +1101,7 @@ impl Default for UiState {
             grade_tab_mid: String::new(),
             collapsed_fx: vec![],
             effect_controls_split: 0.0,
+            inspector_tab: String::new(),
             show_menu_bar: true,
             show_header: true,
             show_status_bar: true,

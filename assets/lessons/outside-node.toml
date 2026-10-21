@@ -1,0 +1,77 @@
+# Grading Coach lesson (fork COMPOSITOR-PLAN C2 lane 5: the outside node). Format:
+# crates/engine/src/coach.rs. Written for this fork in our own words.
+id = "outside-node"
+title = "Grade everything except the selection (outside node)"
+summary = "Select skin with a qualifier, then add an outside node that works on everything else."
+provenance = ["resolve-style", "fork"]
+order = 13
+
+[[step]]
+text = "An outside node works on everything the node before it did not select. Select the skin on one node, and the outside node grades the rest of the picture with no second qualifier."
+why = "The selection is exact: whatever the first node leaves out, the outside node takes, so there is no gap or overlap at the edges."
+expect = { manual = true }
+
+[[step]]
+text = "Open the Color Grading workspace (Workspaces button at the top, then Color Grading)."
+why = "You need the node canvas and the Qualifier tab."
+target = "header.workspaces"
+expect = { element = "panel.ColorNodes" }
+
+[[step]]
+text = "Select a clip in the Clips strip (or the timeline)."
+why = "The grade belongs to the selected clip."
+target = ["clips.strip", "timeline.tracks"]
+expect = { command = "timeline.select", params = { clips = [{ any = true }] } }
+
+[[step]]
+text = "Add a node (Add Node or + Serial)."
+why = "This node will hold the selection."
+target = ["grade.addFirst", "grade.addNode"]
+expect = { command = ["grade.addNode", "grade.insertNode"] }
+
+[[step]]
+text = "Open the Qualifier tab."
+why = "A qualifier selects pixels by hue, saturation and luminance."
+target = "grade.tab.qualifier"
+expect = { element = "grade.qual.pick" }
+
+[[step]]
+text = "Press Pick, then click skin in the picture."
+why = "The qualifier now selects colours like the one you clicked."
+target = "grade.qual.pick"
+expect = { command = "grade.pickQualifier" }
+
+[[step]]
+text = "Right-click the node canvas (or the node) and choose Add Outside Node (Alt+O in the Resolve keys)."
+why = "The new node takes the first node's selection, inverted: it works on everything outside the skin."
+target = "grade.canvas"
+expect = { command = "grade.addOutside" }
+
+[[step]]
+text = "Open the Primaries tab."
+why = "The controls for the new node are the usual ones."
+target = "grade.tab.primaries"
+expect = { element = "grade.wheel.gamma" }
+
+[[step]]
+text = "On the outside node, lower Saturation a little."
+why = "Only the background gets calmer; skin keeps its colour."
+target = "grade.param.saturation"
+expect = { command = "grade.setParam", params = { param = "saturation" } }
+
+[[step]]
+text = "Open the Match tab and press Explain grade."
+why = "The explainer says that the outside node works on everything outside the first node's selection."
+target = "grade.tab.match"
+expect = { command = "grade.explainGrade" }
+
+[[step]]
+text = "Select the outside node and press Disable, then Enable."
+why = "A quick before and after of just the background change."
+target = "grade.toggleNode"
+expect = { command = "grade.toggleNode" }
+
+[[step]]
+text = "That is an outside node: one selection, used twice, in opposite ways. Press Next to finish."
+why = "Change the qualifier on the first node later and the outside node follows, because it uses the same selection."
+expect = { manual = true }

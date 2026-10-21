@@ -78,6 +78,18 @@ pub struct VideoStreamInfo {
     /// HDR static metadata (mastering display, content light level) when the file carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hdr: Option<filmcraft_color::HdrMetadata>,
+    /// A log colour space the camera recorded only in its own metadata (Fujifilm F-Log / F-Log2
+    /// files say BT.709 in the stream): it outranks `color` when deciding the source colour space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_color_space: Option<filmcraft_color::ColorSpace>,
+}
+
+impl VideoStreamInfo {
+    /// The colour space the file says it is in: the camera's own log profile when it recorded
+    /// one, else the stream's colour tags. The Interpret Footage override outranks both.
+    pub fn detected_color_space(&self) -> filmcraft_color::ColorSpace {
+        self.camera_color_space.unwrap_or_else(|| filmcraft_color::ColorSpace::from_info(&self.color))
+    }
 }
 
 /// Most audio streams a source reports (the count comes from the file: never trusted).

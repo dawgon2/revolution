@@ -157,6 +157,48 @@ existing panels (no new editing features here):
 4. Acceptance: `ui.screenshot` per page next to the matching reference in §1, both workflows,
    both GPUs not needed (UI only).
 
+### RS4: Resolve Edit page tools and the Cut page (owner, live, 2026-10-20; FORK-PLAN §1a.112)
+
+The owner compared Revolution's Edit page with Resolve 21's Edit and Cut pages (screenshots in
+`plan/resolve/screenshots/owner-2026-10-20/`, local only) and asked: "can you match our ui and editing
+tools with resolve as best as possible (and also add a cut page doing the same thing)". RS3 matched
+the chrome (menu row, page toolbar, page bar); RS4 does the panels and editing tools inside the
+pages. Resolve workflow only: the Premiere workflow stays as it is (its tests stay green). Clean-room
+as in §0: layout and behaviour from observation and the public manual, our own icons.
+
+1. **Edit commands (engine).** Resolve's edit set as engine commands, each one undo step, each with a
+   test: `edit.insert` / `edit.overwrite` / `edit.replace` / `edit.placeOnTop` / `edit.append` /
+   `edit.rippleOverwrite` / `edit.fitToFill` (timeline viewer drop overlay + toolbar buttons + Resolve
+   keys F9 / F10 / F11 / F12 / Shift+F12 / Shift+F10 / Shift+F11), and the Cut page's
+   `edit.smartInsert` (inserts at the edit point nearest the playhead), `edit.closeUp` (the source on
+   the track above at the playhead, scaled in) and `edit.sourceOverwrite` (on the track above, lined up
+   by source timecode). Existing `source.insert` / `source.overwrite` stay (Premiere).
+2. **Inspector (Resolve).** A Resolve-style Inspector panel for the Resolve workflow: tabs Video /
+   Audio / Effects / Transition / Image / File; Video: Transform (Zoom X/Y linked, Position X/Y,
+   Rotation, Anchor X/Y, Flip), Cropping, Composite (mode, opacity), Speed Change, Stabilization and
+   the rest that the engine supports, each section with an on dot, keyframe diamonds and reset, values
+   in Resolve units (zoom 1.000, position in pixels from centre). Same parameters as Effect Controls
+   underneath (no second copy of the maths). The page toolbar's Inspector toggle opens it in Resolve.
+3. **Edit page timeline.** Resolve's horizontal timeline toolbar between viewer and timeline (timeline
+   view options, Selection / Trim / Dynamic Trim / Blade, Insert / Overwrite / Replace, Snapping,
+   Linked Selection, Position Lock, Flags and Markers, zoom buttons + slider, monitor volume and DIM)
+   replaces the vertical tool palette in the Resolve layout; Resolve-style track headers (destination
+   badge, lock, auto track select, enable; "Video 1" + clip count; audio S / M and channel format).
+4. **Viewers and media pool.** Viewer header row (zoom %, timeline name menu, timecode) and centred
+   transport (jog, previous / reverse / stop / play / next, loop); panel tab strips hidden in Resolve
+   page layouts (single panels show a Resolve-style header instead); a Bins sidebar (Master, bins,
+   Smart Bins) on the media pool.
+5. **Cut page.** A `cut` page between Media and Edit: media pool top left with its own toolbar row
+   (Smart Insert, Append, Ripple Overwrite, Close Up, Place on Top, Source Overwrite), the timeline
+   viewer top right with audio meters, and the dual timeline: the upper timeline shows the whole
+   timeline, the lower one is zoomed in around a fixed centred playhead (the timeline moves under it);
+   tools column (Blade, Trim, …) and compact track headers on the left. Both timelines edit the same
+   sequence with today's timeline code.
+6. **Docs, Coach and acceptance.** Guide pages (`docs/guide/edit/resolve-edit-page.md`,
+   `docs/guide/edit/cut-page.md`, provenance [Resolve-style]); Dell FEATURE-QUEUE rows (§1a.100);
+   `ui.screenshot` of the Edit and Cut pages next to the owner's references; Premiere screenshots
+   unchanged; `cargo xtask ci`; tag `resolve-ui-3`; ships in Revolution 0.2.
+
 ## 3. Order and parallelism
 
 - RS1 → RS2 → RS2b → RS3 (FORK-PLAN §1a.6 has the authoritative order; RS2b belongs to the

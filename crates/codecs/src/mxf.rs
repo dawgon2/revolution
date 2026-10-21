@@ -313,6 +313,7 @@ impl MxfSource {
             let secs = vcount as f64 / rate.as_f64().max(1e-9);
             let bytes_total: u64 = t.samples.iter().map(|s| s.size as u64).sum();
             video = Some(VideoStreamInfo {
+                camera_color_space: None,
                 width: w,
                 height: h,
                 frame_rate: rate,

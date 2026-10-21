@@ -14,7 +14,8 @@ default = []
 # Speech-to-text with Whisper (candle, CPU). Off by default and in wasm builds.
 whisper = ["filmcraft-speech/whisper"]
 # Remote locations over the network (WebDAV / S3 / SFTP backends, STORAGE-PLAN S2).
-remote-net = ["filmcraft-remote/net", "filmcraft-remote/sftp"]
+# Also sending to a nearby computer with no server (S2b, ADR 0008).
+remote-net = ["filmcraft-remote/net", "filmcraft-remote/sftp", "filmcraft-remote/nearby"]
 # Speech-model downloads over HTTPS.
 speech-download = ["filmcraft-speech/download"]
 # Natural voices for Text to Speech: Kokoro-82M on candle (CPU) and their download.

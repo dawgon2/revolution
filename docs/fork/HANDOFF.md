@@ -5,6 +5,142 @@ newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), t
 [`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (Q51 answered, **Q52** FYI, **Q53 owed**), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
 
+## Owner note (2026-10-20 ~22:00, live): Fujifilm log detection in 0.2.0 (FORK-PLAN §1a.116)
+
+Real X-M5 clips are in `~/Videos/Fuji XM5/` (FORK-PLAN §2 "Real clips"). F-Log / F-Log2 is now read from the
+Fujifilm maker note on import (branch `fuji-log`, merged into `hevc-vaapi` by the live session); **0.2.0 ships it**:
+nothing extra to merge, the closing run's `cargo xtask ci` covers it, add one line to the release notes. Real-clip
+bench, 4:2:2 → iGPU check and rotated-clip check wait until after 0.2.0 and what follows it (§1a.116 (c)).
+
+## C2b READY TO MERGE (live session, 2026-10-20 ~21:45, owner §1a.113)
+
+Branch `c2-polish` (worktree `.claude/worktrees/c2-polish`, head `a69e3a8e`, already contains hevc-vaapi up to `6b19120a`):
+mixer / key-input controls on the Color page (`panels/grade_mixer.rs`) and kept node positions (`GradeNode.pos`,
+`Grade.input_pos`, `grade.moveNodes` / `grade.resetLayout`, Reset Layout in the canvas menu), Opus-reviewed, all
+findings fixed (canvas refit while the pointer is held, moveNodes undo without a gesture, guide wording, shotMatch
+placement, a gap-detection regression). Green on the merged tree: workspace clippy, fmt, engine suite incl. ai_pool +
+coach eval (114 / 138, AI-POOL 142 / 206, gap 5 / 5: floors unchanged), ui `grade_ui` / `color_ui` / `coach_ui` /
+`comp_ui`, ui lib i18n. **Runner: at your next step boundary (not during a ci run), `git merge --ff-only c2-polish`
+(or a normal merge if hevc-vaapi moved), push, add a §7 line, then `git worktree remove .claude/worktrees/c2-polish`
+and `git branch -d c2-polish`. Must be in before publishing 0.2.** fr.tsv has no entries for the new mixer strings
+(es + zh-cn do), matching the rule at the time; add them if your i18n rule now wants fr.
+
+## Owner note (2026-10-20 ~20:40, live): release split (FORK-PLAN §1a.114)
+
+**0.2.0** = REF + C2 + C2b + RS4 + S2b + §1a.110, published by S2b's closing run after: S2b accepted, `c2-polish`
+merged (§1a.113), one `cargo xtask ci` green on that tip (also tags RS4 `resolve-ui-3`). **0.2.1** = AI2 (AI2's closing
+run publishes). **A3** publishes nothing (tag, local build, `.fork-paused`); it goes in a later lumped release.
+
+## Owner note (2026-10-20 ~16:40, live): Phase RS4, Resolve Edit page tools + a Cut page (FORK-PLAN §1a.112)
+
+Built live on branch `rs4` (worktree `.claude/worktrees/rs4`) beside C2's acceptance: RESOLVE-UI-PLAN §"RS4".
+Order: … C2 → **RS4** → S2b → AI2 → A3 → publish 0.2 (RS4 in it). **State (~19:55):** RS4 items 1–5 built on `rs4`, gates of the touched
+crates green (engine, ui-egui lib + UI tests; `av_sync_ui` is load-flaky on the base too), merged into `hevc-vaapi`
+by the live session when the runner's run ended (see §7); **left for RS4 acceptance:** Dell FEATURE-QUEUE rows for the Cut page / Inspector / edit
+commands (§1a.100), `cargo xtask ci`, tag `resolve-ui-3` (with or after C2's `comp-2`), local build. Owed / later:
+Pitch / Yaw, Dynamic Zoom, monitor volume + DIM, Sync Bin, source tape, Resolve-style panel headers.
+
+## Owner note (2026-10-20 ~15:30, live): Phase S2b after C2, before AI2 (FORK-PLAN §1a.111)
+
+Send Project… / Receive Project… in the Project Manager, a Remote group + Manage Locations… there, and sending to a
+nearby computer with a short code (no server): STORAGE-PLAN "Phase S2b" (tag `storage-3`). Order: … C2 → **S2b** → AI2
+→ A3 → publish 0.2 (now REF + C2 + S2b + AI2 + A3). Finish C2 as planned first.
+
+## Exact next step (2026-10-20 ~18:55 EDT, scheduled run): S2b items 1–3 done; item 4 lane under review fixes
+
+**Done:** ADR 0008 (`docs/adr/0008-nearby-transfer.md`); items 1–3 (`crates/ui-egui/src/panels/project_transfer.rs`, guide
+network-storage.md "In the Project Manager: Send… and Receive…"). **Item 4** (`crates/remote/src/nearby/`, feature
+`nearby`) is on branch `worktree-agent-ac9113cb76f338dd8` (worktree `.claude/worktrees/agent-ac9113cb76f338dd8`,
+target `target/agent-nearby`): built + Opus-reviewed (no must-fix), review fixes (Unconfirmed / Ambiguous errors,
+5 s hello deadline, Busy retry, Cf chars) in progress in that lane. **Next:** merge that branch once its fixes are
+in and green (if the lane died: finish the fixes listed in the progress log entry yourself), then item 5
+(`nearby.receive` / `nearby.send` / `nearby.list` in `crates/engine/src/nearby.rs`, engine feature passing `nearby`
+to filmcraft-remote on native only; receive = a job that shows the code, waits for the offer, Accept / Decline via
+`nearby.accept` / `nearby.decline`, then `projects.importPackage`), then the Nearby computer choice in the transfer
+window (code shown big on Receive; code field + list of waiting receivers on Send; Accept / Decline prompt), guide
+section "Send to a computer nearby", then acceptance (two instances + PC ↔ Dell).
+
+## Was: Exact next step (2026-10-20 18:01 EDT, scheduled run): C2 accepted (`comp-2`); next **Phase S2b** (STORAGE-PLAN §"Phase S2b", tag `storage-3`)
+
+**State:** C2 done and accepted (tag `comp-2`, pushed; local build `~/Apps/filmcraft-builds/comp-2`, `latest` → it;
+not published: REF + C2 + S2b + AI2 + A3 ship together as Revolution 0.2, §1a.111). Branched grades: model in
+`crates/project/src/grade.rs` (schema v19), CPU program `crates/render/src/grade/graph.rs`, GPU `crates/gpu/src/fx/graph.rs`,
+commands `crates/engine/src/grade_graph.rs`, Color page canvas = C1's `widgets/node_canvas.rs`, guide `docs/guide/color/nodes.md`.
+**C2 leftovers (not blocking):** no sliders for mixer settings (`mix.gain.<n>`, `layer.mode.<n>` / `layer.opacity.<n>`,
+`kmix.mode.<n>`: only `grade.setParam`); canvas auto-layout (dragged positions not kept); Delete over the canvas vs
+the app-wide `edit.clear` not checked; opt-in half float runs graphs at ~2e-2 accuracy; Q58 (Resolve Alt+P / Alt+O) provisional.
+
+**Next: S2b** from its item 1. Order of work suggested: ADR 0008 first (written 2026-10-20 18:20; nearby transfer: mDNS / DNS-SD discovery +
+UDP fallback, SPAKE2 over a short one-time code, ChaCha20-Poly1305 records, Accept / Decline, resume; new deps
+`spake2` + an mDNS crate checked under §1: pure Rust, MIT / Apache), then items 1–3 (Project Manager Send / Receive /
+Remote group + Manage Locations, reusing `remote.sendProject` / `remote.receiveProject` and the Settings ▸ Remote
+Locations widget), item 4 (nearby, its own crate or module in `crates/remote`, hostile-peer fuzz tests), 5 (commands,
+ids), 6 (guide). Acceptance needs two app instances and PC ↔ Dell over the LAN (§3b: check `uptime` / `who` on the
+Dell first). Mode at the end of this run: LEAN (weekly U 11 % vs L ≈ 7 %): one builder, Sonnet scouts, Opus review
+for the crypto / network code (risky), no Fable. After S2b: AI2, then A3 (publishes 0.2, creates `.fork-paused`).
+
+## Was: Exact next step (2026-10-20 15:22 EDT, scheduled run): C2 lanes 1–4 merged; next lane 5 (explainer, lessons, guide), then acceptance
+
+Lanes 2 (CPU oracle), 3 (GPU passes, AMD + Intel parity) and 4 (commands + canvas + Resolve keys, Q58) are merged and reviewed (see §7). **Next: lane 5**: `grade_explain` explains branches (G2.10–11: "the skin and background nodes each work on the same image; their results are blended 50 / 50"), Coach lessons per branch type (parallel, layer for looks, splitter / combiner, outside, key mixer) with `coach_ui` walk tests like `first-comp`, guide `docs/guide/color/nodes.md` rewrite (keep coach eval ≥ floor 100: the lane-4 attempt fell to 99 / 126) + C2-GUIDE section. Then **acceptance**: lessons end to end, CPU = GPU (done in lane 3 tests), save / load round trip (format test done), graded 6.2K quick pass without regression, `cargo xtask ci`, tag `comp-2`, local build only (ships in 0.2), then AI2.
+
+## Was: Exact next step (2026-10-20 14:01 EDT, scheduled run): C2 lane 1 done; next lanes 2 (CPU oracle) and 4 (commands + canvas)
+
+**Lane 1 committed** (DESIGN-C2 §5): `Grade.edges` / `output`, `GradeNode.kind` (`NodeKind`), `grade::SOURCE` = 0,
+`Grade::{graph_order, output_node, implicit_edges, effective_edges, make_explicit, simplify, renumber_source_id}`,
+`GraphNode` implements `dag::DagNode`; schema v19; `dag::MAX_DEPTH` now 65. Serial grades (no edges) are untouched:
+`render::grade::compile_fx` still ignores `kind` / edges. **Lane 2 merged** (CPU `GradeProgram` + oracle, `crates/render/src/grade/graph.rs`; GPU falls back to CPU for branched grades until lane 3; params in `grade::GRAPH_PARAMS`, lane 4 must list them in `grade.params`). **Was next:** lane 2 (`render::grade`: `GradeProgram`,
+`FxOp::GradeGraph`, `execute_graph_cpu` oracle; a serial or plain-chain grade must keep compiling to today's ops) and
+lane 4 (`grade.addParallel` / `addLayer` / `addOutside` / `addSplitter` / `addKeyMixer` / `connect` / `disconnect` /
+`setOutput`, node canvas on the Color page, Resolve keymap checked against the public manual), then lane 3 (GPU
+passes + AMD / Intel parity) and lane 5 (explainer, lessons, guide). Open point for lane 2: a non-correction `kind`
+in a grade *without* edges (only a hostile file) should compile as an identity node, not as a correction.
+
+## Was: Exact next step (2026-10-20 ~13:50 EDT, scheduled run): REF accepted (`ref-1`); next **Phase C2** (COMPOSITOR-PLAN §"Phase C2")
+
+**State:** Phase REF accepted, tag `ref-1` (pushed), local build `~/Apps/filmcraft-builds/ref-1` (`latest` → it; not
+published: REF, C2 and AI2 ship with Revolution 0.2 after A3, §1a.109 (d)). `cargo xtask ci`: 4400 / 4402 (the two
+`coach_ui::coach_ask_box_shows_*` "pending" load timeouts, also seen in S2's ci, pass alone); fmt / clippy / layers /
+assets / wasm green. Real-model check done (`coach_reference_tests::real_reference_answer`, ignored test: 24 s, 0
+invented citations). REF owed / later: drop or paste a picture into the Ask box itself (cloud job REF-ASK-DROP).
+
+**Next: C2**, from `docs/fork/DESIGN-C2.md` §5 lane 1 (grade model → DAG: edges + node `kind` on `Grade`, serial =
+implicit chain compiling exactly as today, virtual source id 0, schema v19 + migration test), then the CPU oracle /
+`FxOp::GradeGraph`, GPU passes, the node canvas on the Color page, explainer for branches, Coach lessons; acceptance as
+in the "After AI3: C2" notes below and COMPOSITOR-PLAN. Mode was STEADY (weekly U 6 % vs L ≈ 5 %): Opus main, Sonnet
+lanes / reviews where reliable, Opus review for risky code, no Fable (§1a.109 (c)). C2 publishes nothing; after C2:
+AI2, then A3 (publishes 0.2, creates `.fork-paused`).
+
+## Was: Exact next step (2026-10-20 12:30 EDT, scheduled run): Phase REF items 1–5 built; next REF acceptance (`ref-1`)
+
+**State:** REF items 1–5 committed (see the §7 entry of 12:30): `stills.import`, Shot Match / Compare on a still,
+`render::look_diff`, `coach.reference`, the assistant's reference context + vision look + answer block with **Do this**,
+guide `docs/guide/color/reference-look.md`, Opus review fixed. Touched crates' tests and clippy green.
+
+**Next:** (1) optional: a real-model check of one "how do I get this look?" answer with the installed models (if present:
+`~/.local/share/filmcraft-fork/models`; lesson: real runs catch invented features); (2) `cargo xtask ci`; (3) tag `ref-1`,
+build per §1a.9 (no publish: §1a.109 (d)), `tools/fork/cleanup.sh` then `--apply`, rewrite this file for **C2**
+(COMPOSITOR-PLAN). Owed / later: drop or paste a picture straight into the Ask box (today: Gallery, then ask).
+
+## Was: Exact next step (2026-10-20 ~11:00 EDT, scheduled run): S2 done (`storage-2`, Revolution 0.1.3 published); next **Phase REF** (AI-PLAN.md §"Phase REF")
+
+**State:** Phase S2 accepted. Tags `storage-2` + private `revolution-0.1.3` (pushed to origin); public snapshot
+`d9c456b0` "Revolution: revolution-0.1.3" on dawgon2/revolution `fork` (parent 337ce0d2 = 0.1.2) with public tag
+`revolution-0.1.3`: run 39442373358 released https://github.com/dawgon2/revolution/releases/tag/revolution-0.1.3 with all 16 packages + SHA256SUMS (the Windows x64 install test hung 30 min once, a runner flake: 16 s in both dry runs; re-run green) (see the §7 line for the run
+id and its result). Local build `~/Apps/filmcraft-builds/revolution-0.1.3` (`latest`). `cargo xtask ci`: 4375 / 4380
+first pass; the 5 failures fixed / re-measured and re-run green (coach id patterns; AI-POOL floors 982 → 980 and
+560 → 559: two near-ties shifted by corpus statistics, documented at the constants; two coach_ui load timeouts pass
+alone); fmt / workspace clippy / layers / assets / wasm green. Cleanup freed 35.4 GB. Owner FYIs: Q55 (no containers:
+in-process WebDAV / S3 test servers + user sshd), Q56 (russh 0.52.1 pinned for pure Rust), Q57 (remote clips download
+first; streaming later).
+
+**Next: REF** from its first item (read AI-PLAN.md §"Phase REF" whole first). Then C2 → AI2 → A3 (A3's closing run
+publishes Revolution **0.2** and creates `.fork-paused`, §1a.109 (c)). REF, C2 and AI2 publish nothing (§1a.109 (d)).
+
+**S2 owed / later (not blocking):** home-screen Send Project… / Receive buttons (the File ▸ Remote Locations… window
+covers receive; send is `remote.sendProject` only); upload without a local copy when the disk is short; streaming
+remote clips (Q57); real-server runs (Q55); `Sftp::key_warning()` not shown in the UI yet; the CLI has no keyring
+(secrets live in memory per run).
+
 ## S2 progress (scheduled runs from 2026-10-20 08:33 EDT)
 
 S2 steps (STORAGE-PLAN §"Phase S2"), status:
@@ -334,7 +470,7 @@ RX 6700 XT outside `run.sh`. Real-model evals: ~1 s per case on the GPU.
 
 **Owner, live 2026-10-16 ~13:35 (FORK-PLAN §1a.98): Q45 (a)**: search by meaning with one small openly licensed embedding model (runner downloads it; licence + revision + SHA-256 logged), kept only if creative coverage (138 / 608 today) rises without lookup loss; do it with / before the assistant tune (§1a.97) so the tune trains on the new search's prompts. **The rejected picture tune `tuned/qwen3-vl-4b-look-v1` and `text-q4k.gguf` / `text-own-q4k.gguf` were deleted** (owner's yes, disk cleanup; re-make the q4k files with the converter if a test needs them).
 
-**Dell lane FEATURE-POOL (2026-10-16 21:20 EDT; SKILL.md §9, standing):** rows S1.1–S1.5, AI5, AI4, the S1.5 trim row, search by meaning, the S1.5 newer-FilmCraft import row, UPD (`feature-updates`, 14 / 12; no coach questions: Ask the coach skips updates.md) the four XPS rows (`feature-gpu-rule` 11 + 1 coach / 10, `feature-nvenc-presets` 4 / 5, `feature-nvenc-linux` 8 / 6, `feature-nvdec-order` 4 / 3) and XPS d (`feature-battery-igpu` 8 + 1 coach / 8, 21:45 run) done: 147 held-out (+ 16 coach) / 141 pairs in `pool/feature-*` (no creative families: none were honest for status / storage / hand-over / GPU features); 9 spot checks on the Dell all as written (9: trimmed package of fixture pt.fcproj; none possible for the XPS rows: one GPU, no NVIDIA). Floors: coach 142, recall@5 969, creative coverage 559. XPS d: the guide doesn't say whether the battery step applies on Windows / macOS or how fast FilmCraft notices unplugging, so nothing asks. FYI for the guide: the XPS GPU text now outranks color.coach.assistant for `feat-pl-igpu-speed` ("only Intel graphics, how long does a picture look take"), which misses retrieval since XPS a; and "what does power saving integrated gpu do" lands on hardware.switches in Ask the coach, not linux.gpu. Queue empty after XPS c. Newer-FilmCraft import (`feature-project-package-newer`, 3 + 1 / 3): `feat-pk-newer-version` updated from "refused"; the guide doesn't say whether the package must be imported again after updating FilmCraft, so nothing asks. FYI for the guide: `file.projectManager` (Media Management…) also takes `trim`, but the guide only documents `projects.package`'s; and the trim dry-run estimate runs under the real size (447 KB vs 569 KB on a 2 s cut: keyframe lead-in). Search by meaning done from `color.coach.assistant-search` (7 held-out + 1 coach / 6 pairs; no spot check: the model isn't on the Dell). FYI for the guide: it doesn't say how the embedding model gets onto the computer, or that without it the Assistant keeps the word search (the code does), so no question asks either; the section's own `when` phrase "can the Assistant understand other wordings" finds nothing in Ask the coach (`feat-asr-c-meaning`, kept as a miss). Owner read: `pool/FEATURE-READ.md` (35 pairs), FYI Q52. FYI for the guide: `projects.importPackage` with an absolute `folder` nests it under the projects root (`~/Videos/FilmCraft Projects/home/…`): safe, but the guide could say `folder` is a projects-list folder name. Retrieval misses kept as real tests: `feat-ns3-message`, `feat-ns4-read-back`, `feat-pk-collect-files`, `feat-as-frame`, `feat-asr-resolve`. **2026-10-20 06:55:** §1a.108 row done (`feature-pm-window-icon`, 13 + 2 coach / 9; floors recall@5 982, creative 560, coach 142). FYI for the guide: both coach questions miss ("why isn't the Project Manager full screen", projects.window's own `when` phrase, lands on projects.what; "change the app icon to square" lands on pages.md); and the older AI-POOL pairs in `training-pairs.jsonl` / `linux-1.jsonl` still call the Project Manager "a full-window screen", which reads oddly now it opens windowed (the main runner's guide wording `projects.what` may want the same touch). Queue empty.
+**Dell lane FEATURE-POOL (2026-10-16 21:20 EDT; SKILL.md §9, standing):** rows S1.1–S1.5, AI5, AI4, the S1.5 trim row, search by meaning, the S1.5 newer-FilmCraft import row, UPD (`feature-updates`, 14 / 12; no coach questions: Ask the coach skips updates.md) the four XPS rows (`feature-gpu-rule` 11 + 1 coach / 10, `feature-nvenc-presets` 4 / 5, `feature-nvenc-linux` 8 / 6, `feature-nvdec-order` 4 / 3) and XPS d (`feature-battery-igpu` 8 + 1 coach / 8, 21:45 run) done: 147 held-out (+ 16 coach) / 141 pairs in `pool/feature-*` (no creative families: none were honest for status / storage / hand-over / GPU features); 9 spot checks on the Dell all as written (9: trimmed package of fixture pt.fcproj; none possible for the XPS rows: one GPU, no NVIDIA). Floors: coach 142, recall@5 969, creative coverage 559. XPS d: the guide doesn't say whether the battery step applies on Windows / macOS or how fast FilmCraft notices unplugging, so nothing asks. FYI for the guide: the XPS GPU text now outranks color.coach.assistant for `feat-pl-igpu-speed` ("only Intel graphics, how long does a picture look take"), which misses retrieval since XPS a; and "what does power saving integrated gpu do" lands on hardware.switches in Ask the coach, not linux.gpu. Queue empty after XPS c. Newer-FilmCraft import (`feature-project-package-newer`, 3 + 1 / 3): `feat-pk-newer-version` updated from "refused"; the guide doesn't say whether the package must be imported again after updating FilmCraft, so nothing asks. FYI for the guide: `file.projectManager` (Media Management…) also takes `trim`, but the guide only documents `projects.package`'s; and the trim dry-run estimate runs under the real size (447 KB vs 569 KB on a 2 s cut: keyframe lead-in). Search by meaning done from `color.coach.assistant-search` (7 held-out + 1 coach / 6 pairs; no spot check: the model isn't on the Dell). FYI for the guide: it doesn't say how the embedding model gets onto the computer, or that without it the Assistant keeps the word search (the code does), so no question asks either; the section's own `when` phrase "can the Assistant understand other wordings" finds nothing in Ask the coach (`feat-asr-c-meaning`, kept as a miss). Owner read: `pool/FEATURE-READ.md` (35 pairs), FYI Q52. FYI for the guide: `projects.importPackage` with an absolute `folder` nests it under the projects root (`~/Videos/FilmCraft Projects/home/…`): safe, but the guide could say `folder` is a projects-list folder name. Retrieval misses kept as real tests: `feat-ns3-message`, `feat-ns4-read-back`, `feat-pk-collect-files`, `feat-as-frame`, `feat-asr-resolve`. **2026-10-20 06:55:** §1a.108 row done (`feature-pm-window-icon`, 13 + 2 coach / 9; floors recall@5 982, creative 560, coach 142). FYI for the guide: both coach questions miss ("why isn't the Project Manager full screen", projects.window's own `when` phrase, lands on projects.what; "change the app icon to square" lands on pages.md); and the older AI-POOL pairs in `training-pairs.jsonl` / `linux-1.jsonl` still call the Project Manager "a full-window screen", which reads oddly now it opens windowed (the main runner's guide wording `projects.what` may want the same touch). Queue empty. **2026-10-20 15:40:** §1a.110 row done (`feature-tarball-menu-entry`, 6 / 4, small on purpose: one guide paragraph; floor recall@5 984; `feat-tme-stop` and `feat-tme-own-launcher` miss retrieval, kept). FYI for the guide: install.portable step 3 still says to make the launcher yourself, and nothing says where the entry is written or that `--control` / AppImage / Flatpak runs skip it. **2026-10-20 20:45:** RS4 Cut page row done (`feature-rs4-cut-page`, 13 + 1 coach / 10; floors recall@5 997, coach 144). **21:15:** RS4 Edit page row done (`feature-rs4-edit-toolbar`, 10 / 9; floor recall@5 1007). **21:40:** RS4.1 row done (`feature-rs4-resolve-edits`, 12 / 9; floor recall@5 1018; `feat-re-close-up-amount` misses, kept). FYI for the guide: editing.resolve-edits doesn't name the Sequence ▸ Resolve Edit menu. **21:50:** RS4.2 Inspector row → `guide wanted` (main runner): a section for the Inspector itself (each tab's controls, Transform in Resolve units vs Motion, how to open it, relation to Keyframes), and fix tracking.md / effects.md / color/noise.md, which still call Effect Controls "the Inspector in the Resolve workflow" (RS4.2 renamed it Keyframes); set the row back to `queued` after. Queue otherwise empty. FYI for the guide: pages.cut doesn't say how many tracks the Cut timeline shows, so nothing asks.
 
 **Owner, live 2026-10-16 ~04:20 (FORK-PLAN §1a.96): mode floor LEAN** (where the line says MINIMAL, work LEAN; MINIMAL only near the real limits, §1a.53). **Q41 answered:** the owner has read the training pairs, so AI4 item 5 tunes may use them. **AI4 item 3 (picture-model tune), owner ~04:30 / 04:35: no X-M5 footage yet.** Train on synthetic frames + downloaded openly licensed footage by others (download approved: CC0 / CC-BY / CC-BY-SA / PD, licence + source logged per file in `coach-eval/VISION-SOURCES.md`, ≤ 20 GB under `~/.local/share/filmcraft-fork/training-footage/`, never in git). **Log footage required** (F-Log2 first, other logs too; synthetic F-Log2 from open scene-referred footage if scarce). Build `coach-eval/VISION-READ.md` (30–50 frames + labels) and tell the owner (Q44), but **do the tune regardless of the review** (not a gate; later corrections → fix labels, re-tune). Keep-if-better rule stays. `ai-4` after the tune, then AI5.
 

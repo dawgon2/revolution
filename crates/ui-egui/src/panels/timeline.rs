@@ -26,11 +26,135 @@ use crate::theme::Tokens;
 use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_rect};
 pub use super::timeline_hit::{Hit, ROLL_PX, hit, selection_trim_kind};
 
-const TOP_H: f32 = 58.0; // timecode + toolbar (left) / ruler (right)
-const RULER_H: f32 = 44.0;
-const SCROLLBAR_H: f32 = 17.0;
 const DIVIDER_H: f32 = 5.0;
-const MASTER_H: f32 = 34.0;
+
+/// How a Timeline view is drawn. The Timeline panel uses [`Chrome::FULL`]; the Resolve
+/// workflow's Cut page (fork RS4) draws two more views of the same sequence with the same code:
+/// the upper one shows the whole timeline, the lower one is zoomed in around a playhead held in
+/// the middle ([`show_instance`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Chrome {
+    /// Height of the top block (timecode + toolbar on the left, ruler on the right).
+    pub top_h: f32,
+    pub ruler_h: f32,
+    /// The zoom scroll bar along the bottom (0: none).
+    pub scrollbar_h: f32,
+    /// The Mix row under the audio tracks (0: none).
+    pub master_h: f32,
+    /// The timecode and toolbar left of the ruler.
+    pub top_block: bool,
+    /// Track headers (with `header_w` of the view).
+    pub headers: bool,
+    /// Volume lines, track keyframe lanes, caption tracks and the vertical scroll bars.
+    pub extras: bool,
+    /// The whole timeline always fits the width.
+    pub fit_all: bool,
+    /// The playhead stays in the middle and the timeline moves under it.
+    pub centre_playhead: bool,
+    /// Mixed into this view's egui ids so two views can be on screen together (0: the Timeline
+    /// panel's own ids, unchanged).
+    pub salt: u64,
+    /// Resolve's timeline toolbar across the top (fork RS4): tools, edits, snapping, markers,
+    /// zoom; `top_h` includes it ([`RESOLVE_TOOLBAR_H`]).
+    pub resolve_toolbar: bool,
+    /// Resolve's track headers (fork RS4): the badges and switches on the top line, the track's
+    /// name and clip count under them.
+    pub resolve_headers: bool,
+}
+
+/// Height of Resolve's timeline toolbar (fork RS4).
+pub const RESOLVE_TOOLBAR_H: f32 = 36.0;
+
+impl Chrome {
+    pub const FULL: Chrome = Chrome {
+        top_h: 58.0,
+        ruler_h: 44.0,
+        scrollbar_h: 17.0,
+        master_h: 34.0,
+        top_block: true,
+        headers: true,
+        extras: true,
+        fit_all: false,
+        centre_playhead: false,
+        salt: 0,
+        resolve_toolbar: false,
+        resolve_headers: false,
+    };
+    /// The Timeline panel in the Resolve workflow (fork RS4): Resolve's toolbar over it.
+    pub const RESOLVE: Chrome = Chrome { top_h: 58.0 + RESOLVE_TOOLBAR_H, resolve_toolbar: true, resolve_headers: true, ..Chrome::FULL };
+}
+
+/// The Timeline panel as the Resolve workflow shows it (fork RS4): [`Chrome::RESOLVE`].
+pub fn show_resolve(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let was = CHROME.with(|c| c.replace(Chrome::RESOLVE));
+    show(app, ui, rect);
+    CHROME.with(|c| c.set(was));
+}
+
+impl Default for Chrome {
+    fn default() -> Self {
+        Chrome::FULL
+    }
+}
+
+thread_local! {
+    static CHROME: std::cell::Cell<Chrome> = const { std::cell::Cell::new(Chrome::FULL) };
+}
+
+/// The chrome of the view being drawn now.
+pub(crate) fn chrome() -> Chrome {
+    CHROME.with(|c| c.get())
+}
+
+/// An egui id for a widget of the view being drawn now (unchanged for the Timeline panel).
+pub(crate) fn tid(source: impl std::hash::Hash + std::fmt::Debug) -> egui::Id {
+    let id = egui::Id::new(source);
+    match chrome().salt {
+        0 => id,
+        salt => id.with(salt),
+    }
+}
+
+/// One more view of the active sequence (the Cut page's upper and lower timelines): its own zoom,
+/// scroll and track heights, and its own drag in progress.
+#[derive(Default)]
+pub struct Instance {
+    pub view: TimelineView,
+    drag: Option<Drag>,
+    pressed: Option<Pressed>,
+    snap_x: Option<f32>,
+    zoom_anchor: Option<(f64, f32)>,
+}
+
+impl Instance {
+    pub fn new(view: TimelineView) -> Self {
+        Self { view, ..Default::default() }
+    }
+    /// A drag is in progress in this view.
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+}
+
+/// Draw the active sequence in `rect` as `inst` sees it, with `chrome`: the Timeline panel's own
+/// view, drag and chrome are set aside meanwhile and put back after. Automation ids starting
+/// `timeline.` are given as `<prefix>.` instead.
+pub fn show_instance(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, chrome: Chrome, inst: &mut Instance, prefix: &str) {
+    fn swap(app: &mut FilmcraftApp, inst: &mut Instance) {
+        std::mem::swap(&mut app.ui.timeline, &mut inst.view);
+        std::mem::swap(&mut app.tl.drag, &mut inst.drag);
+        std::mem::swap(&mut app.tl.pressed, &mut inst.pressed);
+        std::mem::swap(&mut app.tl.snap_x, &mut inst.snap_x);
+        std::mem::swap(&mut app.tl.zoom_anchor, &mut inst.zoom_anchor);
+    }
+    swap(app, inst);
+    let was = CHROME.with(|c| c.replace(chrome));
+    let renamed = app.auto.rename.replace(("timeline.".to_string(), format!("{prefix}.")));
+    show(app, ui, rect);
+    app.auto.rename = renamed;
+    CHROME.with(|c| c.set(was));
+    swap(app, inst);
+}
 /// The selected gap between two clips (#648, #668).
 const GAP_FILL: Color32 = Color32::from_gray(224);
 const SNAP_PX: f32 = 9.0;
@@ -223,7 +347,7 @@ fn new_track_at(seq: &Sequence, layout: &Layout, y: f32, vh: f32, ah: f32) -> Op
         (y >= tracks_top && y < top).then(|| (TrackKind::Video, band((top - vh).max(tracks_top), top)))
     } else {
         let bottom = layout.rows.iter().filter(|r| r.kind == TrackKind::Audio).map(|r| r.rect.max.y).fold(layout.split_y + DIVIDER_H, f32::max);
-        let mix = layout.content.max.y - MASTER_H;
+        let mix = layout.content.max.y - chrome().master_h;
         (y >= bottom && y < mix).then(|| (TrackKind::Audio, band(bottom, (bottom + ah).min(mix))))
     }
 }
@@ -271,9 +395,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     };
     let rate = seq.settings.frame_rate;
     let dt = ctx.input(|i| i.stable_dt).min(0.05) as f64;
-    let header_w = app.ui.timeline.header_w;
-    let content = Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + TOP_H), pos2(rect.max.x - 10.0, rect.max.y - SCROLLBAR_H));
-    let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + TOP_H - RULER_H), pos2(content.max.x, rect.min.y + TOP_H));
+    let ch = chrome();
+    let header_w = if ch.headers { app.ui.timeline.header_w } else { 0.0 };
+    let right = if ch.extras { 10.0 } else { 0.0 };
+    let content = Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + ch.top_h), pos2(rect.max.x - right, rect.max.y - ch.scrollbar_h));
+    let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + ch.top_h - ch.ruler_h), pos2(content.max.x, rect.min.y + ch.top_h));
     app.last_timeline_width = content.width();
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, t.panel_bg);
@@ -317,8 +443,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     // follow playhead while playing (Settings ▸ Timeline ▸ Timeline Playback Auto-Scrolling)
+    if ch.fit_all && content.width() > 10.0 {
+        // fork RS4 (Cut page, upper timeline): the whole timeline, always
+        let v = &mut app.ui.timeline;
+        let pps = (content.width() as f64 * 0.98 / dur_s).clamp(0.05, 24_000.0);
+        (v.pps, v.target_pps, v.scroll, v.target_scroll) = (pps, pps, 0.0, 0.0);
+    }
     let auto_scroll = app.session.prefs.timeline.auto_scroll.clone();
-    if app.playback.playing && app.ui.timeline.follow && auto_scroll != "noScroll" {
+    if !ch.fit_all && !ch.centre_playhead && app.playback.playing && app.ui.timeline.follow && auto_scroll != "noScroll" {
         let v = &mut app.ui.timeline;
         let ph = app.session.playhead().seconds();
         let w = content.width() as f64;
@@ -345,18 +477,28 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         v.scroll = v.scroll.clamp(0.0, max_scroll(seconds, content.width(), v.pps));
         v.target_scroll = v.target_scroll.clamp(0.0, max_scroll(seconds, content.width(), v.target_pps));
     }
+    if ch.centre_playhead {
+        // fork RS4 (Cut page, lower timeline): the playhead in the middle, the timeline moving
+        // under it (left of the start is empty)
+        let v = &mut app.ui.timeline;
+        let half = content.width() as f64 * 0.5 / v.pps.max(1e-9);
+        let s = app.session.playhead().seconds() - half;
+        if s.is_finite() {
+            (v.scroll, v.target_scroll) = (s, app.session.playhead().seconds() - content.width() as f64 * 0.5 / v.target_pps.max(1e-9));
+        }
+    }
     let pps = app.ui.timeline.pps;
     let scroll = app.ui.timeline.scroll;
 
     // ---- rows
     // caption tracks sit in their own area above the video tracks
-    let cap_n = seq.caption_tracks.len();
+    let cap_n = if ch.extras { seq.caption_tracks.len() } else { 0 };
     let caption_area = Rect::from_min_max(pos2(rect.min.x, content.min.y), pos2(content.max.x, content.min.y + cap_n as f32 * super::timeline_captions::ROW_H));
     let cap_h = if cap_n > 0 { caption_area.height() + DIVIDER_H } else { 0.0 };
     let tracks_area = Rect::from_min_max(pos2(content.min.x, content.min.y + cap_h), content.max);
     let split_y = tracks_area.min.y + (tracks_area.height() - DIVIDER_H) * app.ui.timeline.split;
     let video_area = Rect::from_min_max(pos2(rect.min.x, tracks_area.min.y), pos2(content.max.x, split_y));
-    let audio_area = Rect::from_min_max(pos2(rect.min.x, split_y + DIVIDER_H), pos2(content.max.x, tracks_area.max.y - MASTER_H));
+    let audio_area = Rect::from_min_max(pos2(rect.min.x, split_y + DIVIDER_H), pos2(content.max.x, tracks_area.max.y - ch.master_h));
     let vh = app.ui.timeline.video_track_h;
     let ah = app.ui.timeline.audio_track_h;
     let mut rows = Vec::new();
@@ -526,11 +668,13 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 
     // ---- track headers
-    draw_headers(app, ui, &seq, &rows, rect, vclip, aclip, &t);
+    if ch.headers {
+        draw_headers(app, ui, &seq, &rows, rect, vclip, aclip, &t);
+    }
     // divider between video and audio
     let div = Rect::from_min_max(pos2(rect.min.x, split_y), pos2(content.max.x, split_y + DIVIDER_H));
     painter.rect_filled(div, 0.0, t.app_bg);
-    let div_resp = ui.interact(div, egui::Id::new("tl-divider"), Sense::drag());
+    let div_resp = ui.interact(div, tid("tl-divider"), Sense::drag());
     if div_resp.hovered() || div_resp.dragged() {
         ctx.set_cursor_icon(CursorIcon::ResizeVertical);
     }
@@ -539,16 +683,18 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         app.ui.timeline.split = f.clamp(0.1, 0.9);
     }
     // master track
-    let master = Rect::from_min_max(pos2(rect.min.x, tracks_area.max.y - MASTER_H), pos2(content.max.x, tracks_area.max.y));
-    painter.rect_filled(master, 0.0, t.tl_header_bg);
-    painter.text(pos2(rect.min.x + 44.0, master.center().y), Align2::LEFT_CENTER, tl!("Mix"), Tokens::ui(11.5), t.text);
-    painter.text(
-        pos2(rect.min.x + header_w - 12.0, master.center().y),
-        Align2::RIGHT_CENTER,
-        format!("{:.1}", seq.master_volume_db),
-        Tokens::ui(11.5),
-        t.hot_text,
-    );
+    let master = Rect::from_min_max(pos2(rect.min.x, tracks_area.max.y - ch.master_h), pos2(content.max.x, tracks_area.max.y));
+    if ch.master_h > 0.0 {
+        painter.rect_filled(master, 0.0, t.tl_header_bg);
+        painter.text(pos2(rect.min.x + 44.0, master.center().y), Align2::LEFT_CENTER, tl!("Mix"), Tokens::ui(11.5), t.text);
+        painter.text(
+            pos2(rect.min.x + header_w - 12.0, master.center().y),
+            Align2::RIGHT_CENTER,
+            format!("{:.1}", seq.master_volume_db),
+            Tokens::ui(11.5),
+            t.hot_text,
+        );
+    }
 
     // ---- caption tracks
     if cap_n > 0 {
@@ -579,37 +725,43 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 
     // ---- scroll bars
-    zoom_scrollbar(
-        app,
-        ui,
-        Rect::from_min_max(pos2(content.min.x, rect.max.y - SCROLLBAR_H + 2.0), pos2(content.max.x, rect.max.y - 2.0)),
-        seq.duration().seconds(),
-        &t,
-    );
-    vertical_scrollbar(
-        ui,
-        Rect::from_min_max(pos2(content.max.x + 2.0, video_area.min.y), pos2(rect.max.x - 1.0, video_area.max.y)),
-        &mut app.ui.timeline.v_scroll,
-        max_vs,
-        true,
-        &t,
-        "vs",
-    );
-    vertical_scrollbar(
-        ui,
-        Rect::from_min_max(pos2(content.max.x + 2.0, audio_area.min.y), pos2(rect.max.x - 1.0, audio_area.max.y)),
-        &mut app.ui.timeline.a_scroll,
-        max_as,
-        false,
-        &t,
-        "as",
-    );
+    if ch.scrollbar_h > 0.0 {
+        zoom_scrollbar(
+            app,
+            ui,
+            Rect::from_min_max(pos2(content.min.x, rect.max.y - ch.scrollbar_h + 2.0), pos2(content.max.x, rect.max.y - 2.0)),
+            seq.duration().seconds(),
+            &t,
+        );
+    }
+    if ch.extras {
+        vertical_scrollbar(
+            ui,
+            Rect::from_min_max(pos2(content.max.x + 2.0, video_area.min.y), pos2(rect.max.x - 1.0, video_area.max.y)),
+            &mut app.ui.timeline.v_scroll,
+            max_vs,
+            true,
+            &t,
+            "vs",
+        );
+        vertical_scrollbar(
+            ui,
+            Rect::from_min_max(pos2(content.max.x + 2.0, audio_area.min.y), pos2(rect.max.x - 1.0, audio_area.max.y)),
+            &mut app.ui.timeline.a_scroll,
+            max_as,
+            false,
+            &t,
+            "as",
+        );
+    }
 
     // ---- interaction
     interact(app, ui, &seq, &layout, rect);
-    super::timeline_volume::interact(app, ui, &seq, &layout, aclip);
-    // track keyframes (drawn and edited on top of the clips)
-    super::timeline_automation::show(app, ui, &seq, &layout, aclip);
+    if ch.extras {
+        super::timeline_volume::interact(app, ui, &seq, &layout, aclip);
+        // track keyframes (drawn and edited on top of the clips)
+        super::timeline_automation::show(app, ui, &seq, &layout, aclip);
+    }
     if cap_n > 0 {
         super::timeline_captions::interact(app, ui, &seq, caption_area, &layout);
     }
@@ -624,7 +776,7 @@ fn empty_state(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ui.painter().text(rect.center() + vec2(0.0, 50.0), Align2::CENTER_CENTER, hint, Tokens::ui(12.0), t.text_dim);
     }
     let b = Rect::from_center_size(rect.center() + vec2(0.0, 20.0), vec2(170.0, 26.0));
-    let resp = ui.interact(b, egui::Id::new("tl-open-demo"), Sense::click());
+    let resp = ui.interact(b, tid("tl-open-demo"), Sense::click());
     app.auto.add("timeline.openDemo", b, "Open Demo Project");
     ui.painter().rect_filled(b, 13.0, if resp.hovered() { t.accent_hover } else { t.accent });
     ui.painter().text(b.center(), Align2::CENTER_CENTER, tl!("Open Demo Project"), Tokens::semibold(12.0), Color32::WHITE);
@@ -1144,25 +1296,33 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             p.line_segment([pos2(hrect.min.x, hrect.min.y + 0.5), pos2(hrect.max.x, hrect.min.y + 0.5)], Stroke::new(1.0, t.separator));
         }
         let label = format!("{}{}", if r.kind == TrackKind::Video { "V" } else { "A" }, r.index + 1);
-        let btn_rect = |x0: f32| Rect::from_min_max(pos2(hrect.min.x + x0, hrect.min.y + 1.0), pos2(hrect.min.x + x0 + 24.0, hrect.max.y - 2.0));
+        // fork RS4: Resolve's headers keep the badges and switches on the top line
+        let rh = chrome().resolve_headers;
+        let upper_y = hrect.min.y + (16.0f32).min(hrect.height() / 2.0);
+        let btn_rect = |x0: f32| {
+            if rh {
+                Rect::from_center_size(pos2(hrect.min.x + x0 + 12.0, upper_y), vec2(24.0, 18.0f32.min(hrect.height() - 4.0).max(8.0)))
+            } else {
+                Rect::from_min_max(pos2(hrect.min.x + x0, hrect.min.y + 1.0), pos2(hrect.min.x + x0 + 24.0, hrect.max.y - 2.0))
+            }
+        };
         // 1. source patch (absent when unpatched)
         let patched = if r.kind == TrackKind::Video { tg.video_dest == Some(r.track) } else { tg.audio_dest == Some(r.track) };
-        let pr = btn_rect(13.0);
+        let pr = btn_rect(if rh { 6.0 } else { 13.0 });
         app.auto.add(&format!("timeline.track.{label}.sourcePatch"), pr, "Source patch");
-        if patch_button(ui, pr, visible, &label, patched, false, egui::Id::new(("patch", r.track.0)), t).clicked() {
+        if patch_button(ui, pr, visible, &label, patched, false, tid(("patch", r.track.0)), t).clicked() {
             actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "sourcePatch": !patched})));
         }
         // 2. track lock
         let small = |x: f32, y: f32| Rect::from_center_size(pos2(hrect.min.x + x, y), vec2(18.0, 18.0));
-        let upper_y = hrect.min.y + (16.0f32).min(hrect.height() / 2.0);
-        let lock_r = small(49.0, hrect.center().y);
+        let lock_r = if rh { small(78.0, upper_y) } else { small(49.0, hrect.center().y) };
         let lresp = crate::widgets::icon_toggle(
             ui,
             lock_r.intersect(visible),
             if tr.locked { Icon::Lock } else { Icon::Unlock },
             true,
             t,
-            egui::Id::new(("locked", r.track.0)),
+            tid(("locked", r.track.0)),
             Some(if tr.locked { t.icon_active } else { t.text_dim }),
         );
         app.auto.add(&format!("timeline.track.{label}.locked"), lock_r, "Toggle Track Lock");
@@ -1175,16 +1335,15 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
         // 3. target
         let targeted = tg.targeted.contains(&r.track);
-        let trr = btn_rect(61.0);
+        let trr = btn_rect(if rh { 34.0 } else { 61.0 });
         app.auto.add(&format!("timeline.track.{label}.target"), trr, "Toggle track targeting");
-        if patch_button(ui, trr, visible, &label, targeted, true, egui::Id::new(("target", r.track.0)), t).clicked() {
+        if patch_button(ui, trr, visible, &label, targeted, true, tid(("target", r.track.0)), t).clicked() {
             actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "targeted": !targeted})));
         }
         // 4. upper line icons
-        let mut x = 102.0;
+        let mut x = if rh { 100.0 } else { 102.0 };
         let sr = small(x, upper_y);
-        let sresp =
-            crate::widgets::icon_toggle(ui, sr.intersect(visible), Icon::SyncLock, tr.sync_lock, t, egui::Id::new(("syncLock", r.track.0)), Some(t.text_dim));
+        let sresp = crate::widgets::icon_toggle(ui, sr.intersect(visible), Icon::SyncLock, tr.sync_lock, t, tid(("syncLock", r.track.0)), Some(t.text_dim));
         app.auto.add(&format!("timeline.track.{label}.syncLock"), sr, "Toggle Sync Lock");
         if sresp.clicked() {
             actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "syncLock": !tr.sync_lock})));
@@ -1198,7 +1357,7 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
                 if tr.enabled { Icon::Eye } else { Icon::EyeOff },
                 true,
                 t,
-                egui::Id::new(("enabled", r.track.0)),
+                tid(("enabled", r.track.0)),
                 Some(t.text_dim),
             );
             app.auto.add(&format!("timeline.track.{label}.enabled"), er, "Toggle Track Output");
@@ -1207,29 +1366,14 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             }
         } else {
             let mr = Rect::from_center_size(pos2(hrect.min.x + x, upper_y), vec2(14.0, 14.0));
-            let mresp = crate::widgets::letter_toggle(
-                ui,
-                mr.intersect(visible),
-                "M",
-                tr.muted,
-                Color32::from_rgb(0x2d, 0x9d, 0x78),
-                t,
-                egui::Id::new(("mute", r.track.0)),
-            );
+            let mresp =
+                crate::widgets::letter_toggle(ui, mr.intersect(visible), "M", tr.muted, Color32::from_rgb(0x2d, 0x9d, 0x78), t, tid(("mute", r.track.0)));
             app.auto.add(&format!("timeline.track.{label}.muted"), mr, "Mute Track");
             if mresp.clicked() {
                 actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "muted": !tr.muted})));
             }
             let s2 = Rect::from_center_size(pos2(hrect.min.x + x + 20.0, upper_y), vec2(14.0, 14.0));
-            let so = crate::widgets::letter_toggle(
-                ui,
-                s2.intersect(visible),
-                "S",
-                tr.solo,
-                Color32::from_rgb(0xf0, 0xf0, 0x4f),
-                t,
-                egui::Id::new(("solo", r.track.0)),
-            );
+            let so = crate::widgets::letter_toggle(ui, s2.intersect(visible), "S", tr.solo, Color32::from_rgb(0xf0, 0xf0, 0x4f), t, tid(("solo", r.track.0)));
             app.auto.add(&format!("timeline.track.{label}.solo"), s2, "Solo Track");
             if so.clicked() {
                 actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "solo": !tr.solo})));
@@ -1241,14 +1385,21 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             let kr = small(x + 64.0, upper_y);
             super::timeline_automation::header_button(app, ui, seq, r, kr, visible, &label, t);
         }
-        // 5. name on the lower line (or inline when short)
-        if hrect.height() >= 40.0 {
+        // 5. name on the lower line (or inline when short); Resolve's: the name and the clip count
+        if rh && hrect.height() >= 38.0 {
+            p.text(pos2(hrect.min.x + 10.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.5), t.text);
+            if hrect.height() >= 54.0 {
+                let n = tr.items.len();
+                let count = if n == 1 { tl!("1 Clip").to_string() } else { tlf!("{n} Clips", n) };
+                p.text(pos2(hrect.min.x + 10.0, hrect.min.y + 49.0), Align2::LEFT_CENTER, count, Tokens::ui(10.5), t.text_dim);
+            }
+        } else if hrect.height() >= 40.0 {
             p.text(pos2(hrect.min.x + 94.0, hrect.min.y + 34.0), Align2::LEFT_CENTER, &tr.name, Tokens::ui(11.0), t.text_dim);
         }
         // resize track height by dragging the header's bottom edge
         let edge = Rect::from_min_max(pos2(hrect.min.x, hrect.max.y - 3.0), pos2(hrect.max.x, hrect.max.y + 2.0)).intersect(visible);
         if edge.height() > 0.0 {
-            let eresp = ui.interact(edge, egui::Id::new(("trackh", r.track.0)), Sense::drag());
+            let eresp = ui.interact(edge, tid(("trackh", r.track.0)), Sense::drag());
             if eresp.hovered() || eresp.dragged() {
                 ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
             }
@@ -1260,7 +1411,7 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
         let resp = ui.interact(
             Rect::from_min_max(pos2(hrect.min.x + 90.0, hrect.min.y + 26.0), hrect.max).intersect(visible),
-            egui::Id::new(("hdr", r.track.0)),
+            tid(("hdr", r.track.0)),
             Sense::click(),
         );
         if resp.double_clicked() {
@@ -1269,7 +1420,8 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
     }
     // column separator
-    ui.painter().line_segment([pos2(rect.min.x + hw - 0.5, vclip.min.y), pos2(rect.min.x + hw - 0.5, aclip.max.y + MASTER_H)], Stroke::new(1.0, t.separator));
+    ui.painter()
+        .line_segment([pos2(rect.min.x + hw - 0.5, vclip.min.y), pos2(rect.min.x + hw - 0.5, aclip.max.y + chrome().master_h)], Stroke::new(1.0, t.separator));
     for (cmd, params) in actions {
         if let Err(e) = app.session.execute(&cmd, params) {
             app.ui.status = e.to_string();
@@ -1285,12 +1437,25 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
     let rate = seq.settings.frame_rate;
     let hw = app.ui.timeline.header_w;
     let ruler = layout.ruler;
+    if !chrome().top_block {
+        p.rect_filled(ruler, 0.0, t.panel_bg);
+        draw_ruler(app, ui, seq, layout, t, seq_id);
+        return;
+    }
+    let rect = if chrome().resolve_toolbar {
+        p.rect_filled(Rect::from_min_max(rect.min, pos2(rect.max.x, ruler.max.y)), 0.0, t.panel_bg);
+        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), RESOLVE_TOOLBAR_H));
+        super::timeline_toolbar::show(app, ui, bar, layout, t);
+        Rect::from_min_max(pos2(rect.min.x, bar.max.y), rect.max)
+    } else {
+        rect
+    };
     // background of the whole top block
     p.rect_filled(Rect::from_min_max(rect.min, pos2(rect.max.x, ruler.max.y)), 0.0, t.panel_bg);
     // current timecode: Premiere's big blue timecode
     let tc = format_time(app.session.playhead(), rate, seq.settings.drop_frame, TimeDisplay::Timecode, seq.settings.sample_rate as i64);
     let tc_rect = Rect::from_min_size(pos2(rect.min.x + 14.0, rect.min.y + 4.0), vec2(hw - 20.0, 20.0));
-    let tc_id = egui::Id::new(("timeline-tc", seq_id));
+    let tc_id = tid(("timeline-tc", seq_id));
     match crate::widgets::timecode_field(ui, tc_id, tc_rect, &tc, app.session.playhead(), Tick::ZERO, rate, seq.settings.drop_frame, t.timecode) {
         Some(Ok(time)) => {
             if let Err(e) = app.session.execute("playhead.set", json!({"time": time.0})) {
@@ -1312,9 +1477,14 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         (Icon::Marker, "marker", false, false, tl!("Add Marker (M)")),
         (Icon::Wrench, "settings", false, false, tl!("Timeline Display Settings")),
     ];
+    // fork RS4: Resolve's toolbar has snapping, linked selection and the marker button
+    let resolve = chrome().resolve_toolbar;
     for (icon, key, on, toggle, tip) in toggles {
+        if resolve && matches!(key, "snap" | "linked" | "marker") {
+            continue;
+        }
         let r = Rect::from_min_size(pos2(x, y), vec2(28.0, 28.0));
-        let resp = ui.interact(r, egui::Id::new(("tl-toggle", key)), Sense::click()).on_hover_text(tip);
+        let resp = ui.interact(r, tid(("tl-toggle", key)), Sense::click()).on_hover_text(tip);
         app.auto.add(&format!("timeline.toggle.{key}"), r, tip);
         if toggle && on {
             p.rect_filled(r, 4.0, t.pressed);
@@ -1368,10 +1538,17 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         }
         x += 30.0;
     }
-    // ----- ruler: markers row · labels · ticks · 2 pt render bar
+    draw_ruler(app, ui, seq, layout, t, seq_id);
+}
+
+/// The ruler: markers row · labels · ticks · 2 pt render bar.
+fn draw_ruler(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &Layout, t: &Tokens, seq_id: ItemId) {
+    let p = ui.painter().clone();
+    let rate = seq.settings.frame_rate;
+    let ruler = layout.ruler;
     let clip = p.with_clip_rect(ruler);
     let marker_y = ruler.min.y + 2.0;
-    let label_y = ruler.min.y + 24.0;
+    let label_y = (ruler.min.y + 24.0).min(ruler.max.y - 13.0);
     let tick_base = ruler.max.y - 3.0;
     let fps = rate.as_f64();
     let base = rate.timecode_base();
@@ -1457,7 +1634,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         let hit = r.expand2(vec2(0.0, 2.0));
         app.auto.add(&format!("timeline.renderBar.{i}"), hit, what);
         if ui.rect_contains_pointer(hit) {
-            egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new(("rb", i)), egui::PopupAnchor::Pointer).show(|ui| {
+            egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), tid(("rb", i)), egui::PopupAnchor::Pointer).show(|ui| {
                 ui.label(what);
             });
         }
@@ -1476,7 +1653,7 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         let mr = marker_rect(layout, m.start);
         app.auto.add(&format!("timeline.marker.{}", m.id.0), mr, &m.name);
         if ui.rect_contains_pointer(mr) && !m.name.is_empty() {
-            egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new(("mk", m.id.0)), egui::PopupAnchor::Pointer).show(|ui| {
+            egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), tid(("mk", m.id.0)), egui::PopupAnchor::Pointer).show(|ui| {
                 ui.label(&m.name);
             });
         }
@@ -1518,7 +1695,7 @@ fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rect, seq_seco
     }
     app.auto.add("timeline.zoomBar", thumb, "zoom scroll bar");
     app.auto.add("timeline.zoomBar.track", bar, "zoom scroll bar track");
-    let resp = ui.interact(bar, egui::Id::new("tl-zoombar"), Sense::click_and_drag());
+    let resp = ui.interact(bar, tid("tl-zoombar"), Sense::click_and_drag());
     let range = (total - vis).max(0.0);
     // a press beside the thumb brings the thumb's middle under the pointer (and a drag goes on
     // from there)
@@ -1595,7 +1772,7 @@ fn vertical_scrollbar(ui: &mut egui::Ui, bar: Rect, value: &mut f32, max: f32, i
     let y = bar.min.y + (bar.height() - h) * pos;
     let thumb = Rect::from_min_size(pos2(bar.min.x + 1.0, y), vec2(bar.width() - 2.0, h));
     p.rect_filled(thumb, 3.0, t.vertical_scroll_thumb);
-    let resp = ui.interact(bar, egui::Id::new(("tl-vs", id)), Sense::drag());
+    let resp = ui.interact(bar, tid(("tl-vs", id)), Sense::drag());
     if resp.dragged() {
         let d = resp.drag_delta().y / (bar.height() - h).max(1.0) * max;
         *value = (*value + if invert { -d } else { d }).clamp(0.0, max);
@@ -2000,7 +2177,7 @@ pub(crate) fn wheel_input(ctx: &egui::Context) -> WheelInput {
 fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &Layout, rect: Rect) {
     let ctx = ui.ctx().clone();
     let area = Rect::from_min_max(pos2(layout.content.min.x, layout.ruler.min.y), layout.content.max);
-    let resp = ui.interact(area, egui::Id::new("timeline-area"), Sense::click_and_drag());
+    let resp = ui.interact(area, tid("timeline-area"), Sense::click_and_drag());
     let pos = resp.hover_pos().or(resp.interact_pointer_pos());
     let mods = ctx.input(|i| i.modifiers);
     let tool = app.ui.tool;
@@ -2446,11 +2623,11 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
 
     // ---- context menu on clips (right-clicking an unselected clip selects it first); on a clip's
     // edge, the edit point menu instead (right-clicking an unselected edit point selects it first)
-    let edit_point_menu_id = egui::Id::new("timeline.editPointMenu.target");
+    let edit_point_menu_id = tid("timeline.editPointMenu.target");
     // the clip right-clicked, remembered while its menu is open: Unlink leaves only it selected
-    let menu_clip_id = egui::Id::new("timeline.clipMenu.clip");
+    let menu_clip_id = tid("timeline.clipMenu.clip");
     // right-clicking empty time between clips selects the gap and opens its menu (#648, #668)
-    let gap_menu_id = egui::Id::new("timeline.gapMenu.open");
+    let gap_menu_id = tid("timeline.gapMenu.open");
     if resp.secondary_clicked()
         && let Some(p) = resp.interact_pointer_pos()
     {
@@ -2465,7 +2642,7 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         }
     }
     // on a marker of the ruler, the marker menu instead (right-clicking a marker selects it first)
-    let marker_menu_id = egui::Id::new("timeline.markerMenu.open");
+    let marker_menu_id = tid("timeline.markerMenu.open");
     if resp.secondary_clicked()
         && let Some(p) = resp.interact_pointer_pos()
     {

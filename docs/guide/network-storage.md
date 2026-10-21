@@ -283,8 +283,108 @@ drive.
 4. Without `"wait": true` it downloads as a job and replies with `localPackage`; import that
    with `projects.importPackage` when the job is done.
 
-Still to come: Send Project… / Receive Project… on the home screen, and uploading without a
-local copy when the disk is nearly full.
+### In the Project Manager: Send… and Receive…
+
+**[Fork]** · The same transfer with buttons, from the screen where your projects are
+(STORAGE-PLAN S2b). Resolve and Premiere have nothing like it: Resolve exports a `.drp` and you
+copy the media yourself.
+
+Send a project:
+
+1. In the Project Manager, click the project's tile (or right-click it and choose **Send…**), then
+   click **Send…** in the bottom bar (`projects.send`). With no tile selected it sends the project
+   that is open.
+2. In **Send Project**, pick the server under **To:** (`projects.transfer.location`) and, if you
+   like, a folder on it (click a folder to go in, **Up** to go back).
+3. Tick **Include proxies** if the other computer should play smoothly straight away, or **Leave
+   out unused media** to keep the package small (the parts of clips the timelines don't use stay
+   behind). **Size: about …** shows what will be sent with those choices.
+4. Click **Send** (`projects.transfer.ok`). The bar shows how much has gone and about how long is
+   left; **Cancel** stops it (sending again starts over). It ends with "Sent: <name> to <server>".
+
+Receive a project:
+
+1. Click **Receive…** in the bottom bar (`projects.receive`), or open the sidebar (☰) and click the
+   server under **Remote** (`projects.sidebar.remote.<id>`).
+2. Packages are listed newest first with their size and date. Click the one you want, then
+   **Receive** (`projects.transfer.ok`).
+3. It downloads (a stopped download continues where it got to the next time), is checked against
+   its manifest and is imported with every clip relinked into the folder the Project Manager is
+   showing. The new project's tile is selected: double-click it to open it.
+
+No server yet? **Manage Locations…** (in the window, or at the bottom of the sidebar's **Remote**
+group, `projects.manageLocations`) opens the same list as Settings ▸ Remote Locations: add a
+server with its kind, address, user name, folder and password, **Test** it, or **Remove** it.
+
+Differs from Resolve: Resolve's Project Manager can only export / import `.drp` files (without
+media) or work with a shared project library database; here the whole project travels with its
+media, through a plain file server.
+
+Still to come: uploading without a local copy when the disk is nearly full.
+
+## Send to a computer nearby
+
+> id: network-storage.nearby | does: sends a whole project straight to another computer on the same network, with no server and no account | resolve: (none: Resolve exports a .drp and you copy the media yourself) | premiere: (none: Premiere cannot send a project to another computer) | when: your other computer, or a colleague's, is on the same Wi-Fi or office network and you have no server | see: network-storage.send-receive
+
+**[Fork]** · The same package as above, but it goes directly from one computer to the other.
+You need no server and no account. Both computers must be on the same network (home Wi-Fi or an
+office LAN).
+
+Send a project to a computer nearby:
+
+1. On the receiving computer, open the Project Manager, click **Receive…** (`projects.receive`) and
+   choose **Receive from a nearby computer** (`projects.transfer.nearby`). It shows a code such as
+   `7-velvet-river-lamp`. The code works for 10 minutes and for one transfer.
+2. On the sending computer, select the project's tile and click **Send…** (`projects.send`), then
+   choose **Nearby computer** (`projects.transfer.nearby`).
+3. Type the code into **Code:** (`projects.transfer.code`). Or click **Find**
+   (`projects.transfer.find`), click the computer in the list of computers waiting (that fills in
+   its address and the code's number), then type the three words. Click **Send**
+   (`projects.transfer.ok`).
+4. The receiving computer asks "<computer> wants to send <package> (<size>)". Click **Accept**
+   (`projects.transfer.accept`), or **Decline** (`projects.transfer.decline`) if you were not
+   expecting it. Nothing is written to disk before you accept.
+5. Both computers show progress. When it finishes, the package is checked against its manifest and
+   imported into the folder the Project Manager is showing, with every clip relinked. The new
+   project's tile is selected: double-click it to open it.
+
+Why a code, and why it looks like that. The number at the start only finds the right computer on
+the network. The three words are a secret that proves the person sending is the person who saw the
+screen. Someone watching the network cannot work the words out from what they see, and cannot
+guess them by trying: after a wrong try the receiver throws the code away and shows a new one
+("Someone tried a wrong code. Here is a new one."). Everything that travels is encrypted.
+
+When the other computer is not found:
+
+- Some networks stop computers from finding each other: guest Wi-Fi, some routers and access
+  points. Type the receiver's address instead: the receive window shows it as `address:port`
+  (for example `<lan-address>:51234`). Type it into **Address:** (`projects.transfer.address`) under the code, or click **Find** (`projects.transfer.find`) to list the computers waiting to receive and pick one (`projects.transfer.receiver.<n>`).
+- A firewall may be in the way. Windows Defender Firewall may ask to allow Revolution: allow it on
+  **private networks**. macOS asks once. On Linux with firewalld, open the receiving port with
+  `sudo firewall-cmd --add-port=<port>/tcp` (a fixed port is easier to open than a changing one: Settings ▸ Remote Locations ▸ **Port for receiving from a nearby computer**, `remote.nearbyPort`; 0 = any free port)
+  and, for finding computers automatically, `sudo firewall-cmd --add-port=47820/udp`.
+
+If the connection drops, send again with the same code within the 10 minutes: the transfer
+**continues where it stopped**. After 10 minutes the code expires; make a new one.
+
+For scripts and agents (all commands are in the engine; each returns JSON):
+
+- `nearby.receive` (`{}`): starts waiting and replies at once with the `code`, the `port` and any
+  `warnings` (discovery that couldn't start); a job waits for the sender.
+- `nearby.wait` (`{"accept": true, "folder": "In"}`): blocks until that receive ends, accepting the
+  offer automatically, then imports the project (unattended receive: run it right after
+  `nearby.receive`). Without `"accept"` someone answers with `nearby.accept`.
+- `nearby.send` (`{"code": "7-velvet-river-lamp", "path": "<project>.fcproj"}`): packages and sends
+  (a `.revpkg` goes as it is). Add `"address": "<lan-address>:51234"` when discovery can't find
+  the receiver; `proxies` / `trim` as for packages; `"wait": true` blocks until it is sent.
+- `nearby.list`: the computers currently waiting to receive (`channel` and `address`).
+- `nearby.status`: the code, port, an offer waiting for an answer (computer, package, size) and
+  the latest note. Progress is in the job list, as for every transfer.
+- `nearby.accept` / `nearby.decline`: answer the offer (no answer within two minutes declines).
+- `nearby.stop`: stop waiting or receiving.
+
+Differs from Resolve and Premiere: neither can send a project to another computer directly. Resolve
+exports a `.drp` (no media) or needs a shared project server; Premiere copies to a folder.
 
 ## Projects on a remote location: open, save, locks
 

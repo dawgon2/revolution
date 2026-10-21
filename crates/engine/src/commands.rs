@@ -854,6 +854,12 @@ fn edit_at_source(s: &mut Session, insert: bool) -> Result<Value> {
     let seq = s.active_sequence().ok_or(EngineError::NoSequence)?;
     // Three-point editing: sequence In wins over the playhead.
     let at = seq.mark_in.unwrap_or(s.playhead());
+    edit_item_at(s, item, range, at, insert)
+}
+
+/// Insert or overwrite `range` of `item` at `at` on the destination tracks (source patching),
+/// honouring split-edit source ranges; moves the playhead to the end of the edit. One undo step.
+pub(crate) fn edit_item_at(s: &mut Session, item: ItemId, range: TimeRange, at: Tick, insert: bool) -> Result<Value> {
     let tg = s.targeting();
     let label = if insert { "Insert" } else { "Overwrite" };
     // split points: each channel takes its own range, offset by the difference of the In points
@@ -3023,8 +3029,10 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::essential_sound::commands());
     v.extend(crate::color::commands());
     v.extend(crate::grade::commands());
+    v.extend(crate::grade_graph::commands());
     v.extend(crate::comp::commands());
     v.extend(crate::grade_tools::commands());
+    v.extend(crate::coach_reference::commands());
     v.extend(crate::tnr::commands());
     v.extend(crate::ai_explain::commands());
     v.extend(crate::stills::commands());
@@ -3066,6 +3074,8 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::remote::commands());
     v.extend(crate::remote_project::commands());
     v.extend(crate::remote_transfer::commands());
+    v.extend(crate::resolve_edit::commands());
+    v.extend(crate::nearby::commands());
     // Edit ▸ Label ▸ <colour>, Paste Attributes, subclips, Video / Audio Options, Replace With Clip…
     // and their menu order
     crate::clip_ops::apply_layout(&mut v);

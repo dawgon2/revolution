@@ -63,7 +63,7 @@ fn session_id() -> String {
     .clone()
 }
 
-fn machine_name() -> String {
+pub(crate) fn machine_name() -> String {
     std::fs::read_to_string("/etc/hostname")
         .ok()
         .map(|s| s.trim().to_string())

@@ -73,6 +73,7 @@ pub(crate) fn tnr_rows(
             max,
             // (whole frames for the temporal radius)
             step: if key == "frames" { 1.0 } else { 0.0 },
+            suffix: "",
             enabled: true,
             animated: Some(animated(&tnr, key)),
             id,

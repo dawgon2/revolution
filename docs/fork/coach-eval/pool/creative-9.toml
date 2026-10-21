@@ -119,8 +119,8 @@ id = "pool-cr9-war-resolve"
 kind = "creative"
 family = "gritty-war-look"
 q = "bleach bypass with a layer mixer like in resolve?"
-sources = ["practice.looks.bleach-bypass", "color.nodes.later"]
-must = ["no layer mixer node yet (planned)", "workaround: the look node with lower saturation and more contrast, or a desaturated duplicate track with Overlay blend"]
+sources = ["practice.looks.bleach-bypass", "color.nodes.layer"]
+must = ["a layer node (Add Layer Node, grade.addLayer) with a desaturated, high-contrast look at part opacity", "or the look node with lower saturation and more contrast, or a desaturated duplicate track with Overlay blend"]
 must_not = []
 style = "resolve-words"
 

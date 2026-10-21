@@ -33,19 +33,19 @@ must_not = []
 
 [[question]]
 id = "adv-parallel-nodes"
-kind = "gap"
+kind = "tool"
 q = "how do I add a parallel node like in Resolve?"
-sources = ["practice.node-trees.parallel", "color.nodes.later"]
-must = ["not available yet", "a workaround: order the qualifier earlier"]
-must_not = ["invents a parallel-node button or command"]
+sources = ["color.nodes.parallel", "practice.node-trees.parallel"]
+must = ["Add Parallel Node (grade.addParallel) in the canvas menu", "the mixer blends the branches 50 / 50 by default"]
+must_not = ["says parallel nodes are missing"]
 
 [[question]]
 id = "adv-outside-node"
-kind = "gap"
+kind = "tool"
 q = "I want to grade the background but not the face. Is there an outside node?"
-sources = ["practice.node-trees.outside", "color.secondaries.windows"]
-must = ["no outside node yet", "invert the window or qualifier on a second node"]
-must_not = ["invents an outside-node command"]
+sources = ["color.nodes.outside", "practice.node-trees.outside"]
+must = ["Add Outside Node (grade.addOutside) after the node that selects the face", "it works on everything outside that selection"]
+must_not = ["says there is no outside node"]
 
 [[question]]
 id = "adv-shared-look"

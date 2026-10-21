@@ -299,6 +299,9 @@ pub enum FxOp {
     /// A user WGSL shader effect (fork Y3.4, ADR 0006): runs on the GPU only; the CPU leaves the
     /// image as it is.
     User(Box<UserOp>),
+    /// A branched colour grade (fork C2): passes on texture slots, run on the CPU by
+    /// [`crate::grade::execute_graph_cpu`]. Built by `grade::compile_fx`, never from an effect.
+    GradeGraph(std::sync::Arc<crate::grade::GradeProgram>),
 }
 
 /// Most parameter slots a user effect's uniform holds (`filmcraft_usershader::MAX_PARAMS`).
@@ -463,7 +466,7 @@ pub const GPU_MASK_POINTS: usize = 1 << 16;
 pub const GPU_MASKS: usize = 64;
 
 /// Whether the mask shader can take `masks` (finite, within the limits).
-fn masks_ok(masks: &[crate::mask::FlatMask]) -> bool {
+pub(crate) fn masks_ok(masks: &[crate::mask::FlatMask]) -> bool {
     let active = masks.iter().filter(|m| m.mode != filmcraft_project::MaskMode::None);
     active.clone().count() <= GPU_MASKS
         && active.clone().map(|m| m.pts.len()).sum::<usize>() <= GPU_MASK_POINTS
@@ -898,6 +901,8 @@ impl FxOp {
             FxOp::Vignette { amount, midpoint, roundness, feather, target } => fin(&[*amount, *midpoint, *roundness, *feather]) && fin(target),
             FxOp::VideoLimiter { max, comp, axis, warning_color, .. } => *axis <= 3 && max.is_finite() && comp.is_finite() && fin(warning_color),
             FxOp::User(u) => u.pv.len() <= USER_PARAM_SLOTS && u.pv.iter().all(|v| fin(v)) && u.time.is_finite(),
+            // (fork C2 lane 3: `crates/gpu` runs the passes; what it can't take renders on the CPU)
+            FxOp::GradeGraph(p) => p.gpu_ok(),
             // (`denoise::params` turns any values into finite constants, as the CPU does)
             FxOp::Denoise { .. } => true,
             // (the GPU draws source frames only; flows are checked by `tnr::select` on both)
@@ -1258,6 +1263,7 @@ impl FxOp {
             }
             // (GPU only, ADR 0006: the CPU leaves the image as it is)
             FxOp::User(_) => {}
+            FxOp::GradeGraph(p) => *img = crate::grade::execute_graph_cpu(p, img),
             FxOp::VideoLimiter { max, comp, axis, warn, warning_color } => {
                 let (max, comp, axis, warn, wc) = (*max, *comp, *axis, *warn, *warning_color);
                 if !max.is_finite() || !comp.is_finite() || !wc.iter().all(|c| c.is_finite()) {

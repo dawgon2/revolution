@@ -160,8 +160,6 @@ fn main() -> eframe::Result {
         }
     }
     app_nap::disable();
-    #[cfg(target_os = "linux")]
-    dev_icon::ensure_dev_desktop_entry();
     // Panics anywhere go to <state dir>/Logs/crash-<day>.log with a backtrace; the UI pass and
     // frame workers catch them and keep running (see filmcraft_ui_egui::crash).
     filmcraft_ui_egui::crash::install(log_dir);
@@ -171,6 +169,9 @@ fn main() -> eframe::Result {
     // The preferences as saved (the session loads them again; these choose how the window opens)
     let prefs = data_dir.clone().or_else(default_data_dir).map(|d| filmcraft_engine::autosave::Preferences::load(&d.join("preferences.json")));
     let prefs = prefs.unwrap_or_default();
+    // the app-menu entry and taskbar icon for a run no package installed (portable tarball)
+    #[cfg(target_os = "linux")]
+    dev_icon::ensure_dev_desktop_entry(&prefs.appearance.app_icon, control_port.is_some());
     // Settings ▸ Playback ▸ Graphics device (L2.6): VA-API decodes on the chosen GPU first, so
     // decoded frames are drawn in place on it (a frame from another GPU is copied instead); export
     // devices follow the same choice (fork XPS a)

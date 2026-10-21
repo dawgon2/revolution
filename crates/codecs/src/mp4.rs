@@ -274,6 +274,12 @@ impl Mp4Source {
                 has_alpha: matches!(&entry.codec, CodecConfig::Apv(a) if a.chroma_format_idc == 4),
                 bitrate,
                 hdr: entry.video.as_ref().and_then(|v| hdr_metadata(v.mastering_display.as_ref(), v.content_light)),
+                // Fujifilm says F-Log / F-Log2 only in its maker note; a PQ / HLG stream tag still wins.
+                camera_color_space: file
+                    .metadata
+                    .binary(b"MVTG")
+                    .and_then(crate::camera_log::fujifilm_mvtg)
+                    .filter(|_| color.transfer == filmcraft_color::Transfer::Bt709),
             };
             if rotation % 2 == 1 {
                 (info.width, info.height) = (info.height, info.width);

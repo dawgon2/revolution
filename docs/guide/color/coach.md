@@ -101,6 +101,11 @@ Hints you have seen are remembered the same way (`color.coach.hintsSeen`, see be
 | `log-noise` | Clean up noise in log shadows | Noise reduction first, then lift the shadows, and compare. |
 | `first-comp` | A moving title in a comp | Text, Transform, Merge and Media Out in the Compositor (see [the Compositor](../compositor.md)). |
 | `key-comp` | Key a clip over a new background in a comp | Media In, Key, Solid, Merge and Color: a keyed clip over a new background, graded as one picture. |
+| `parallel-nodes` | Two corrections on the same picture (parallel nodes) | Add a parallel node so two nodes work on the same image, and see how a mixer blends them (see [nodes](nodes.md)). |
+| `layer-look` | A look on a layer, mixed in at part strength | A base grade, a layer node on top with the look, and its opacity and blend mode. |
+| `splitter-combiner` | Grade the red, green and blue channels separately | Split a picture into channel nodes, correct the blue one, combine them again. |
+| `outside-node` | Grade everything except the selection (outside node) | Pick skin with a qualifier, then grade everything outside it with an outside node. |
+| `key-mixer` | Combine two selections (key mixer) | Two qualifiers, a key mixer that combines them, and a node limited by the result. |
 
 ## Context hints
 
@@ -251,7 +256,7 @@ expect = { command = ["grade.addNode", "grade.insertNode"] }
 
 ## Also ask the assistant
 
-> id: color.coach.assistant | does: adds an answer written by a small language model on this computer, checked against the guide | ui: coach.ask.assistant, coach.ask.assistStop | cmd: coach.assist, coach.assistResult, coach.assistForget | when: the guide's steps don't quite fit your question | see: color.coach.ask
+> id: color.coach.assistant | does: adds an answer written by a small language model on this computer, checked against the guide | ui: coach.ask.assistant, coach.ask.assistStop | cmd: coach.assist, coach.assistResult, coach.assistForget | when: the guide's steps don't quite fit your question; how long a picture look takes on built-in graphics | see: color.coach.ask
 
 **[Fork]**
 

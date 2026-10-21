@@ -14,7 +14,7 @@ shot as a **still**, compare the next shot against it, then reuse or adjust the 
 
 ## Stills gallery
 
-> id: color.matching.stills | does: the Gallery holds still pictures of frames with their grades | ui: stills.grab, stills.delete | cmd: stills.grab, stills.apply, stills.label, stills.delete | resolve: Gallery stills | premiere: — (Comparison View reference) | when: keeping a reference look | see: color.matching.compare
+> id: color.matching.stills | does: the Gallery holds still pictures of frames with their grades | ui: stills.grab, stills.delete | cmd: stills.grab, stills.apply, stills.label, stills.delete | resolve: Gallery stills | premiere: — (Comparison View reference) | when: keeping a reference look; putting a still's grade onto other clips | see: color.matching.compare
 
 **[Resolve-style]**
 
@@ -26,6 +26,7 @@ Program frame plus the grade that made it, saved in the project.
 | **Grab Still** | {ui:stills.grab} | `stills.grab` | saves the frame under the playhead and its clip's grade |
 | click a thumbnail | `stills.item.<id>` | `compare.set` | chooses it as the reference and starts the comparison (Wipe, or Split if Split was on) |
 | double-click a thumbnail | | `stills.apply` | gives its grade to the selected clips |
+| **Import…** | {ui:stills.import} | `stills.import` | brings in a reference picture from a file (see below) |
 | **Delete** | {ui:stills.delete} | `stills.delete` | removes the selected still |
 | **Off / Wipe / Split** | {ui:stills.mode.off} {ui:stills.mode.wipe} {ui:stills.mode.split} | `compare.set` | the comparison mode (Wipe and Split need a chosen still) |
 
@@ -135,7 +136,8 @@ an ordinary node, you can see exactly what it did, adjust it, or switch it off.
 
 ### Steps
 
-1. Choose the **Reference** clip in the **Match** tab.
+1. Choose the **Reference** in the **Match** tab: another clip, or a Gallery still (a grabbed
+   frame or an imported reference picture, `"still": <id>`).
 2. Click **Shot Match** {ui:grade.match.shotMatch} (`grade.shotMatch`). A node labelled
    "Shot Match" is added at the end of the grade (one undo step); skin tones are weighted less
    so a colour cast on faces doesn't drive the match (`"faceDetection": false` turns that off).
@@ -154,7 +156,7 @@ adjustment).
 
 ## The node explainer
 
-> id: color.matching.explainer | does: measures what each node actually does to the picture and says it in words | ui: grade.match.explainGrade, grade.match.explainNode | cmd: grade.explainGrade, grade.explainNode | resolve: — | premiere: — | when: reading someone else's grade, or your own later | see: color.matching.ai
+> id: color.matching.explainer | does: measures what each node actually does to the picture and says it in words | ui: grade.match.explainGrade, grade.match.explainNode | cmd: grade.explainGrade, grade.explainNode | resolve: — | premiere: — | when: reading someone else's grade, or your own later; seeing where in the frame a node is doing its work | see: color.matching.ai
 
 **[Fork]**
 

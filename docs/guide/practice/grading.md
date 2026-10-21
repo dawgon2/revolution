@@ -160,7 +160,7 @@ fits and what can go wrong.
 
 ## Put the look on its own node, and mix it in
 
-> id: practice.grading.look-node | does: keeps the creative look (curves, split tones, a LUT) on a late node so it can be dialled up or down for every shot | resolve: look node or LUT node after the correction nodes, Key Output gain | premiere: Lumetri Creative ▸ Look with Intensity | when: a consistent look across a whole film | see: color.finishing.lut, color.nodes.starter-tree
+> id: practice.grading.look-node | does: keeps the creative look (curves, split tones, a LUT) on a late node so it can be dialled up or down for every shot | resolve: look node or LUT node after the correction nodes, Key Output gain | premiere: Lumetri Creative ▸ Look with Intensity | when: a consistent look across a whole film; dialling a look down to 60% on a couple of shots | see: color.finishing.lut, color.nodes.starter-tree
 
 **[Standard]**
 

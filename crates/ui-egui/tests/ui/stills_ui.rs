@@ -34,6 +34,10 @@ impl Driver {
         d
     }
 
+    fn app(&mut self) -> &mut FilmcraftApp {
+        self.harness.state_mut()
+    }
+
     fn frames(&mut self, n: usize) {
         for _ in 0..n {
             let ctx = self.harness.ctx.clone();
@@ -184,4 +188,61 @@ fn gallery_click_selects_for_compare_and_double_click_applies_the_grade() {
     d.frames(3);
     let g = d.exec("grade.get", json!({"clip": b}));
     assert_eq!(g["grade"]["nodes"].as_array().map(Vec::len), Some(1), "{g}");
+}
+
+#[derive(Debug)]
+struct OsFile(std::path::PathBuf);
+
+impl egui::DroppedFile for OsFile {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
+/// A reference picture (REF.1) in a scratch folder.
+fn reference_png(tag: &str) -> String {
+    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("fc-stills-ui-{tag}-{}-{n:x}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join(format!("{tag}.png"));
+    image::RgbaImage::from_fn(320, 180, |x, _| image::Rgba([40, 90, 100 + (x % 60) as u8, 255])).save(&p).unwrap();
+    p.to_string_lossy().into_owned()
+}
+
+#[test]
+fn import_button_and_dropping_on_the_gallery_bring_in_reference_pictures() {
+    let mut d = Driver::demo();
+    d.ok("ui.menu.invoke", json!({"id": "window.workspace.colorgrading", "params": {}}));
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.gallery", "params": {}}));
+    d.frames(4);
+    let picked = reference_png("ref-button");
+    d.app().hooks.pick_files = Some(Box::new(move |_| vec![picked.clone()]));
+    assert!(d.element("stills.import").is_some(), "the Gallery has an Import… button: {:?}", d.ids("stills"));
+    d.click("stills.import");
+    d.frames(4);
+    let list = d.exec("stills.list", json!({}));
+    let rows = list["stills"].as_array().unwrap().clone();
+    assert_eq!(rows.len(), 1, "{list}");
+    assert_eq!((rows[0]["reference"].clone(), rows[0]["label"].clone()), (json!(true), json!("ref-button")), "{list}");
+    let id = format!("stills.item.{}", rows[0]["id"]);
+    let r = d.element(&id).unwrap_or_else(|| panic!("the gallery shows the reference: {:?}", d.ids("stills")));
+    // a picture dropped on the Gallery becomes another reference still (not a clip in the project)
+    let clips_before = d.app().session.project.items.len();
+    let (cx, cy) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(cx, cy)));
+    d.frames(1);
+    let dropped = reference_png("ref-drop");
+    d.harness.input_mut().dropped_files.push(std::sync::Arc::new(OsFile(dropped.into())));
+    d.frames(1);
+    d.harness.input_mut().dropped_files.clear();
+    d.frames(2);
+    let list = d.exec("stills.list", json!({}));
+    assert_eq!(list["stills"].as_array().map(Vec::len), Some(2), "{list}");
+    assert_eq!(list["stills"][1]["label"], json!("ref-drop"), "{list}");
+    assert_eq!(d.app().session.project.items.len(), clips_before, "nothing imported as media");
+    d.snapshot("gallery-reference-pictures", Some("stills"));
 }

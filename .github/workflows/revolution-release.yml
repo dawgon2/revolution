@@ -328,18 +328,43 @@ jobs:
         run: |
           # The FHS tarball only feeds the Flatpak job; users get the portable one.
           rm -f -- *-fhs.tar.gz
+          # Every release carries the full set (FORK-PLAN §1a.107, §1a.115): refuse to publish without one.
+          v="${TAG}"
+          missing=()
+          for f in "$v-linux-x86_64.tar.gz" "$v-linux-x86_64.AppImage" "$v-linux-x86_64.deb" "$v-linux-x86_64.rpm" \
+                   "$v-linux-x86_64.flatpak" "$v-linux-aarch64.tar.gz" "$v-linux-aarch64.AppImage" "$v-linux-aarch64.deb" \
+                   "$v-linux-aarch64.rpm" "$v-linux-aarch64.flatpak" "$v-windows-x64.msi" "$v-windows-x64-portable.zip" \
+                   "$v-windows-arm64.msi" "$v-windows-arm64-portable.zip"; do
+            [ -s "$f" ] || missing+=("$f")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then echo "::error::missing release files: ${missing[*]}"; exit 1; fi
           sha256sum -- * | tee SHA256SUMS
       - name: Create the release, or add the assets to it
         working-directory: artifacts
         run: |
           gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null || { echo "::error::tag $TAG does not exist"; exit 1; }
           notes="../docs/fork/releases/$TAG.md"
+          # GitHub folds the asset list after 10 files (alphabetical, so ARM first): the notes start
+          # with direct links, the usual x86_64 downloads first (FORK-PLAN §1a.115).
+          base="https://github.com/$GH_REPO/releases/download/$TAG"
+          {
+            echo "## Download"
+            echo
+            echo "**Linux (most PCs, x86_64):** [portable .tar.gz]($base/$TAG-linux-x86_64.tar.gz) · [AppImage]($base/$TAG-linux-x86_64.AppImage) · [.deb]($base/$TAG-linux-x86_64.deb) · [.rpm]($base/$TAG-linux-x86_64.rpm) · [Flatpak]($base/$TAG-linux-x86_64.flatpak)"
+            echo
+            echo "**Windows (x64):** [installer .msi]($base/$TAG-windows-x64.msi) · [portable .zip]($base/$TAG-windows-x64-portable.zip)"
+            echo
+            echo "**ARM:** Linux aarch64 [.tar.gz]($base/$TAG-linux-aarch64.tar.gz) · [AppImage]($base/$TAG-linux-aarch64.AppImage) · [.deb]($base/$TAG-linux-aarch64.deb) · [.rpm]($base/$TAG-linux-aarch64.rpm) · [Flatpak]($base/$TAG-linux-aarch64.flatpak); Windows arm64 [.msi]($base/$TAG-windows-arm64.msi) · [.zip]($base/$TAG-windows-arm64-portable.zip)"
+            echo
+            echo "Checksums: [SHA256SUMS]($base/SHA256SUMS)"
+            echo
+            if [ -f "$notes" ]; then cat "$notes"; else echo "Revolution ${TAG#revolution-}"; fi
+          } > ../release-notes.md
+          notes=../release-notes.md
           pre=(); if [ "$PRERELEASE" = true ]; then pre=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" --clobber -- *
           elif [ -f "$notes" ]; then
             gh release create "$TAG" --verify-tag "${pre[@]}" --title "Revolution ${TAG#revolution-}" --notes-file "$notes" -- *
-          else
-            gh release create "$TAG" --verify-tag "${pre[@]}" --title "Revolution ${TAG#revolution-}" --notes "Revolution ${TAG#revolution-}" -- *
           fi
           { echo "Release **$TAG**:"; echo; sed 's/^/    /' SHA256SUMS; } >>"$GITHUB_STEP_SUMMARY"

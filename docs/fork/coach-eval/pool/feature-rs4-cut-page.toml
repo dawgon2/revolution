@@ -1,0 +1,140 @@
+# FEATURE-POOL batch feature-rs4-cut-page (FEATURE-QUEUE row "RS4 Cut page (Resolve workflow): media pool + viewer
+# over a dual timeline; six fast edits from the media pool selection; tools column").
+# Source: pages.md (pages.cut, with pages.what and pages.panels for where the page sits). The fast-edit commands
+# are also the RS4.1 row (editing.resolve-edits), which gets its own batch: these questions stay on the Cut
+# page's buttons, timelines and tools column.
+# Held-out test questions, written from the guide's text only (README.md beside this file). pages.cut doesn't say
+# how many tracks the Cut timeline shows, so nothing asks that (Close Up's 150 % is in editing.resolve-edits: the RS4.1 batch).
+# No creative family (a page layout is not a creative goal). No recipe spot check: the Dell's app build predates RS4
+# and 10 pairs is under the 1-in-20 rate; the button → command mapping was checked in cut_page.rs instead.
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-cut-open"
+kind = "tool"
+q = "Where is the Cut page and is there a key for it?"
+sources = ["pages.cut", "pages.what"]
+must = ["click Cut in the page bar along the bottom (command page.cut)", "with the DaVinci Resolve Compatible keys, Shift+3"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-cut-greyed"
+kind = "tool"
+q = "the edit buttons on the cut page are all grey, why"
+sources = ["pages.cut"]
+must = ["nothing is selected in the media pool: select a clip there and the buttons work"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-cut-smart-insert"
+kind = "tool"
+q = "On the Cut page, what does Smart Insert do differently from a normal insert at the playhead?"
+sources = ["pages.cut"]
+must = ["inserts the clip at the cut nearest the playhead", "so you never split a shot by accident"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-cut-ripple-overwrite"
+kind = "tool"
+q = "I want to swap the shot under the playhead for a longer take without leaving a gap or covering the next shot. Which Cut page button?"
+sources = ["pages.cut"]
+must = ["Ripple Overwrite (edit.rippleOverwrite)", "replaces the clip under the playhead and closes up or opens the difference in length"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-cut-cutaway"
+kind = "tool"
+q = "How do I drop a B-roll cutaway over the interview from the Cut page?"
+sources = ["pages.cut"]
+must = ["select the B-roll in the media pool, park the playhead, click Place on Top (edit.placeOnTop)", "it goes on the track above at the playhead"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-cut-close-up"
+kind = "tool"
+q = "Resolve's Close Up edit on the Cut page: does Revolution have it and what does it do?"
+sources = ["pages.cut"]
+must = ["yes: Close Up (edit.closeUp) puts the clip on the track above at the playhead, scaled in for a closer framing"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-cut-source-overwrite"
+kind = "tool"
+q = "Two cameras recorded the concert with matching timecode. Which Cut page edit lines the second angle up with the first?"
+sources = ["pages.cut"]
+must = ["Source Overwrite (edit.sourceOverwrite)", "puts the clip on the track above lined up by source timecode with the clip under the playhead"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-cut-dual-timeline"
+kind = "tool"
+q = "Why are there two timelines on the Cut page?"
+sources = ["pages.cut"]
+must = ["the upper one shows the whole timeline so you always know where you are in the story", "the lower one is zoomed in with the playhead fixed in the middle and the edit moving under it, so trimming near the playhead needs no zooming or scrolling"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-cut-blade"
+kind = "tool"
+q = "where's the razor on the cut page? i just want to split the clip at the playhead"
+sources = ["pages.cut"]
+must = ["Cut at the playhead, in the tools on the left of the upper timeline (sequence.addEdit)"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-cut-trim-tool"
+kind = "tool"
+q = "On the Cut page, if I drag the end of a clip with the Trim tool, does the rest of the edit move?"
+sources = ["pages.cut"]
+must = ["yes: with Trim, dragging an edge ripples the rest"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-cut-undo"
+kind = "tool"
+q = "I hit Append three times by mistake on the Cut page. Do I have to undo on the Edit page?"
+sources = ["pages.cut"]
+must = ["each fast edit is one undo step", "every page shares the same timeline and undo history, so undo works from either page"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-cut-vs-edit"
+kind = "approach"
+q = "I come from Premiere. Should I cut on the Cut page or the Edit page?"
+sources = ["pages.cut"]
+must = ["there is no right answer: many rough-cut on the Cut page and refine on the Edit page, others stay on one", "Cut page: speed and the overview (no Source Viewer, fewer tracks shown, no track keyframes)", "Edit page: control (In / Out in the Source Viewer, patching and targeting, keyframes, captions)"]
+must_not = ["you must use the Cut page"]
+style = "pro"
+
+[[question]]
+id = "feat-cut-sync-bin"
+kind = "gap"
+q = "Where's the Sync Bin on the Cut page? I use it for multicam in Resolve."
+sources = ["pages.what", "pages.cut"]
+must = ["Sync Bin isn't there yet (nor source tape, the boring detector or the Cut page's trim / transition / title bars)", "Source Overwrite lines angles up by matching timecode"]
+must_not = []
+style = "pro"
+
+# ---------- keyword-coach format ----------
+
+[[coach]]
+id = "feat-cut-c-fast-edits"
+kind = "how"
+q = "how do I build a quick first cut on the cut page"
+origin = "agent"
+page = "pages.md"
+heading = "The Cut page: fast edits on a dual timeline"
+status = "covered"
+facts = ["Append", "media pool"]

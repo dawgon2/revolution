@@ -1,0 +1,119 @@
+# FEATURE-POOL batch feature-rs4-resolve-edits (FEATURE-QUEUE row "RS4.1 Resolve edit commands (Sequence ▸ Resolve
+# Edit): insert / overwrite / replace / place on top / append / ripple overwrite / fit to fill / smart insert /
+# close up / source overwrite, optional `clip` param, Resolve keys F9–F12, Shift+F10–F12").
+# Source: editing.md (editing.resolve-edits, with editing.three-point for marking). The Cut page's buttons are in
+# feature-rs4-cut-page and the Edit page toolbar in feature-rs4-edit-toolbar; these questions are about what each
+# command does, its key and the record point.
+# Held-out test questions, written from the guide's text only (README.md beside this file). The guide doesn't name
+# the Sequence ▸ Resolve Edit menu, so nothing asks where the commands are in the menus.
+# No creative family. No recipe spot check: the Dell's app build predates RS4.1.
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-re-fit-to-fill"
+kind = "tool"
+q = "I have a 3-second hole between two shots and a 5-second shot I want squeezed into it exactly. Does Revolution have Resolve's Fit to Fill?"
+sources = ["editing.resolve-edits"]
+must = ["yes: edit.fitToFill (Shift+F11)", "needs a timeline In and Out", "changes the clip's speed so the whole marked source fills them"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-re-replace-frame"
+kind = "tool"
+q = "When I Replace a clip with F11, which frame of the new clip lands where, and how long is it?"
+sources = ["editing.resolve-edits"]
+must = ["the Source monitor frame is lined up with the timeline playhead", "the new clip is as long as the old one, or shorter if the media runs out"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-re-place-on-top-track"
+kind = "tool"
+q = "Place on Top: if V2 and V3 already have clips at that spot, which track does the new one go on?"
+sources = ["editing.resolve-edits"]
+must = ["the track above the highest one that has a clip at the record point", "a track is added when needed"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-re-record-point"
+kind = "tool"
+q = "Do the Resolve-style edits go to my playhead or to the In mark on the timeline?"
+sources = ["editing.resolve-edits"]
+must = ["the timeline In mark when there is one, otherwise the playhead"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-re-f11-fullscreen"
+kind = "tool"
+q = "f11 doesnt go full screen anymore with resolve keys, it replaced my clip instead??"
+sources = ["editing.resolve-edits"]
+must = ["in the Resolve key preset F11 is Replace", "full screen there is Ctrl+backtick"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-re-append-key"
+kind = "tool"
+q = "resolve keys: what's the shortcut to append the source clip to the end of the timeline"
+sources = ["editing.resolve-edits"]
+must = ["Shift+F12 (edit.append)"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-re-replace-vs-ripple"
+kind = "tool"
+q = "What's the practical difference between Replace and Ripple Overwrite in Revolution?"
+sources = ["editing.resolve-edits"]
+must = ["Replace keeps the old clip's length (or shorter if the media runs out)", "Ripple Overwrite swaps in the whole source and moves everything after it by the difference in length"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-re-clip-param"
+kind = "tool"
+q = "Can a script run edit.insert on a Media Pool item without opening it in the Source monitor first?"
+sources = ["editing.resolve-edits"]
+must = ["yes: each command takes an optional clip parameter (a project item id)"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-re-source-overwrite-msg"
+kind = "tool"
+q = "Source Overwrite just showed a message and didn't add anything. What's wrong?"
+sources = ["editing.resolve-edits"]
+must = ["it stops with a message when the source's timecode doesn't overlap the timecode of the clip under the playhead"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-re-close-up-amount"
+kind = "tool"
+q = "How far does Close Up zoom in on the clip?"
+sources = ["editing.resolve-edits"]
+must = ["150%", "on the track above at the playhead"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-re-destination"
+kind = "tool"
+q = "Which tracks do F9 and F10 edits land on in the Resolve workflow?"
+sources = ["editing.resolve-edits", "editing.three-point"]
+must = ["the destination tracks patched (targeted) in the track headers"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-re-premiere-words"
+kind = "tool"
+q = "Coming from Premiere: what are Insert, Overwrite and Replace With Clip called in Revolution's Resolve edit set?"
+sources = ["editing.resolve-edits"]
+must = ["Insert (edit.insert, F9) and Overwrite (edit.overwrite, F10), the three-point edits", "Replace (edit.replace, F11)"]
+must_not = []
+style = "pro"
