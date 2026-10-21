@@ -184,7 +184,8 @@ fn every_bundled_lesson_parses_and_names_real_commands() {
             "layer-look",
             "splitter-combiner",
             "outside-node",
-            "key-mixer"
+            "key-mixer",
+            "track-effects"
         ]
     );
 }

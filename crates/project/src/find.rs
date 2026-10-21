@@ -120,7 +120,8 @@ pub fn column_text(p: &Project, it: &ProjectItem, column: &str) -> String {
         "media type" | "type" => it.type_label().to_string(),
         "frame rate" => {
             if it.has_video() {
-                format!("{} fps", it.frame_rate().label())
+                let vfr = if media.and_then(|m| m.vfr()).is_some() { " (VFR)" } else { "" };
+                format!("{} fps{vfr}", it.frame_rate().label())
             } else {
                 String::new()
             }

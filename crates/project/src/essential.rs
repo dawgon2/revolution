@@ -153,6 +153,9 @@ pub struct Repair {
     pub enabled: bool,
     /// Voice Isolation (the DeepFilterNet model when installed, else DeNoise), amount = wet mix.
     pub isolate: Slot,
+    /// Voice Isolation's attenuation limit, dB (100 = none; fork AUDIO-PLAN A3.6): Clean Up Voice
+    /// lowers it on mildly noisy voices so their room tone is turned down rather than removed.
+    pub isolate_limit_db: f64,
     pub noise: Slot,
     pub rumble: Slot,
     pub dehum: Slot,
@@ -167,6 +170,7 @@ impl Default for Repair {
         Repair {
             enabled: true,
             isolate: Slot::off(10.0),
+            isolate_limit_db: 100.0,
             noise: Slot::off(5.0),
             rumble: Slot::off(5.0),
             dehum: Slot::off(5.0),
@@ -427,7 +431,8 @@ impl EssentialSound {
                 push("highpass", r.enabled, &[("cutoff", f(rumble_cutoff(r.rumble.amount)))]);
             }
             if r.isolate.on {
-                push("voice_isolate", r.enabled, &[("amount", f(r.isolate.amount * 10.0))]);
+                let limit = if r.isolate_limit_db.is_finite() { r.isolate_limit_db.clamp(6.0, 100.0) } else { 100.0 };
+                push("voice_isolate", r.enabled, &[("amount", f(r.isolate.amount * 10.0)), ("limit", f(limit))]);
             }
             if r.noise.on {
                 push("denoise", r.enabled, &[("amount", f(r.noise.amount * 10.0))]);
@@ -950,6 +955,17 @@ mod tests {
         let order: Vec<&str> = fx.iter().map(|e| e.effect.as_str()).collect();
         assert_eq!(order, ["highpass", "voice_isolate", "denoise", "hard_limiter"]);
         assert_eq!(fx[1].f64_at("amount", Tick::ZERO), 80.0);
+        // A3.6: no attenuation limit unless asked for; an out-of-range one is clamped
+        assert_eq!(fx[1].f64_at("limit", Tick::ZERO), 100.0);
+        s.set("repair.isolateLimitDb", &json!(18.0)).unwrap();
+        assert_eq!(s.effects()[1].f64_at("limit", Tick::ZERO), 18.0);
+        s.set("repair.isolateLimitDb", &json!(1e300)).unwrap();
+        assert_eq!(s.effects()[1].f64_at("limit", Tick::ZERO), 100.0);
+        s.repair.isolate_limit_db = f64::NAN;
+        assert_eq!(s.effects()[1].f64_at("limit", Tick::ZERO), 100.0);
+        s.repair.isolate_limit_db = -5.0;
+        assert_eq!(s.effects()[1].f64_at("limit", Tick::ZERO), 6.0);
+        s.repair.isolate_limit_db = 100.0;
         // −1 dBTP ceiling, +6 dB clip gain after the effects, 0.5 dB inter-sample headroom
         assert_eq!(fx[3].f64_at("max", Tick::ZERO), -7.5);
         for e in &fx {
@@ -969,5 +985,6 @@ mod tests {
         let old = json!({"kind": "Dialogue", "repair": {"enabled": true}, "loudness": {"enabled": true, "gain_db": 2.0}});
         let back: EssentialSound = serde_json::from_value(old).unwrap();
         assert!(!back.repair.isolate.on && !back.loudness.limit && back.loudness.ceiling_dbtp == -1.0);
+        assert_eq!(back.repair.isolate_limit_db, 100.0, "old projects keep no limit");
     }
 }

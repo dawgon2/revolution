@@ -25,7 +25,8 @@ cleared when you open or make another project.
   there; **Paste Insert** (`edit.pasteInsert`) pushes later clips along to make room.
 - **Paste Attributes…** (`edit.pasteAttributes`) gives the selected clips the copied clip's
   effects and settings: you choose which (Motion, Opacity, Time Remapping, Volume, Panner,
-  effects). **Remove Attributes…** (`edit.removeAttributes`) takes the chosen ones off.
+  effects). **Remove Attributes…** (`edit.removeAttributes`) takes the chosen ones off: select a bunch
+  of clips first to strip their effects all at once.
 - **Duplicate** (`edit.duplicate`) copies a project item in the Project panel.
 
 ## Selecting, finding and labels

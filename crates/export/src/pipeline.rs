@@ -615,6 +615,7 @@ mod temporal_tests {
             duration: r.tick_of(FRAMES),
             video: Some(VideoStreamInfo {
                 camera_color_space: None,
+                vfr: None,
                 width: W,
                 height: H,
                 frame_rate: r,

@@ -82,13 +82,15 @@ pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "timeline.renderBar.*", "timeline.settings.thumbnails.*", "timeline.split.*", "timeline.tab.*", "timeline.tab.*.close",
     "timeline.tabs.list.*", "timeline.throughEdit.*", "timeline.toggle.*", "timeline.track.*.enabled", "timeline.track.*.keyframes",
     "timeline.track.*.keyframes.*", "timeline.track.*.keyframes.clip", "timeline.track.*.lane", "timeline.track.*.lane.kf.*",
-    "timeline.track.*.locked", "timeline.track.*.meter", "timeline.track.*.muted", "timeline.track.*.solo", "timeline.track.*.sourcePatch",
+    "timeline.track.*.fxDrop", "timeline.track.*.header", "timeline.track.*.sendTo", "timeline.track.*.sendTo.*", "timeline.track.*.locked", "timeline.track.*.meter", "timeline.track.*.muted", "timeline.track.*.solo", "timeline.track.*.sourcePatch",
     "timeline.track.*.syncLock", "timeline.track.*.target", "timeline.track.*.voiceover", "timeline.transition.*",
     "timeline.transition.*.in", "timeline.transition.*.out", "tnr.*", "tnr.*.keyframe.*", "tools.*", "tools.select.*", "view.*", "view.display.*",
     "view.magnification.*", "voiceover.input.*", "voiceover.source.*", "window.panel.*", "window.workspace.*", "workspaces.edit.row.*",
     // C2b mixer controls (panels/grade_mixer.rs): widget ids, and the parameter keys they edit
-    "grade.mixer.*.weight", "grade.mixer.*.share", "grade.mixer.*.mode", "grade.mixer.*.opacity", "grade.mixer.*.invert", "mix.gain.*", "layer.mode.*",
+    "effectControls.track.fx.*", "grade.mixer.*.weight", "grade.mixer.*.share", "grade.mixer.*.mode", "grade.mixer.*.opacity", "grade.mixer.*.invert", "mix.gain.*", "layer.mode.*",
     "layer.opacity.*", "kmix.mode.*", "kmix.invert.*",
+    // LAY.3 layout presets (panels/layout_presets.rs)
+    "layoutPresets.row.*", "window.layoutPreset.load.*",
 ];
 
 /// Whether `part` (no dots) matches a glob where `*` is one or more characters.
@@ -164,7 +166,9 @@ pub fn narrowed(id: &str) -> Option<bool> {
     }
     if let Some(k) = rest("pageBar.") {
         // (panels/pages.rs: the page bar's buttons)
-        return Some(["app", "home", "settings"].contains(&k));
+        return Some(
+            ["app", "home", "settings", "saveLayout", "saveLayout.reset", "saveLayout.original", "saveLayout.preset", "saveLayout.presets"].contains(&k),
+        );
     }
     if let Some(k) = rest("pageToolbar.") {
         // (panels/page_toolbar.rs: the pages' toolbar toggles and the project name)

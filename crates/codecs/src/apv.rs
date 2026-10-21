@@ -104,6 +104,7 @@ impl ApvSource {
             duration,
             video: Some(VideoStreamInfo {
                 camera_color_space: None,
+                vfr: None,
                 width: fh.width,
                 height: fh.height,
                 frame_rate: rate,

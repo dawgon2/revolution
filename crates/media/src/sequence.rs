@@ -144,6 +144,7 @@ impl ImageSequenceSource {
             duration: rate.tick_of(n),
             video: Some(VideoStreamInfo {
                 camera_color_space: None,
+                vfr: None,
                 width: w,
                 height: h,
                 frame_rate: rate,

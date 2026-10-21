@@ -100,30 +100,11 @@ pub(crate) fn read_wav_48k_mono(path: &std::path::Path) -> Option<Vec<f32>> {
     None
 }
 
-/// Voice isolation vs DeNoise on the A2 test set (fork AUDIO-PLAN A2.7): speech mixed with five
-/// generated noises at 0 / 5 / 10 dB SNR, scored by SI-SDR against the clean speech. DeNoise is
-/// scored at Amount 40 % (its default) and 100 %, and its better result counts.
-///
-/// Speech: the 48 kHz mono WAV files in `FILMCRAFT_EVAL_SPEECH` (real recordings: the only valid
-/// input for acceptance), else the built-in formant voices (24 kHz, upsampled), which
-/// DeepFilterNet doesn't recognise as speech: those numbers are reported but not asserted.
-/// `FILMCRAFT_DFN3_CKPT=… cargo test --release -p filmcraft-engine --features voice-isolation voice_isolation_eval -- --ignored --nocapture`
-/// (`FILMCRAFT_EVAL_OUT=<file>` also writes the table as Markdown).
-///
-/// Acceptance (decided before the first measurement, PREP-A2 §1): a clear margin is a mean SI-SDR
-/// at least 3 dB above DeNoise's over traffic, keyboard and wind at every SNR; clean speech is
-/// unharmed when Voice Isolation on noise-free speech scores at least 20 dB SI-SDR.
+/// The eval's speech at −20 dBFS RMS: the recordings in `FILMCRAFT_EVAL_SPEECH` (and that folder),
+/// else the built-in voices.
 #[cfg(feature = "voice-isolation")]
-#[test]
-#[ignore]
-fn voice_isolation_eval() {
-    use filmcraft_audio_dsp::AudioEffect;
-    use filmcraft_voice::testset::{Noise, mix_at_snr, noise, rms, si_sdr, upsample2};
-    let Some(ckpt) = std::env::var_os("FILMCRAFT_DFN3_CKPT") else {
-        eprintln!("FILMCRAFT_DFN3_CKPT unset: skipped");
-        return;
-    };
-    let w = filmcraft_voice::weights::Weights::load(std::path::Path::new(&ckpt)).unwrap();
+fn eval_speech() -> (Vec<f32>, Option<std::path::PathBuf>) {
+    use filmcraft_voice::testset::{rms, upsample2};
     let mut clean = Vec::new();
     let real = std::env::var_os("FILMCRAFT_EVAL_SPEECH").map(std::path::PathBuf::from);
     if let Some(dir) = &real {
@@ -157,6 +138,34 @@ fn voice_isolation_eval() {
     // −20 dBFS RMS.
     let k = 0.1 / rms(&clean);
     clean.iter_mut().for_each(|v| *v = (*v as f64 * k) as f32);
+    (clean, real)
+}
+
+/// Voice isolation vs DeNoise on the A2 test set (fork AUDIO-PLAN A2.7): speech mixed with five
+/// generated noises at 0 / 5 / 10 dB SNR, scored by SI-SDR against the clean speech. DeNoise is
+/// scored at Amount 40 % (its default) and 100 %, and its better result counts.
+///
+/// Speech: the 48 kHz mono WAV files in `FILMCRAFT_EVAL_SPEECH` (real recordings: the only valid
+/// input for acceptance), else the built-in formant voices (24 kHz, upsampled), which
+/// DeepFilterNet doesn't recognise as speech: those numbers are reported but not asserted.
+/// `FILMCRAFT_DFN3_CKPT=… cargo test --release -p filmcraft-engine --features voice-isolation voice_isolation_eval -- --ignored --nocapture`
+/// (`FILMCRAFT_EVAL_OUT=<file>` also writes the table as Markdown).
+///
+/// Acceptance (decided before the first measurement, PREP-A2 §1): a clear margin is a mean SI-SDR
+/// at least 3 dB above DeNoise's over traffic, keyboard and wind at every SNR; clean speech is
+/// unharmed when Voice Isolation on noise-free speech scores at least 20 dB SI-SDR.
+#[cfg(feature = "voice-isolation")]
+#[test]
+#[ignore]
+fn voice_isolation_eval() {
+    use filmcraft_audio_dsp::AudioEffect;
+    use filmcraft_voice::testset::{Noise, mix_at_snr, noise, rms, si_sdr};
+    let Some(ckpt) = std::env::var_os("FILMCRAFT_DFN3_CKPT") else {
+        eprintln!("FILMCRAFT_DFN3_CKPT unset: skipped");
+        return;
+    };
+    let w = filmcraft_voice::weights::Weights::load(std::path::Path::new(&ckpt)).unwrap();
+    let (clean, real) = eval_speech();
     let n = clean.len();
 
     fn run(fx: &mut dyn AudioEffect, x: &[f32]) -> Vec<f32> {
@@ -215,4 +224,59 @@ fn voice_isolation_eval() {
         assert!(mean >= 3.0, "non-steady noise at {snr} dB: mean margin {mean:.1} dB < 3 dB");
     }
     assert!(clean_vi >= 20.0, "clean speech SI-SDR {clean_vi:.1} dB < 20 dB");
+}
+
+/// Fork AUDIO-PLAN A3.6: Voice Isolation at several attenuation limits on the eval's speech, to
+/// pick Clean Up Voice's limits by measurement: mean SI-SDR over the five noises at 0 / 5 / 10 dB
+/// SNR and on clean speech, for each limit in `FILMCRAFT_EVAL_LIMITS` (dB, comma-separated;
+/// default 100,36,30,24,18,12). Reports only (no assertions).
+/// `FILMCRAFT_DFN3_CKPT=… FILMCRAFT_EVAL_SPEECH=… cargo test --release -p filmcraft-engine --features voice-isolation voice_isolation_limit_sweep -- --ignored --nocapture`
+#[cfg(feature = "voice-isolation")]
+#[test]
+#[ignore]
+fn voice_isolation_limit_sweep() {
+    use filmcraft_audio_dsp::AudioEffect;
+    use filmcraft_voice::testset::{Noise, mix_at_snr, noise, si_sdr};
+    let Some(ckpt) = std::env::var_os("FILMCRAFT_DFN3_CKPT") else {
+        eprintln!("FILMCRAFT_DFN3_CKPT unset: skipped");
+        return;
+    };
+    let w = filmcraft_voice::weights::Weights::load(std::path::Path::new(&ckpt)).unwrap();
+    let limits: Vec<f32> =
+        std::env::var("FILMCRAFT_EVAL_LIMITS").unwrap_or_else(|_| "100,36,30,24,18,12".into()).split(',').filter_map(|v| v.trim().parse().ok()).collect();
+    let (clean, real) = eval_speech();
+    let n = clean.len();
+    let isolate = |x: &[f32], limit: f32| {
+        let mut fx = filmcraft_voice::effect::VoiceIsolate::new(&w, 1).unwrap();
+        fx.set_param("limit", limit);
+        fx.reset();
+        let lat = fx.latency();
+        let mut buf: Vec<f32> = x.iter().copied().chain(std::iter::repeat_n(0.0, lat)).collect();
+        for block in buf.chunks_mut(512) {
+            fx.process(&mut [block]);
+        }
+        buf[lat..lat + x.len()].to_vec()
+    };
+    let noisy: Vec<(f64, Vec<f32>)> = [0.0, 5.0, 10.0]
+        .into_iter()
+        .flat_map(|snr| Noise::ALL.into_iter().map(move |k| (snr, k)))
+        .map(|(snr, k)| (snr, mix_at_snr(&clean, &noise(k, n, 48_000, 11), snr)))
+        .collect();
+    let source = if real.is_some() { "recorded speech" } else { "built-in formant voices (synthetic)" };
+    let mut table = format!(
+        "Speech: {source}, {:.0} s. Mean SI-SDR (dB) over five noises.\n\n| limit | 0 dB | 5 dB | 10 dB | clean |\n|---|---|---|---|---|\n",
+        n as f64 / 48_000.0
+    );
+    for &limit in &limits {
+        let mean = |snr: f64| {
+            let v: Vec<f64> = noisy.iter().filter(|(s, _)| *s == snr).map(|(_, x)| si_sdr(&isolate(x, limit), &clean)).collect();
+            v.iter().sum::<f64>() / v.len().max(1) as f64
+        };
+        let c = si_sdr(&isolate(&clean, limit), &clean);
+        table.push_str(&format!("| {limit:.0} dB | {:.1} | {:.1} | {:.1} | {c:.1} |\n", mean(0.0), mean(5.0), mean(10.0)));
+    }
+    eprintln!("{table}");
+    if let Some(out) = std::env::var_os("FILMCRAFT_EVAL_OUT") {
+        std::fs::write(out, &table).unwrap();
+    }
 }

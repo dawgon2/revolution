@@ -180,10 +180,68 @@ pub const PROBE_WHOLE_FILE_MAX: u64 = 64 * 1024 * 1024;
 /// without a key). A generator's key holds its parameters, so a Color Matte whose color changes
 /// (or comes back with undo) is generated again.
 pub fn media_key(m: &MediaClip) -> String {
-    match &m.media {
+    let key = match &m.media {
         MediaRef::File { path } if m.offline => format!("offline:{path}"),
         MediaRef::File { path } => format!("file:{path}"),
         MediaRef::Generator(g) => format!("generator:{g:?}"),
+    };
+    // an interpreted frame rate wraps the file's source ([`InterpretedRate`])
+    match m.interpret.frame_rate {
+        Some(r) => format!("{key}@{}/{}", r.num, r.den),
+        None => key,
+    }
+}
+
+/// A movie interpreted at a constant frame rate (Y2: Interpret as CFR / Conform to Sequence
+/// Rate, Interpret Footage's `frameRate`): its `k`-th frame is shown at `k / rate`, whatever the
+/// file's own frame times say, and it lasts its frames at that rate. Its sound plays as recorded
+/// (provisional, owner question 62), so on a long variable-frame-rate clip it drifts from the
+/// picture: the trade-off of playing every frame evenly.
+pub struct InterpretedRate {
+    inner: SharedSource,
+    info: MediaInfo,
+    rate: filmcraft_time::FrameRate,
+}
+
+/// `src` wrapped in [`InterpretedRate`] when `m` is a movie with an interpreted frame rate.
+fn interpreted(m: &MediaClip, src: SharedSource) -> SharedSource {
+    let Some(rate) = m.interpret.frame_rate.filter(|r| r.num > 0 && r.den > 0 && r.frame_duration().0 > 0) else { return src };
+    if m.info.kind != filmcraft_media::MediaKind::Movie || m.info.video.is_none() {
+        return src;
+    }
+    let mut info = src.info().clone();
+    info.duration = m.duration();
+    if let Some(v) = info.video.as_mut() {
+        v.frame_rate = rate;
+        v.vfr = None;
+    }
+    Arc::new(InterpretedRate { inner: src, info, rate })
+}
+
+impl MediaSource for InterpretedRate {
+    fn info(&self) -> &MediaInfo {
+        &self.info
+    }
+    fn set_handoff_scale(&self, scale: f32) {
+        self.inner.set_handoff_scale(scale);
+    }
+    fn decoder_name(&self) -> Option<String> {
+        self.inner.decoder_name()
+    }
+    fn frame_clock(&self) -> filmcraft_media::timing::FrameClock {
+        filmcraft_media::timing::FrameClock::Grid(self.rate)
+    }
+    fn video_frame(&self, req: FrameRequest) -> filmcraft_media::Result<Arc<VideoFrame>> {
+        use filmcraft_media::timing::FrameTimes;
+        let k = self.rate.frame_at(req.time.max(filmcraft_time::Tick::ZERO));
+        let t = self.inner.frame_clock().tick_of(k);
+        self.inner.video_frame(FrameRequest { time: t, scale: req.scale })
+    }
+    fn audio(&self, start: i64, frames: usize, sample_rate: u32) -> filmcraft_media::Result<AudioBuffer> {
+        self.inner.audio(start, frames, sample_rate)
+    }
+    fn audio_stream(&self, stream: usize, start: i64, frames: usize, sample_rate: u32) -> filmcraft_media::Result<AudioBuffer> {
+        self.inner.audio_stream(stream, start, frames, sample_rate)
     }
 }
 
@@ -426,8 +484,13 @@ impl MediaPool {
     fn resolve(&self, p: &Project, item: ItemId, services: &dyn Services, proxies: bool) -> Option<SharedSource> {
         let (item, m, _) = p.resolve_media(item)?;
         let it = p.item(item)?;
+        // A variable-frame-rate clip interpreted at a constant rate needs the original's own frame
+        // times to number its frames ([`InterpretedRate`]); its constant-rate proxy doesn't have
+        // them, so it plays from the original (a constant-rate clip's proxy has the same grid).
+        let interpreted_vfr = m.interpret.frame_rate.is_some() && m.info.video.as_ref().is_some_and(|v| v.vfr.is_some());
         if proxies
             && !m.offline
+            && !interpreted_vfr
             && let Some(MediaRef::File { path }) = &m.proxy
             && let Some(s) = self.proxy_source(item, path, m, services)
         {
@@ -459,7 +522,7 @@ impl MediaPool {
                         s.set_handoff_scale(scale);
                     }
                     self.offline.write().unwrap_or_else(|e| e.into_inner()).remove(&item);
-                    self.unsupported_as_slate(item, path, s)
+                    self.unsupported_as_slate(item, path, interpreted(m, s))
                 }
                 Err(_) if filmcraft_media::pending::is_set() => {
                     // the host is still fetching the file's bytes: show the slate for now, retry later
@@ -491,7 +554,7 @@ impl MediaPool {
     }
 
     fn proxy_source(&self, item: ItemId, path: &str, m: &MediaClip, services: &dyn Services) -> Option<SharedSource> {
-        let key = format!("proxy:{path}");
+        let key = format!("proxy:{path}{}", m.interpret.frame_rate.map(|r| format!("@{}/{}", r.num, r.den)).unwrap_or_default());
         if let Some((k, s)) = self.proxies.read().unwrap_or_else(|e| e.into_inner()).get(&item)
             && *k == key
         {
@@ -511,7 +574,7 @@ impl MediaPool {
                 } else {
                     None
                 };
-                let src: SharedSource = Arc::new(ProxySource { proxy: s, info: m.info.clone(), audio_from });
+                let src: SharedSource = interpreted(m, Arc::new(ProxySource { proxy: s, info: m.info.clone(), audio_from }));
                 self.proxies.write().unwrap_or_else(|e| e.into_inner()).insert(item, (key, src.clone()));
                 Some(src)
             }
@@ -655,6 +718,9 @@ impl MediaSource for UnsupportedAsSlate {
     fn decoder_name(&self) -> Option<String> {
         self.inner.decoder_name()
     }
+    fn frame_clock(&self) -> filmcraft_media::timing::FrameClock {
+        self.inner.frame_clock()
+    }
     fn video_frame(&self, req: FrameRequest) -> filmcraft_media::Result<Arc<VideoFrame>> {
         match self.inner.video_frame(req) {
             Err(MediaError::Unsupported(why)) => {
@@ -688,6 +754,11 @@ pub struct ProxySource {
 impl MediaSource for ProxySource {
     fn info(&self) -> &MediaInfo {
         &self.info
+    }
+    /// The proxy's own frames are the ones shown (a proxy of a variable-frame-rate clip is
+    /// constant-rate), so its clock, not the original's.
+    fn frame_clock(&self) -> filmcraft_media::timing::FrameClock {
+        self.proxy.frame_clock()
     }
     fn video_frame(&self, req: FrameRequest) -> filmcraft_media::Result<Arc<VideoFrame>> {
         let full = self.info.video.as_ref().ok_or(MediaError::NoStream("video"))?;

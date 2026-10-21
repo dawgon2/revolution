@@ -88,6 +88,7 @@ impl GeneratorSource {
     pub fn new(generator: Generator, width: u32, height: u32, rate: FrameRate, duration: Tick) -> Self {
         let video = generator.has_video().then(|| VideoStreamInfo {
             camera_color_space: None,
+            vfr: None,
             width,
             height,
             frame_rate: rate,

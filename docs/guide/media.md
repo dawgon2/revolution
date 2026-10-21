@@ -116,6 +116,60 @@ shorter than six frames are ignored. Each result is one undo step.
 | **Markers only** | Checking what it found before cutting | One more step to cut |
 | **Subclips** | Building a library of shots from a long file | Many new items in the project |
 
+## Variable frame rate clips (phones, screen recordings)
+
+> id: media.vfr | does: shows when a clip's frames are unevenly spaced, with its average, slowest and fastest frame rate | cmd: metadata.get, playhead.stepForward, clip.interpretAsCfr, clip.conformToSequenceRate, clip.interpretFootage | resolve: Clip Attributes, Media Pool Frame Rate column | premiere: Properties, Interpret Footage | when: footage from a phone, a screen recorder or a game capture; audio seems to drift away from the picture | see: media.import, proxies.auto
+
+**[Fork]**
+
+**Why it matters.** A camera writes a frame every 1/24 or 1/30 of a second exactly (constant frame
+rate). Phones, OBS and other screen recorders write a frame whenever they have one: the spacing
+jitters by a millisecond or two, drops to 15 fps in low light, or switches from 60 to 30 mid-clip
+(variable frame rate, VFR). An editor that assumes "frame 900 is at 30 seconds" slowly pulls the
+picture away from the sound on such a clip. Revolution reads each frame's own time stamp from the
+file instead, so the frame you see is the one recorded at that moment.
+
+**How to tell.**
+
+1. Import the clip (`file.import`).
+2. Look at the **Frame Rate** column of the Project panel or the Media Browser: a variable clip
+   shows **(VFR)** after its typical rate, e.g. `29.97 fps (VFR)`.
+3. For the details, open the clip's properties (Metadata / `metadata.get`) or the Inspector's
+   **File** tab: **Variable Frame Rate** shows the average and the slowest–fastest rate, e.g.
+   `29.85 fps (15–30)`.
+
+In the Source monitor, **Step Back / Step Forward** (`playhead.stepBack` / `playhead.stepForward`, the
+monitor's `src.stepBack` / `src.stepForward` buttons) go to the clip's real previous / next frame,
+so a stretch recorded at 15 fps steps 1/15 s at a time instead of showing the same picture twice.
+On the timeline, steps stay on the sequence's frame rate (the sequence is constant-rate).
+
+The typical (most common) rate is what the clip offers when you make a sequence from it. A clip
+whose spacing only wobbles by the file's own rounding (a 1 ms time base writing 29.97 fps as 33 and
+34 ms) counts as constant.
+
+**Options.** There is nothing to convert first: a VFR clip edits, plays and exports in sync as it
+is. If you would rather have every recorded frame played evenly, one after another:
+
+| Option | Good for | Trade-offs |
+|---|---|---|
+| **Leave it as it is** (default) | Phone clips, screen recordings, anything with sound | Repeats or skips a frame where the recording sped up or slowed down, as the sequence's frame rate needs |
+| **Clip ▸ Modify ▸ Interpret as Constant Frame Rate** (`clip.interpretAsCfr`) | Silent footage where every frame should be seen once (a time-lapse, a screen capture to step through) | Plays frame *k* at *k* ÷ the clip's typical rate: the clip gets shorter where frames were dropped and its **sound drifts** from the picture (seconds on a 20-minute clip) |
+| **Clip ▸ Modify ▸ Conform to Sequence Frame Rate** (`clip.conformToSequenceRate`) | High-frame-rate footage as slow motion (a 60 fps clip in a 30 fps sequence plays at half speed) | Same as above; the sound keeps its own speed, so it no longer matches |
+
+To go back, use **Interpret Footage** with the file's rate (`clip.interpretFootage` with
+`"frameRate": "file"`), or Undo. Interpret Footage's `frameRate` also takes any rate (`30`,
+`[30000, 1001]`, `"24000/1001"`).
+
+1. Select the clip in the Project panel.
+2. Choose the command from **Clip ▸ Modify**.
+3. Check the Frame Rate column: the clip now shows that rate without **(VFR)**, and its duration
+   is its frames at that rate. Clips already on the timeline keep their length; edit the clip in
+   again to use the new length.
+
+Premiere and Resolve show a single frame rate for such a clip; here the (VFR) mark and the range
+tell you what the file really does. Premiere's Interpret Footage ▸ "Assume this frame rate" is
+the closest match to these commands; here the sound always plays as recorded.
+
 ## Audio channels of a clip
 
 > id: media.audio-channels | does: chooses how a clip's audio channels are used, splits them into mono clips, sets clip gain | cmd: clip.audioChannels, clip.breakoutToMono, clip.extractAudio, clip.audioGain | resolve: Clip Attributes ▸ Audio | premiere: Modify ▸ Audio Channels, Breakout to Mono, Audio Gain | when: a lavalier on one channel and a camera mic on the other; a mono recording heard on one side only | see: mixing.clip-or-track

@@ -329,6 +329,7 @@ pub const BUNDLED_FILES: &[(&str, &str)] = &[
     ("splitter-combiner.toml", include_str!("../../../assets/lessons/splitter-combiner.toml")),
     ("outside-node.toml", include_str!("../../../assets/lessons/outside-node.toml")),
     ("key-mixer.toml", include_str!("../../../assets/lessons/key-mixer.toml")),
+    ("track-effects.toml", include_str!("../../../assets/lessons/track-effects.toml")),
 ];
 
 /// The bundled lessons that parse, in lesson order (a broken file is left out and logged; a test

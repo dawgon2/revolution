@@ -279,14 +279,36 @@ impl MediaClip {
     pub fn frame_rate(&self) -> FrameRate {
         self.interpret.frame_rate.unwrap_or_else(|| self.info.frame_rate())
     }
+    /// The file's variable-frame-rate spacing (Y2), unless Interpret Footage gave it a rate.
+    pub fn vfr(&self) -> Option<filmcraft_media::timing::FrameTiming> {
+        self.info.video.as_ref().and_then(|v| v.vfr).filter(|_| self.interpret.frame_rate.is_none())
+    }
     /// Pixel aspect ratio of the picture, in lowest terms: Modify ▸ Interpret Footage's override,
     /// else the file's. A ratio that makes no sense ([`checked_par`]) is ignored: an override in
     /// favour of the file's value, the file's in favour of square pixels.
     pub fn pixel_aspect(&self) -> (u32, u32) {
         self.interpret.par.and_then(checked_par).or_else(|| self.info.video.as_ref().and_then(|v| checked_par(v.par))).unwrap_or((1, 1))
     }
+    /// The media's length: the file's, or, when Interpret Footage gave a movie a frame rate (Y2:
+    /// Interpret as CFR / Conform to Sequence Rate), its frames at that rate.
     pub fn duration(&self) -> Tick {
-        self.info.duration
+        match (self.interpret.frame_rate.filter(|r| r.num > 0 && r.den > 0), self.frame_count()) {
+            (Some(r), Some(n)) if self.info.kind == filmcraft_media::MediaKind::Movie => r.tick_of(n),
+            _ => self.info.duration,
+        }
+    }
+    /// How many video frames the file has: counted from its timestamps for a variable-frame-rate
+    /// file, else its length at its own rate (a frame starting before the end counts).
+    pub fn frame_count(&self) -> Option<i64> {
+        let v = self.info.video.as_ref()?;
+        if let Some(t) = v.vfr.filter(|t| t.frames > 0) {
+            return i64::try_from(t.frames).ok();
+        }
+        let r = v.frame_rate;
+        if r.num <= 0 || r.den <= 0 || r.frame_duration().0 <= 0 || self.info.duration.0 <= 0 {
+            return None;
+        }
+        Some(r.frame_at(Tick(self.info.duration.0 - 1)).saturating_add(1))
     }
 }
 

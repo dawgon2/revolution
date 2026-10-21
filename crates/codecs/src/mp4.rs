@@ -52,6 +52,8 @@ pub struct Mp4Source {
     audios: Vec<Mp4Audio>,
     /// [`MediaSource::set_handoff_scale`] (f32 bits; 1.0: unscaled).
     handoff_scale: std::sync::atomic::AtomicU32,
+    /// The frames' own start times for a variable-frame-rate track (Y2), else the rate's grid.
+    clock: filmcraft_media::timing::FrameClock,
 }
 
 pub fn sniff(b: &[u8]) -> bool {
@@ -262,6 +264,10 @@ impl Mp4Source {
                 explicit_color = Some(color);
             }
             let bitrate = (t.samples.iter().map(|s| s.size as u64).sum::<u64>() * 8 * t.timescale as u64).checked_div(t.duration);
+            // a variable-frame-rate clip's rate is its typical one (Y2): the median sample
+            // duration is off by the jitter (±1 ms around 33.3 ms gives 29.13)
+            let vfr = filmcraft_media::timing::FrameTiming::detect(t.samples.iter().map(|s| s.pts), t.timescale as f64);
+            let rate = vfr.and_then(|v| v.typical_rate()).unwrap_or(rate);
             let mut info = VideoStreamInfo {
                 width: w,
                 height: h,
@@ -280,6 +286,7 @@ impl Mp4Source {
                     .binary(b"MVTG")
                     .and_then(crate::camera_log::fujifilm_mvtg)
                     .filter(|_| color.transfer == filmcraft_color::Transfer::Bt709),
+                vfr,
             };
             if rotation % 2 == 1 {
                 (info.width, info.height) = (info.height, info.width);
@@ -356,6 +363,18 @@ impl Mp4Source {
             })
             .collect();
         rebase_unedited_video(&mut file, vtrack, &mut audios);
+        let clock = match (vtrack.and_then(|i| file.tracks.get(i)), info.video.as_ref()) {
+            (Some(t), Some(v)) if v.vfr.is_some() => {
+                let ts = i64::from(t.timescale.max(1));
+                // (samples an edit list cuts are never shown: not frames of the clip)
+                let end = info.duration;
+                filmcraft_media::timing::FrameClock::from_starts(
+                    (0..t.samples.len()).filter_map(|i| t.presentation_pts(i)).map(|p| Tick::from_rational(p, 1, ts)).filter(|t| t.0 >= 0 && *t < end),
+                    v.frame_rate,
+                )
+            }
+            _ => filmcraft_media::timing::FrameClock::Grid(info.frame_rate()),
+        };
         Ok(Self {
             info,
             bytes,
@@ -364,6 +383,7 @@ impl Mp4Source {
             video: GopCache::new(explicit_color).with_rotation(rotation).with_crop(aperture),
             audios,
             handoff_scale: 1.0f32.to_bits().into(),
+            clock,
         })
     }
 
@@ -468,6 +488,9 @@ impl MediaSource for Mp4Source {
     }
     fn info(&self) -> &MediaInfo {
         &self.info
+    }
+    fn frame_clock(&self) -> filmcraft_media::timing::FrameClock {
+        self.clock.clone()
     }
     fn set_handoff_scale(&self, scale: f32) {
         // a clean aperture is cut in full-size coordinates (from a smaller picture it would cut

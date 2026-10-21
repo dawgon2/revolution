@@ -26,7 +26,7 @@ own solver and explanations).
 |---|---|---|
 | [getting-started.md](getting-started.md) | Install, the two workflows (Settings ▸ General ▸ Workflow: Premiere / Resolve), importing X-M5 clips, what the hardware path does | written |
 | [install.md](install.md) | Every release package: portable Linux folder, AppImage, .deb, .rpm, Flatpak, Arch PKGBUILD, Windows .msi and portable .zip, x86_64 and ARM; which to choose | written (PKG) |
-| [pages.md](pages.md) | The Resolve workflow's pages (RS3): the page bar, each page's layout and toolbar, Deliver's render settings and queue, saving a page layout | written (RS3) |
+| [pages.md](pages.md) | The Resolve workflow's pages (RS3): the page bar, each page's layout and toolbar, Deliver's render settings and queue, Save Layout and layout presets | written (RS3, LAY) |
 | [projects.md](projects.md) | The Project Manager home screen (RS2): the projects folder, opening and making projects, sort / search / views, rename / duplicate / trash, export / import, At startup show | written (RS2) |
 | [color/README.md](color/README.md) | How colour works in this fork, start here | written (G0–G1) |
 | [color/color-management.md](color/color-management.md) | F-Log2 / F-Gamut input, DaVinci Wide Gamut / Intermediate working space, Rec.709 output, highlight roll-off | written (G0–G1) |

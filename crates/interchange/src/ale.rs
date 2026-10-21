@@ -213,6 +213,7 @@ mod tests {
             duration: rate.tick_of(seconds * 24),
             video: Some(VideoStreamInfo {
                 camera_color_space: None,
+                vfr: None,
                 width: 1920,
                 height: 1080,
                 frame_rate: rate,

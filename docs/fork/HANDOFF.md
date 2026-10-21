@@ -2,8 +2,140 @@
 
 For a fresh session. Read `FORK-PLAN.md` first (§1 fork rules, **§1a standing instructions** incl. §1a.6 order and the
 newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), then [`FORK-ONLY.md`](FORK-ONLY.md),
-[`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (Q51 answered, **Q52** FYI, **Q53 owed**), this file. Rewritten at its top
+[`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (newest: **Q61** FYI, AI2 explainer choice), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
+
+## G3 note (2026-10-21 ~11:30 EDT, scheduled run, LEAN, U 25 / L 18)
+
+G3.1 spike picked **MobileSAM** (Apache-2.0; candle-transformers 0.9 `segment_anything` already has TinyViT + prompt
+encoder + mask decoder, all pub: build our own `Sam` from them to pass box + low-res-mask prompts for propagation;
+load the official `mobile_sam.pt` with candle's pth reader). The download (`models/mobilesam/mobile_sam.pt`) was
+**refused by the run's permission check**, and after that every Bash call in that run was refused, so it stopped
+without committing. **Update 11:21: the owner said "you can download it" live; the checkpoint is now in
+`models/mobilesam/mobile_sam.pt` (40.7 MB, sha256 6dbb9052…, Q63 resolved).** Next: G3.1 spike proper: load it
+via candle's pth reader into our own `Sam` (tiny_vit_5m + PromptEncoder + MaskDecoder), time per frame on the
+i5-11600K at preview and full resolution, set the IoU target; then the G3 parts: per-node stroke prompts (serde, old projects load), `grade.magicMask.*` commands, refine (grow / shrink,
+soften, invert, clean black / white) as a matte op feeding `FxOp::Masked`, the cancellable `catch_unwind`
+propagation job behind a `Segmenter` trait (fake segmenter in tests), "model missing / corrupt" errors, and the
+synthetic-composite IoU harness.
+
+**Also approved (owner, live ~11:25, FORK-PLAN §1a.120):** a stronger voice-isolation model download (one
+model, Apache / MIT / BSD, ≤ 1.5 GB, official release). Work = AUDIO-PLAN **A3.7** (spike → port → Dell sweep
+vs DeepFilterNet3 → ship only if better; tag `audio-3b`): a lane next to G3 when the mode allows a builder,
+else right after G3, before C3.
+**Mode (owner, live ~11:35, FORK-PLAN §1a.121):** G3 and A3.7 run **FULL** regardless of the weekly line (up to 3
+builders, so A3.7 can be a lane now; reviewer on every diff) but **never Fable**: Opus in every Fable role. 5-hour
+throttle and near-limit MINIMAL still apply. Back to the usual LEAN floor from C3.
+
+## Exact next step (2026-10-21 11:14 EDT, scheduled run): Y2 accepted (`yt-2`, local build, not published); next **G3**
+
+**First, at the start of the run:** read the LAY owner note below. If it says `layout` is **READY**, merge it first,
+run one `cargo xtask ci`, tag `layout-1`, publish **Revolution 0.2.2** (LAY + everything on `hevc-vaapi`, incl. A3
+and Y2; release notes from `~/Apps/filmcraft-builds/audio-3/NOTES.md` + `yt-2/NOTES.md` + LAY), then G3. If not
+ready, start G3.
+
+**G3 (GRADE-PLAN §"Phase G3: Magic Mask", ML subject isolation; ≈ 40–80 h):** read the whole G3 section first.
+Its model download is **approved** by the owner (LAY owner note below: ~06:45, scope in FORK-PLAN §1a.119 (iii)):
+stay inside that scope. Builds locally, publishes nothing (§1a.119). Then C3.
+
+**Y2 done (this run, 08:47–11:15):** VFR detection (`filmcraft_media::timing`: `FrameTiming` avg / min / max /
+typical / frames, `FrameClock`, `FrameTimes`), MP4 / MKV / MPEG-TS probes and clocks, VFR typical rate (jittered
+phone clips read 30, not 29.13), render (TNR neighbours, reverse snap, blends) and the app's `TimedSource` on the
+source's clock, Source-monitor steps, Info / Properties "(VFR)" + Variable Frame Rate row, Interpret as CFR /
+Conform to Sequence Frame Rate + Interpret Footage `frameRate` (`media_pool::InterpretedRate`; sound as recorded:
+Q62), guide `media.vfr`; 20-min A/V sync tests (playback + export ≤ 1 frame), bench `vfr-1080` 0 drops. Opus review
+fixes in. Full ci 4588 / 4590 (2 known flaky coach_ask_box, pass alone), layers / assets / wasm ok. Tag `yt-2` on
+`2c441071`; build `~/Apps/filmcraft-builds/yt-2` (`latest` → it). **Owed (nits):** soft-telecine MPEG-2 "Variable"
+label (needs a fixture), Source goEnd / goOut on VFR clips step back one typical frame; existing timeline items keep
+their length after Interpret as CFR (documented).
+
+## Was: Exact next step (2026-10-21 08:50 EDT, scheduled run): A3 accepted (`audio-3`, local build, not published); next **Y2**
+
+**Y2 progress (2026-10-21 08:54 EDT):** Y2.1 audit done (findings in FORK-PLAN §7, 08:54 entry). Y2.3 part 1 ✓:
+`filmcraft_media::timing::FrameTiming` (average / min / max fps) on `VideoStreamInfo::vfr` (serde, `None` for CFR),
+set by the MP4 and MKV probes from container pts; fixtures `crates/codecs/tests/vfr.rs` (jitter / 30→15 drop / CFR,
+MP4 + MKV; `settb=1/90000` before `setpts`, else ffmpeg rounds the jitter away). (a) ✓ 2026-10-21 09:07 EDT: "(VFR)" after the Frame Rate in the
+Project panel / Media Browser / Properties, a **Variable Frame Rate** row (`FrameTiming::numbers()`) in Properties and
+the Inspector File tab (`MediaClip::vfr()`, hidden when Interpret Footage sets a rate), es + zh-cn, guide `media.vfr`.
+(b) ✓ 2026-10-21 09:15 EDT: `filmcraft_media::timing::{FrameTimes, FrameClock}`,
+`MediaSource::frame_clock()` (grid by default; MP4 / MKV give the real frame starts when `vfr` is set; `ProxySource`
+gives the proxy's clock, `UnsupportedAsSlate` forwards); render's `source_frame_at` / `neighbour_times*`,
+`video_source_time`, `interpolation_blend` take `impl FrameTimes` (callers pass `src.frame_clock()`). Decoded frames
+carry pts 0 here, so tests use ffmpeg's pictures as the oracle.
+(c) ✓ 2026-10-21 09:17 EDT: MPEG-TS / PS VFR (`describe_video` builds a clock from
+`video_pts()` when every picture has a strictly increasing time; `video_frame` picks by it; duration from it).
+(d) ✓ 2026-10-21 09:25 EDT: `clip_ops::source_step` (Source monitor buttons +
+`playhead.stepBack/Forward[5]` on the Source; trim monitor untouched: it only keys a cache).
+(e) ✓ by review 2026-10-21 09:34 EDT: our proxies are CFR at the clip's
+(typical) rate, made by decoding the original by time, so they stay in sync and `check_proxy`'s rate check holds.
+(g) ✓ 2026-10-21 09:34 EDT: `crates/engine/src/vfr_sync_tests.rs` (20-min MP4 + MKV, avg ≈ 29.85 vs typical 30, flash + click every
+10 s): playback ≤ 1 frame at 10 s / 10 min / 20 min, export (ProRes range at 20 min) ≤ 1 frame. Found + fixed on the
+way: a jittered VFR clip's nominal rate came out 29.13 (median decode duration); now `FrameTiming::typical_rate()`.
+(f) ✓ 2026-10-21 09:49 EDT: `clip.interpretAsCfr` / `clip.conformToSequenceRate` (Clip ▸ Modify) + Interpret
+Footage `frameRate` (fps / [n, d] / "N/D" / "file"); `MediaClip::{duration, frame_count}` honour
+`interpret.frame_rate`; `media_pool::InterpretedRate` (frame k at k / rate; sound as recorded: Q62 provisional);
+`FrameTiming::frames`; guide `media.vfr` options table.
+Review (Opus) done, fixes in (FORK-PLAN §7); owed nits: soft-telecine "Variable" label, Source goEnd on VFR.
+**Next:** Y2 acceptance: "no stutter in play-full beyond the source's own
+spacing" (a play-full check on the 20-min fixture, PC), Fable/Opus end-of-phase review of the Y2 diffs
+(`3b3c29c8..HEAD`), full `cargo xtask ci`, tag `yt-2`, local build (no publish, §1a.119).
+
+**First, at the start of the run:** read the LAY owner note below. If it says `layout` is **READY**, merge it first,
+run one `cargo xtask ci`, tag `layout-1`, publish **Revolution 0.2.2** (LAY + everything on `hevc-vaapi`, incl. A3;
+release notes from `~/Apps/filmcraft-builds/audio-3/NOTES.md` + LAY), then Y2. If not ready, start Y2.
+
+**Y2 (YOUTUBE-PLAN §"Phase Y2", variable-frame-rate footage; tag `yt-2`; builds locally, publishes nothing,
+§1a.119):** step 1 is the audit: every place that maps a frame index to time (or back) through a nominal frame rate
+(media index, frame server, GOP cache, proxies, thumbnails, waveforms, multicam sync, export); a Sonnet scout lists
+call sites, the main session (Opus; Fable only if the mode allows) judges them; findings into the progress log. Then
+fixtures (ffmpeg into `target/fixtures/vfr/`: jitter ±1 ms, 30 → 15 fps drops, 60 → 30 switch, 20-min drift clip,
+MP4 + MKV, click track), the timestamp rule, Info / Properties VFR display, **Interpret as CFR** / **Conform to
+sequence rate**, A/V ≤ 1 frame after 20 min in playback and export. After Y2: G3 (model download needs the owner's
+yes, asked live), then C3.
+
+**A3 done (this run, 05:26–08:50):** A3.3 effect drop on audio headers / mixer strips / the track view and the track
+view itself (`panels::track_controls`, Effect Controls + Inspector ▸ Audio), A3.4 header Send to ▸ submix / New Bus,
+A3.5 lesson `track-effects` + guide, A3.6 Voice Isolation **Attenuation Limit** (`limit` param, Essential Sound
+`repair.isolateLimitDb`, Clean Up Voice: 12 dB on mild noise only; LibriSpeech sweep + `cleanup_gate` 15 / 15 on the
+Dell). Full ci on `06d7e2e6` (4573 / 4575, the 2 flaky coach_ask_box pass alone; layers / assets / wasm ok); later
+commits engine + guide only, their tests green. Tag `audio-3` on `a5ddab28`; build `~/Apps/filmcraft-builds/audio-3`
+(`latest` → it; launcher `revolution.desktop` valid). cleanup.sh freed 40.2 GB. Owed: own-voice re-measure (Q30 b,
+no recordings yet); a stronger voice model only with a download yes. 0.2.1 release run 39576049016 verified green.
+
+## Was: Exact next step (2026-10-21 ~05:30 EDT, scheduled run continued live): AI2 accepted, Revolution 0.2.1 published; next **A3** (continue at A3.3)
+
+**AI2 done:** tags `ai-2` + `revolution-0.2.1` on `0d91ceec`; full `cargo xtask ci` green on `ba99d67e` (nextest 4569 / 4571,
+the 2 load-flaky `coach_ask_box_*` pass alone; layers / assets / wasm ok). Explainer `smol360-v3` scored 36 / 38 / 12 / 32 / 20
+(`tools/explainer-train/score-sets.sh`), published as release `explainer-smol360-v3`, first in `TUNED_PREFERENCE`
+(provisional, OWNER-QUESTIONS **Q61**: set 3 one case short of v1 / v2); smol360-v1, qwen05-v1 and v3 now download from
+the fork's releases (`fork_release!`), the 135M fast tune stays local. Public snapshot `e02a637a` on `dawgon2/revolution`
+`fork`, release workflow run **39576049016** finished green (17 assets, checked 06:21) (`gh run view 39576049016 -R
+dawgon2/revolution`; all packages + SHA256SUMS on the release page, Download section first, §1a.115; re-run a hung
+Windows install test once). Local build `~/Apps/filmcraft-builds/revolution-0.2.1` (`latest`, `ai-2` → it). cleanup.sh
+freed 46.7 GB.
+
+**A3 (AUDIO-PLAN §"Phase A3", audit + gap list there; publishes nothing, §1a.114):** A3.1 latched clip lights +
+click-to-reset (mixers, Audio Meters) ✓ and A3.2 track-header meters ✓ (both shipped in 0.2.1). A3.3 ✓ (drop an
+audio effect on a track header / mixer strip / the track view → `mixer.addInsert`; clicking an audio header shows the
+track's inserts in Effect Controls / Inspector ▸ Audio, `panels::track_controls`). A3.4 ✓ (header right-click ▸ Send to ▸ a submix / New Bus). A3.5 ✓ (lesson `track-effects`, guide beginner / pro, screenshots in both workflows). A3.6 parts 1–2 ✓ (Voice Isolation **Attenuation Limit** `limit` param, Essential Sound slider `repair.isolateLimitDb`,
+ignored eval `voice_isolation_limit_sweep`). **Next: A3.6 part 3:** read the Dell sweep (`ssh dell cat
+~/fork-logs/a3-6.log ~/fork-logs/a3-6-table.md`; scratch checkout `~/Projects/filmcraft-linux` on branch `a3-sweep`,
+delete that branch afterwards) and set per-noise-level limits in `voice_cleanup::suggest` (`st.repair.isolate_limit_db`;
+level 1 = mild noise, SNR 25–40 dB) only where the sweep shows a gain at 10 dB SNR / on clean speech; log the table.
+Own-voice re-measure stays owed (no recordings), stronger model needs a download yes. A3 closing ci started 07:0x on
+`06d7e2e6` (`target/a3-ci.log`). Closing: ci, tag `audio-3`,
+local build, **no publish**, **no `.fork-paused`** (§1a.119 replaced that stop): continue with Y2 (merge `layout` first
+whenever the owner note below says READY).
+
+## Owner note (2026-10-21 ~05:20, live): LAY → 0.2.2, then A3 → Y2 → G3 → C3 (FORK-PLAN §1a.119)
+
+The live session builds **Phase LAY** (save / keep a page's layout, Resolve-named layout commands and presets) on
+branch `layout` (worktree `.claude/worktrees/layout`, target `target/agent-layout`). **Runner:** keep doing A3
+steps meanwhile; **no `.fork-paused` after A3** any more. When this note says `layout` is READY, at your next step
+boundary merge it, run one `cargo xtask ci`, tag `layout-1`, publish **Revolution 0.2.2** (LAY + what is on
+`hevc-vaapi`), then finish A3 → Y2 → G3 → C3. A3 / Y2 / G3 / C3 tag and build locally but publish nothing.
+G3's model download: **approved** by the owner (~06:45; scope in FORK-PLAN §1a.119 (iii)).
+**State:** started 05:25; **READY (owner, live 2026-10-21 ~11:35: "yes it is")**; merged into hevc-vaapi by the 11:31 scheduled run, ci + tag `layout-1` + Revolution 0.2.2 in that run.
 
 ## Owner note (2026-10-20 ~22:00, live): Fujifilm log detection in 0.2.0 (FORK-PLAN §1a.116)
 

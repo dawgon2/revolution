@@ -22,7 +22,20 @@ const ID: &str = "voice_isolate";
 const HOP: usize = 480;
 /// Hop queueing + STFT overlap + model lookahead.
 pub const LATENCY: usize = HOP + 1440;
-static PARAMS: &[ParamSpec] = &[ParamSpec::new("amount", "Amount", 0.0, 100.0, 100.0, filmcraft_audio_dsp::Unit::Percent)];
+/// `limit`: the most the model may take away, in dB (fork AUDIO-PLAN A3.6, DeepFilterNet's
+/// attenuation limit): the input is kept at least 10^(−limit / 20) underneath, so a mild noise
+/// floor is lowered rather than removed and clean speech is barely touched. 100 dB = no limit.
+static PARAMS: &[ParamSpec] = &[
+    ParamSpec::new("amount", "Amount", 0.0, 100.0, 100.0, filmcraft_audio_dsp::Unit::Percent),
+    ParamSpec::new("limit", "Attenuation Limit", 6.0, 100.0, 100.0, filmcraft_audio_dsp::Unit::Decibels),
+];
+
+/// The wet share for `amount` (%) under attenuation limit `limit` (dB); exactly `amount / 100`
+/// without a limit (100 dB).
+fn wet_share(amount: f32, limit: f32) -> f32 {
+    let a = amount / 100.0;
+    if limit >= 100.0 { a } else { a * (1.0 - 10f32.powf(-limit / 20.0)) }
+}
 
 /// The installed model: where it is, the loaded weights, and why loading failed (if it did).
 #[derive(Default)]
@@ -140,6 +153,8 @@ impl Chan {
 /// to their mean and its mask is applied to each), so stereo costs about what mono does.
 pub struct VoiceIsolate {
     amount: f32,
+    /// Attenuation limit, dB (100 = none).
+    limit: f32,
     /// Smoothed 0…1 mix.
     mix: f32,
     den: Denoiser,
@@ -160,7 +175,7 @@ impl VoiceIsolate {
                 c
             })
             .collect();
-        Ok(VoiceIsolate { amount: 100.0, mix: 1.0, den, chans, fill: 0, failed: false })
+        Ok(VoiceIsolate { amount: 100.0, limit: 100.0, mix: 1.0, den, chans, fill: 0, failed: false })
     }
 }
 
@@ -172,19 +187,23 @@ impl AudioEffect for VoiceIsolate {
         PARAMS
     }
     fn set_param(&mut self, id: &str, value: f32) -> bool {
-        match (id, PARAMS.first()) {
-            ("amount", Some(spec)) => {
-                self.amount = spec.sanitize(value);
-                true
-            }
-            _ => false,
+        let Some(spec) = PARAMS.iter().find(|p| p.id == id) else { return false };
+        let v = spec.sanitize(value);
+        match id {
+            "amount" => self.amount = v,
+            _ => self.limit = v,
         }
+        true
     }
     fn param(&self, id: &str) -> Option<f32> {
-        (id == "amount").then_some(self.amount)
+        match id {
+            "amount" => Some(self.amount),
+            "limit" => Some(self.limit),
+            _ => None,
+        }
     }
     fn reset(&mut self) {
-        self.mix = self.amount / 100.0;
+        self.mix = wet_share(self.amount, self.limit);
         self.den.reset();
         self.fill = 0;
         self.failed = false;
@@ -197,7 +216,7 @@ impl AudioEffect for VoiceIsolate {
         let len = channels.iter().map(|c| c.len()).min().unwrap_or(0);
         // (channels beyond the ones built for pass through untouched)
         let n = channels.len().min(self.chans.len());
-        let target = self.amount / 100.0;
+        let target = wet_share(self.amount, self.limit);
         let mut i = 0;
         while i < len {
             // up to the end of the current hop
@@ -332,5 +351,32 @@ mod tests {
         uninstall();
         std::fs::remove_file(&bad).ok();
         assert_eq!(status(), (None, false, None));
+    }
+
+    #[test]
+    fn attenuation_limit_keeps_the_input_underneath() {
+        // no limit: exactly the old wet mix
+        for a in [0.0f32, 37.5, 80.0, 100.0] {
+            assert_eq!(wet_share(a, 100.0), a / 100.0);
+        }
+        // a 20 dB limit keeps a tenth of the input
+        assert!((wet_share(100.0, 20.0) - 0.9).abs() < 1e-6);
+        assert!((wet_share(50.0, 20.0) - 0.45).abs() < 1e-6);
+        let mut fx = VoiceIsolate::new(&synthetic(), 1).unwrap();
+        assert_eq!(fx.param("limit"), Some(100.0));
+        assert!(fx.set_param("limit", 12.0));
+        assert_eq!(fx.param("limit"), Some(12.0));
+        // hostile values: clamped or the default, never NaN in the mix
+        assert!(fx.set_param("limit", f32::NAN));
+        assert_eq!(fx.param("limit"), Some(100.0));
+        assert!(fx.set_param("limit", -1e9));
+        assert_eq!(fx.param("limit"), Some(6.0));
+        assert!(fx.set_param("limit", f32::INFINITY));
+        assert_eq!(fx.param("limit"), Some(100.0));
+        assert!(!fx.set_param("nope", 1.0));
+        fx.reset();
+        let mut buf = vec![0.25f32; 4096];
+        fx.process(&mut [&mut buf]);
+        assert!(buf.iter().all(|v| v.is_finite()));
     }
 }

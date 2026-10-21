@@ -93,12 +93,20 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let Some((clip, it, _)) = clips.first().cloned() else {
         // a transition clicked in the Timeline (#430)
         if let Some(id) = crate::panels::transition_controls::selected(app) {
+            app.ui.selected_track = None;
             crate::panels::transition_controls::effect_controls(app, ui, rect, id);
+            return;
+        }
+        // A3.3: an audio track header clicked in the Timeline: its track effects
+        if let Some(id) = crate::panels::track_controls::selected(app) {
+            crate::panels::track_controls::effect_controls(app, ui, rect, id);
             return;
         }
         crate::dock::placeholder(ui, rect, &t, tl!("(no clip selected)"));
         return;
     };
+    // a clip selected after a track header: the clip wins
+    app.ui.selected_track = None;
     let Some(seq) = app.session.active_sequence().cloned() else {
         crate::dock::placeholder(ui, rect, &t, tl!("(no sequences)"));
         return;

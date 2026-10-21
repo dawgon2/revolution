@@ -251,11 +251,19 @@ pub struct WorkspacePrefs {
     /// RS3, [`WorkspacePrefs::migrate_page_names`]); a file written before RS3 reads 0.
     #[serde(default)]
     pub pages_version: u32,
+    /// Fork LAY.2: each workspace's arrangement as it was last left when that differs from its
+    /// saved layout, so switching away and back (or quitting) keeps unsaved changes, as Premiere
+    /// and Resolve do; Reset to Saved Layout drops it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub working: Vec<SavedWorkspace>,
+    /// Fork LAY.3: Window ▸ Layout Presets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presets: Vec<crate::panels::layout_presets::LayoutPreset>,
 }
 
 impl Default for WorkspacePrefs {
     fn default() -> Self {
-        WorkspacePrefs { saved: vec![], current: String::new(), pages_version: 1 }
+        WorkspacePrefs { saved: vec![], current: String::new(), pages_version: 1, working: vec![], presets: vec![] }
     }
 }
 
@@ -391,6 +399,50 @@ pub fn find(prefs: &WorkspacePrefs, query: &str) -> Option<String> {
 /// The saved layout of a workspace: the user's saved version, else the built-in default.
 pub fn saved_layout(prefs: &WorkspacePrefs, name: &str) -> DockNode {
     saved_docking(prefs, name).root
+}
+
+/// The layout a workspace opens with: its unsaved arrangement (fork LAY.2) when there is a
+/// readable one, else [`saved_docking`].
+pub fn current_docking(prefs: &WorkspacePrefs, name: &str) -> Layout {
+    prefs.working.iter().find(|w| w.name == name).and_then(read_layout).unwrap_or_else(|| saved_docking(prefs, name))
+}
+
+/// A stored layout, or `None` when it doesn't read or validate (a panel a newer version added).
+pub fn read_layout(saved: &SavedWorkspace) -> Option<Layout> {
+    let layout = Layout {
+        root: serde_json::from_value(saved.layout.clone()).ok()?,
+        floating: if saved.floating.is_null() { vec![] } else { serde_json::from_value(saved.floating.clone()).ok()? },
+    };
+    layout.validate().ok().map(|()| layout)
+}
+
+impl WorkspacePrefs {
+    /// Fork LAY.2: remember `layout` as `name`'s unsaved arrangement, or forget it when it is the
+    /// saved layout. Whether anything changed.
+    pub fn keep_working(&mut self, name: &str, layout: &Layout) -> bool {
+        let before = self.working.clone();
+        self.working.retain(|w| w.name != name);
+        let to_json = |l: &Layout| (serde_json::to_value(&l.root).ok(), serde_json::to_value(&l.floating).ok());
+        if !name.is_empty() && layout.validate().is_ok() && to_json(layout) != to_json(&saved_docking(self, name)) {
+            let (Some(root), Some(floating)) = (serde_json::to_value(&layout.root).ok(), serde_json::to_value(&layout.floating).ok()) else {
+                return self.working != before;
+            };
+            let floating = if layout.floating.is_empty() { serde_json::Value::Null } else { floating };
+            self.working.push(SavedWorkspace { name: name.to_string(), layout: root, floating });
+            // bounded: an old entry goes first
+            const MAX_WORKING: usize = 64;
+            if self.working.len() > MAX_WORKING {
+                let extra = self.working.len() - MAX_WORKING;
+                self.working.drain(..extra);
+            }
+        }
+        self.working != before
+    }
+
+    /// Fork LAY.2: forget `name`'s unsaved arrangement (saved, reset, deleted or renamed).
+    pub fn drop_working(&mut self, name: &str) {
+        self.working.retain(|w| w.name != name);
+    }
 }
 
 pub fn saved_docking(prefs: &WorkspacePrefs, name: &str) -> Layout {

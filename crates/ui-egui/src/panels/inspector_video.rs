@@ -343,6 +343,9 @@ pub(crate) fn file_tab(app: &mut FilmcraftApp, ui: &mut egui::Ui, it: &TrackItem
         rows.push(("codec", tl!("Codec"), v.codec.clone()));
         rows.push(("resolution", tl!("Resolution"), format!("{} × {}", v.width, v.height)));
         rows.push(("frameRate", tl!("Frame Rate"), rate.label()));
+        if let Some(t) = media.vfr() {
+            rows.push(("vfr", tl!("Variable Frame Rate"), t.numbers()));
+        }
     } else if let Some(a) = info.audio_streams.first() {
         rows.push(("codec", tl!("Codec"), a.codec.clone()));
     }

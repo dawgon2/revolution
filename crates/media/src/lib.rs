@@ -20,6 +20,7 @@ pub mod reader;
 pub mod sequence;
 pub mod still;
 pub mod tga;
+pub mod timing;
 pub mod wav;
 
 use std::path::Path;
@@ -82,6 +83,11 @@ pub struct VideoStreamInfo {
     /// files say BT.709 in the stream): it outranks `color` when deciding the source colour space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera_color_space: Option<filmcraft_color::ColorSpace>,
+    /// Set when the container's frame times aren't evenly spaced (phones, screen recorders):
+    /// `frame_rate` is then only the typical rate, and frames are still found by their own
+    /// timestamps (Y2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfr: Option<timing::FrameTiming>,
 }
 
 impl VideoStreamInfo {
@@ -178,6 +184,11 @@ pub trait MediaSource: Send + Sync {
     /// one (fork H3.2b: the Properties dialog's Decoder line). Must not wait for a decode.
     fn decoder_name(&self) -> Option<String> {
         None
+    }
+    /// Where this source's frames start (Y2): the nominal grid of its frame rate, or the
+    /// container's own frame times for a variable-frame-rate file.
+    fn frame_clock(&self) -> timing::FrameClock {
+        timing::FrameClock::Grid(self.info().frame_rate())
     }
     /// The frame displayed at media time `req.time`.
     fn video_frame(&self, req: FrameRequest) -> Result<Arc<VideoFrame>>;

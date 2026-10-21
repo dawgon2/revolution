@@ -27,6 +27,7 @@ fn info(codec: &str, pixfmt: &str, w: u32, h: u32) -> MediaInfo {
         duration: filmcraft_time::Tick(filmcraft_time::TICKS_PER_SECOND),
         video: Some(VideoStreamInfo {
             camera_color_space: None,
+            vfr: None,
             width: w,
             height: h,
             frame_rate: filmcraft_time::FrameRate::FPS_24,

@@ -1272,7 +1272,7 @@ pub fn media_duration(p: &Project, _pool: &MediaPool, id: ItemId) -> Option<Tick
         return match &it.kind {
             filmcraft_project::ItemKind::Media(m) => match m.info.kind {
                 filmcraft_media::MediaKind::Still | filmcraft_media::MediaKind::Synthetic => None,
-                _ => Some(m.info.duration),
+                _ => Some(m.duration()),
             },
             filmcraft_project::ItemKind::Sequence(s) => Some(s.duration()),
             // a subclip that restricts trims ends at its Out point; otherwise its parent's media is the limit
@@ -1431,6 +1431,8 @@ mod transcript_tests;
 mod trim_tests;
 #[cfg(test)]
 mod user_effects_tests;
+#[cfg(test)]
+mod vfr_sync_tests;
 #[cfg(test)]
 mod vfx_tests;
 #[cfg(test)]

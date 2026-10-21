@@ -1078,3 +1078,42 @@ branches); (b) keep v1 first and offer v3 in Settings ▸ AI; (c) train v4 first
 **Choice for now: (a)**, provisional: `TUNED_PREFERENCE` in `crates/llm/src/models.rs` lists v3 first.
 To reverse: move `filmcraft-explainer-smol360-v3-q8` after the v1 entries there (or choose a model in
 Settings ▸ AI).
+
+## Q62 (2026-10-21, Y2.3): what the sound does when a clip is interpreted at a constant frame rate (FYI, provisional choice, never blocks)
+
+New commands **Clip ▸ Modify ▸ Interpret as Constant Frame Rate** (`clip.interpretAsCfr`) and
+**Conform to Sequence Frame Rate** (`clip.conformToSequenceRate`), plus Interpret Footage's new
+`frameRate` option, play frame *k* of a clip at *k* ÷ the chosen rate (YOUTUBE-PLAN Y2.3 "for people
+who want the old behaviour"). The picture's speed changes; the question is the sound.
+Options: (a) the sound plays as recorded (it drifts from the picture on a long variable-frame-rate
+clip; with Conform, a 60 fps clip slowed to 30 has normal-speed sound for its first half);
+(b) the sound is stretched to the picture's new length (stays roughly in sync; pitch changes unless
+we add pitch-preserving time stretch, which the speed tool's audio would also need).
+**Choice for now: (a)**, provisional: `InterpretedRate` in `crates/engine/src/media_pool.rs` passes
+audio through. Default editing never uses these commands (VFR clips play in sync without them).
+To reverse: make `InterpretedRate::audio` / `audio_stream` resample by file duration ÷ interpreted
+duration (or reuse the clip-speed audio path).
+
+## Q63 (2026-10-21, G3.1): the Magic Mask model download was refused by the scheduled run's permission check (owed by the owner, never blocks)
+
+G3's spike picked **MobileSAM** (Apache-2.0; TinyViT-5M encoder + SAM prompt encoder / mask decoder,
+which `candle-transformers` 0.9 (already a workspace dependency via `filmcraft-llm`) implements in
+`models::segment_anything`; box + previous-mask prompts give frame-to-frame propagation). Your yes
+(FORK-PLAN §1a.119 (iii)) covers it (one model, ≤ 1.5 GB: ~39 MB, official publisher release), but the
+unattended scheduled run's permission check refused the `curl`, and after that refused every shell
+command in that run, so the run stopped. Please run once, by hand:
+
+```
+mkdir -p ~/Projects/filmcraft-main/models/mobilesam && curl -L -o ~/Projects/filmcraft-main/models/mobilesam/mobile_sam.pt https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt
+```
+
+or allow that download in the app's permission settings for the scheduled task. Meanwhile later runs
+build the model-free parts of G3 (stored prompts, `grade.magicMask.*`, refine controls, the cancellable
+propagation job and a loader that says "model missing" instead of failing). The name, URL, size and
+sha256 go in §7 once the file is there. Alternative if you prefer: a different Apache / MIT model
+(EfficientTAM, SAM 2 tiny) needs its own candle port (much more work) and a new yes if it is bigger.
+
+**Resolved 2026-10-21 11:21 EDT:** owner, live: "you can download it". Downloaded
+`models/mobilesam/mobile_sam.pt` from https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt,
+40 728 226 bytes, sha256 `6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f` (zip-format torch
+checkpoint). `/models/` added to `.git/info/exclude`; never committed.

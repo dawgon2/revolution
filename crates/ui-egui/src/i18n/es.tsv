@@ -89,6 +89,7 @@
 	Color Matte…	Mate de color…
 	Comparison View	Vista de comparación
 	Composite Video	Video compuesto
+	Conform to Sequence Frame Rate	Ajustar a la velocidad de fotogramas de la secuencia
 	Consolidate Duplicates	Consolidar duplicados
 	Copy	Copiar
 	Copy Paste Includes Sequence Markers	Copiar y pegar incluye marcadores de secuencia
@@ -359,6 +360,7 @@
 	Update Metadata…	Actualizar metadatos…
 	Upgrade Caption to Graphic	Convertir subtítulo en gráfico
 	Upgrade to Source Graphic	Convertir en gráfico de origen
+	Variable Frame Rate	Velocidad de fotogramas variable
 	Vertical Text	Texto vertical
 	Video In	Entrada de video
 	Video Options	Opciones de video
@@ -960,6 +962,7 @@
 	Create linear gradient mask	Crear máscara de degradado lineal
 	Click in the Program monitor to place mask points (drag for curves); click the first point or press Enter to close	Haz clic en el monitor de programa para colocar puntos de máscara (arrastra para curvas); haz clic en el primer punto o pulsa Intro para cerrar
 	Delete Mask	Eliminar máscara
+	Interpret as Constant Frame Rate	Interpretar como velocidad de fotogramas constante
 	Inverted	Invertida
 	Drag: move · Alt-click: smooth/corner · Cmd-click: delete	Arrastrar: mover · Alt+clic: suave/esquina · Cmd+clic: eliminar
 	Track selected mask backward	Seguir la máscara seleccionada hacia atrás
@@ -4300,3 +4303,25 @@
 	The other computer can't connect? Allow Revolution in this computer's firewall once:	¿El otro ordenador no puede conectarse? Permite Revolution una vez en el cortafuegos de este ordenador:
 	If Windows asks, allow Revolution on private networks.	Si Windows pregunta, permite Revolution en redes privadas.
 	Click to reset peak hold and clip light	Haz clic para restablecer la retención de picos y el indicador de saturación
+	Save Layout	Guardar diseño
+	Keep this page arranged the way it is now: it opens like this every time. Right-click to reset.	Mantén esta página como está ahora: se abrirá así cada vez. Clic derecho para restablecerla.
+	Restore Original Layout	Restaurar diseño original
+	Saved the {page} page layout. Right-click Save Layout to reset it.	Diseño de la página {page} guardado. Haz clic derecho en Guardar diseño para restablecerlo.
+	Saved the {name} layout. Right-click Save Layout to reset it.	Diseño {name} guardado. Haz clic derecho en Guardar diseño para restablecerlo.
+	My Layout	Mi diseño
+	Imported Layout	Diseño importado
+	Save Layout as Preset	Guardar diseño como ajuste preestablecido
+	Save Layout as Preset…	Guardar diseño como ajuste preestablecido…
+	Layout Presets	Ajustes preestablecidos de diseño
+	Import Preset…	Importar ajuste preestablecido…
+	Manage Layout Presets…	Administrar ajustes preestablecidos de diseño…
+	Saves how every page is arranged now under one name.	Guarda cómo está organizada ahora cada página con un solo nombre.
+	No layout presets yet: arrange the pages, then Save Layout as Preset…	Aún no hay ajustes de diseño: organiza las páginas y luego usa Guardar diseño como ajuste preestablecido…
+	Load	Cargar
+	Replace it with how the pages are arranged now	Reemplazarlo por cómo están organizadas ahora las páginas
+	Loaded the layout preset {n}.	Ajuste de diseño {n} cargado.
+	Track · {label} · {name}	Pista · {label} · {name}
+	No track effects. Drag an audio effect from the Effects panel here, onto the track header or onto its mixer strip.	No hay efectos de pista. Arrastra un efecto de audio desde el panel Efectos hasta aquí, al encabezado de la pista o a su canal del mezclador.
+	Send to	Enviar a
+	New Bus	Nuevo bus
+	Attenuation Limit	Límite de atenuación

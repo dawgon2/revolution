@@ -108,6 +108,7 @@ impl StillSource {
             duration: DEFAULT_STILL_DURATION,
             video: Some(VideoStreamInfo {
                 camera_color_space: None,
+                vfr: None,
                 width: w,
                 height: h,
                 frame_rate: FrameRate::FPS_29_97,

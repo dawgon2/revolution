@@ -119,6 +119,7 @@ mod tests {
             duration: Tick(10 * TICKS_PER_SECOND),
             video: Some(filmcraft_media::VideoStreamInfo {
                 camera_color_space: None,
+                vfr: None,
                 width: w,
                 height: h,
                 frame_rate: FPS,

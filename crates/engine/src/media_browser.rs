@@ -609,7 +609,11 @@ pub fn column_text(e: &Entry, column: &str, probe: Option<&MediaInfo>) -> String
         }
         "Size" => e.size.map(format_size).unwrap_or_default(),
         "Date Modified" => e.modified.map(format_date).unwrap_or_default(),
-        "Frame Rate" => probe.and_then(|i| i.video.as_ref()).filter(|_| e.kind == "video").map(|v| format!("{} fps", v.frame_rate.label())).unwrap_or_default(),
+        "Frame Rate" => probe
+            .and_then(|i| i.video.as_ref())
+            .filter(|_| e.kind == "video")
+            .map(|v| format!("{} fps{}", v.frame_rate.label(), if v.vfr.is_some() { " (VFR)" } else { "" }))
+            .unwrap_or_default(),
         "Media Duration" => probe
             .filter(|_| e.kind != "image")
             .map(|i| {

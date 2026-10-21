@@ -1138,8 +1138,8 @@ fn source_nav(app: &mut FilmcraftApp, cmd: &str) {
         "src.goStart" => v.start,
         "src.goEnd" => (v.end - rate.frame_duration()).max(v.start),
         _ if rate.frame_duration() == Tick::ZERO => cur,
-        "src.stepBack" => rate.tick_of(rate.frame_at(cur).saturating_sub(1)),
-        _ => rate.tick_of(rate.frame_at(cur).saturating_add(1)),
+        "src.stepBack" => filmcraft_engine::clip_ops::source_step(&app.session, &v, cur, -1),
+        _ => filmcraft_engine::clip_ops::source_step(&app.session, &v, cur, 1),
     };
     let _ = app.session.execute("source.setPlayhead", json!({"time": t.0}));
 }

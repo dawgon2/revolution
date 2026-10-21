@@ -134,6 +134,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     uic!("window.workspace.saveChanges", "Save Changes to this Workspace", ["Window", "Workspaces"], None),
     uic!("window.workspace.saveAs", "Save as New Workspace…", ["Window", "Workspaces"], None),
     uic!("window.workspace.edit", "Edit Workspaces…", ["Window", "Workspaces"], None),
+    // fork LAY.3 (panels/layout_presets.rs): the presets themselves are spliced in above these
+    uic!("window.layoutPreset.save", "Save Layout as Preset…", ["Window", "Layout Presets"], None),
+    uic!("window.layoutPreset.import", "Import Preset…", ["Window", "Layout Presets"], None),
+    uic!("window.layoutPreset.manage", "Manage Layout Presets…", ["Window", "Layout Presets"], None),
     uic!("tool.selection", "Selection Tool", [], Some("V")),
     uic!("tool.trackSelectForward", "Track Select Forward Tool", [], Some("A")),
     uic!("tool.trackSelectBackward", "Track Select Backward Tool", [], Some("Shift+A")),
@@ -305,6 +309,9 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
     if let Some(r) = crate::panels::workspaces::route(app, id, &params) {
         return r;
     }
+    if let Some(r) = crate::panels::layout_presets::route(app, id, &params) {
+        return r;
+    }
     if let Some(t) = id.strip_prefix("tool.") {
         let tool = Tool::from_name(t).ok_or_else(|| format!("unknown tool `{t}`"))?;
         app.ui.tool = tool;
@@ -401,12 +408,7 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             let view = filmcraft_engine::clip_ops::source_view(&app.session, item).ok_or("Source clip is unavailable")?;
             let count = if id.ends_with('5') { i64::from(app.session.prefs.playback.step_many_frames) } else { 1 };
             let direction = if id.contains("Back") { -1 } else { 1 };
-            let time = if view.rate.frame_duration().0 == 0 {
-                app.session.state.source_playhead
-            } else {
-                let frame = view.rate.frame_at(app.session.state.source_playhead).saturating_add(count.saturating_mul(direction));
-                view.rate.tick_of(frame)
-            };
+            let time = filmcraft_engine::clip_ops::source_step(&app.session, &view, app.session.state.source_playhead, count.saturating_mul(direction));
             return app.session.execute("source.setPlayhead", json!({"time": time.0})).map_err(|e| e.to_string());
         }
         "playback.forward" => {
@@ -752,6 +754,7 @@ pub fn menu_items(app: &FilmcraftApp) -> Vec<MenuItem> {
         }
     }
     crate::panels::workspaces::menu(app, &mut v);
+    crate::panels::layout_presets::menu(app, &mut v);
     v
 }
 

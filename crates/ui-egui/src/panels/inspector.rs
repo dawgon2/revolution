@@ -137,10 +137,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let video = clips.iter().find(|c| c.2 == TrackKind::Video).cloned();
     let audio = clips.iter().find(|c| c.2 == TrackKind::Audio).cloned();
     let transition = crate::panels::transition_controls::selected(app);
+    // A3.3: an audio track header clicked in the Timeline (nothing else selected): its track effects
+    let track = if clips.is_empty() && transition.is_none() { crate::panels::track_controls::selected(app) } else { None };
     let file = clips.first().and_then(|(_, it, _)| app.session.project.resolve_media(it.item).map(|_| it.clone()));
     let applies = |tab: Tab| match tab {
         Tab::Video | Tab::Effects => video.is_some(),
-        Tab::Audio => audio.is_some(),
+        Tab::Audio => audio.is_some() || track.is_some(),
         Tab::Transition => transition.is_some(),
         // (Resolve's Image tab holds camera raw decode settings; FilmCraft has none)
         Tab::Image => false,
@@ -184,6 +186,13 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if let Some(id) = transition {
             crate::panels::transition_controls::effect_controls(app, ui, body, id);
         }
+        return;
+    }
+    if active == Tab::Audio
+        && audio.is_none()
+        && let Some(id) = track
+    {
+        crate::panels::track_controls::effect_controls(app, ui, body, id);
         return;
     }
     let mut acts: Acts = Vec::new();

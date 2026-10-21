@@ -23,6 +23,11 @@ pub fn route(app: &mut FilmcraftApp, id: &str, params: &Value) -> Option<Result<
     let r = match ws {
         "reset" => {
             let n = app.ui.workspace.clone();
+            let mut next = app.workspaces.clone();
+            next.drop_working(&n);
+            if let Err(e) = app.set_workspaces(next) {
+                return Some(Err(e));
+            }
             app.set_workspace(&n);
             Ok(json!({"workspace": n}))
         }
@@ -69,6 +74,7 @@ fn save(app: &mut FilmcraftApp, name: &str) -> Result<(), String> {
         None => saved.push(dock::SavedWorkspace { name: name.to_string(), layout, floating }),
     }
     next.current = name.to_string();
+    next.drop_working(name);
     app.set_workspaces(next)
 }
 
@@ -106,6 +112,7 @@ fn rename(app: &mut FilmcraftApp, from: &str, to: &str) -> Result<Value, String>
     for s in next.saved.iter_mut().filter(|s| s.name == from) {
         s.name = to.clone();
     }
+    next.drop_working(from);
     if next.current == from {
         next.current = to.clone();
     }
@@ -124,6 +131,7 @@ fn delete(app: &mut FilmcraftApp, name: &str) -> Result<Value, String> {
     if next.saved.len() == before {
         return Err(if is_builtin(name) { format!("`{name}` is a built-in workspace and can't be deleted") } else { format!("unknown workspace `{name}`") });
     }
+    next.drop_working(name);
     app.set_workspaces(next)?;
     if app.ui.workspace == name {
         app.set_workspace(if is_builtin(name) { name } else { "Editing" });

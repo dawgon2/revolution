@@ -198,6 +198,9 @@ pub fn metadata_fields(p: &Project, id: ItemId) -> Vec<Field> {
     add("Clip", "Media Type", it.type_label().to_string(), false);
     let col = |c: &str| filmcraft_project::find::column_text(p, it, c);
     add("Clip", "Frame Rate", col("Frame Rate"), false);
+    if let Some(t) = media.and_then(|m| m.vfr()) {
+        add("Clip", "Variable Frame Rate", t.numbers(), false);
+    }
     // media start / end / duration in the item's own timecode
     let start = media.and_then(|m| m.info.start_timecode).map(|f| rate.tick_of(f)).unwrap_or(Tick::ZERO);
     let (offset, dur) = match &it.kind {

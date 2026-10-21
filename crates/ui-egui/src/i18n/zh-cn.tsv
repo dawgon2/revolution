@@ -84,6 +84,7 @@
 	Color Matte…	颜色遮罩…
 	Comparison View	比较视图
 	Composite Video	合成视频
+	Conform to Sequence Frame Rate	匹配序列帧速率
 	Consolidate Duplicates	合并重复项
 	Copy	复制
 	Copy Paste Includes Sequence Markers	复制粘贴包含序列标记
@@ -354,6 +355,7 @@
 	Update Metadata…	更新元数据…
 	Upgrade Caption to Graphic	将字幕升级为图形
 	Upgrade to Source Graphic	升级为源图形
+	Variable Frame Rate	可变帧速率
 	Vertical Text	竖排文本
 	Video In	视频入
 	Video Options	视频选项
@@ -950,6 +952,7 @@
 	Create linear gradient mask	创建线性渐变蒙版
 	Click in the Program monitor to place mask points (drag for curves); click the first point or press Enter to close	在节目监视器中点击以放置蒙版点（拖动可绘制曲线）；点击第一个点或按 Enter 键闭合
 	Delete Mask	删除蒙版
+	Interpret as Constant Frame Rate	解释为恒定帧速率
 	Inverted	反相
 	Drag: move · Alt-click: smooth/corner · Cmd-click: delete	拖动：移动 · Alt+点击：平滑/拐角 · Cmd+点击：删除
 	Track selected mask backward	向后跟踪所选蒙版
@@ -4294,3 +4297,25 @@
 	The other computer can't connect? Allow Revolution in this computer's firewall once:	另一台电脑无法连接？请在本机防火墙中允许 Revolution（只需一次）：
 	If Windows asks, allow Revolution on private networks.	如果 Windows 询问，请允许 Revolution 访问专用网络。
 	Click to reset peak hold and clip light	单击以重置峰值保持和削波指示灯
+	Save Layout	保存布局
+	Keep this page arranged the way it is now: it opens like this every time. Right-click to reset.	让此页面保持现在的布局：每次打开都是这样。右键单击可重置。
+	Restore Original Layout	恢复原始布局
+	Saved the {page} page layout. Right-click Save Layout to reset it.	已保存{page}页面的布局。右键单击“保存布局”可重置。
+	Saved the {name} layout. Right-click Save Layout to reset it.	已保存{name}布局。右键单击“保存布局”可重置。
+	My Layout	我的布局
+	Imported Layout	导入的布局
+	Save Layout as Preset	将布局存储为预设
+	Save Layout as Preset…	将布局存储为预设…
+	Layout Presets	布局预设
+	Import Preset…	导入预设…
+	Manage Layout Presets…	管理布局预设…
+	Saves how every page is arranged now under one name.	用一个名称存储所有页面现在的布局。
+	No layout presets yet: arrange the pages, then Save Layout as Preset…	还没有布局预设：先排列页面，然后选择将布局存储为预设…
+	Load	载入
+	Replace it with how the pages are arranged now	用页面现在的布局替换它
+	Loaded the layout preset {n}.	已载入布局预设 {n}。
+	Track · {label} · {name}	轨道 · {label} · {name}
+	No track effects. Drag an audio effect from the Effects panel here, onto the track header or onto its mixer strip.	没有轨道效果。将音频效果从“效果”面板拖到此处、轨道头或其混音器通道上。
+	Send to	发送到
+	New Bus	新建总线
+	Attenuation Limit	衰减上限

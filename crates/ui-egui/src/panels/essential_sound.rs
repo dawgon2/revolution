@@ -374,6 +374,18 @@ fn typed_body(ui: &mut egui::Ui, cx: &mut Ctx, st: &EssentialSound, items: &[Tra
                         cx.run("audio.cleanupVoice", json!({}));
                     }
                     slot(ui, cx, tl!("Voice Isolation"), "repair.isolate", st.repair.isolate, on);
+                    // A3.6: how far Voice Isolation may pull the noise down (100 dB = no limit)
+                    slider(
+                        ui,
+                        cx,
+                        tl!("Attenuation Limit"),
+                        "repair.isolateLimitDb",
+                        st.repair.isolate_limit_db,
+                        (6.0, 100.0),
+                        0,
+                        " dB",
+                        on && st.repair.isolate.on,
+                    );
                     slot(ui, cx, tl!("Reduce Noise"), "repair.noise", st.repair.noise, on);
                     slot(ui, cx, tl!("Reduce Rumble"), "repair.rumble", st.repair.rumble, on);
                     slot(ui, cx, tl!("DeHum"), "repair.dehum", st.repair.dehum, on);

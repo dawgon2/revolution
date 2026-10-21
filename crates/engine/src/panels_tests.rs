@@ -193,3 +193,26 @@ fn project_notes_refuse_bad_input() {
     assert!(s.execute("project.setNotes", json!({"text": huge})).is_err());
     assert_eq!(s.project.notes, "");
 }
+
+#[test]
+fn a_variable_frame_rate_clip_says_so_in_properties() {
+    let mut s = demo();
+    let id = s.project.items.values().filter(|i| i.as_media().is_some_and(|m| m.info.video.is_some())).map(|i| i.id).min().expect("a video clip");
+    let g = s.execute("metadata.get", json!({"item": id.0})).unwrap();
+    assert!(!field(&g, "Frame Rate")["value"].as_str().unwrap().contains("VFR"), "{g}");
+    assert!(g["fields"].as_array().unwrap().iter().all(|f| f["name"] != "Variable Frame Rate"));
+
+    let timing = filmcraft_media::timing::FrameTiming { average_fps: 29.85, min_fps: 15.0, max_fps: 30.0, typical_fps: 30.0, frames: 900 };
+    let set =
+        |s: &mut Session, f: &dyn Fn(&mut filmcraft_project::MediaClip)| Arc::make_mut(&mut s.project).items.get_mut(&id).and_then(|i| i.as_media_mut()).map(f);
+    set(&mut s, &|m| m.info.video.as_mut().unwrap().vfr = Some(timing));
+    let g = s.execute("metadata.get", json!({"item": id.0})).unwrap();
+    assert!(field(&g, "Frame Rate")["value"].as_str().unwrap().ends_with("fps (VFR)"), "{g}");
+    assert_eq!(field(&g, "Variable Frame Rate")["value"], json!("29.85 fps (15–30)"));
+
+    // Interpret Footage with a rate: the clip is treated as constant-rate
+    set(&mut s, &|m| m.interpret.frame_rate = Some(filmcraft_time::FrameRate::new(30, 1)));
+    let g = s.execute("metadata.get", json!({"item": id.0})).unwrap();
+    assert!(!field(&g, "Frame Rate")["value"].as_str().unwrap().contains("VFR"), "{g}");
+    assert!(g["fields"].as_array().unwrap().iter().all(|f| f["name"] != "Variable Frame Rate"));
+}

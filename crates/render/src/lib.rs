@@ -48,6 +48,7 @@ use std::sync::Arc;
 
 use filmcraft_frame::{PixelData, VideoFrame, pool};
 use filmcraft_geom::{Affine, Vec2};
+use filmcraft_media::timing::FrameTimes;
 use filmcraft_media::{FrameRequest, SharedSource};
 use filmcraft_project::{ItemId, ItemKind, ParamValue, Project, Sequence, TrackItem};
 use filmcraft_time::{Tick, TimeDisplay, format_time};
@@ -510,7 +511,7 @@ pub(crate) fn item_layer_ex(
         let px_scale = lw as f32 / src_size.0.max(1) as f32;
         let m =
             Affine::scale(opts.scale as f64, opts.scale as f64).then_apply(&motion).then_apply(&Affine::scale(1.0 / px_scale as f64, 1.0 / px_scale as f64));
-        if (lw, lh) == (w, h) && identity_placement(&m) && interpolation_blend(item, t, src.info().frame_rate()).is_none() {
+        if (lw, lh) == (w, h) && identity_placement(&m) && interpolation_blend(item, t, src.frame_clock()).is_none() {
             let cs = colorman::source_space(project, item.item, &frame);
             if !colorman::needs_management(&seq.settings.color, cs, &frame) {
                 let (op, bl) = opacity_blend(item, mt);
@@ -587,7 +588,7 @@ fn plain_layer(frame: &VideoFrame, n: usize, opacity: f32, blend: Blend) -> Laye
 fn media_frame(item: &TrackItem, t: Tick, sources: &dyn SourceProvider, want: f32, src_size: (u32, u32)) -> Option<(SharedSource, Arc<VideoFrame>, usize)> {
     let src = sources.source(item.item)?;
     // (the decoder may skip the pictures before the clip's in-point: `clip_frame`)
-    let frame = clip_frame(src.as_ref(), item, video_source_time(item, t, src.info().frame_rate()), want).ok()?;
+    let frame = clip_frame(src.as_ref(), item, video_source_time(item, t, src.frame_clock()), want).ok()?;
     let n = decimation(frame.width as f32, src_size.0 as f32 * want);
     Some((src, frame, n))
 }
@@ -597,9 +598,9 @@ fn media_frame(item: &TrackItem, t: Tick, sources: &dyn SourceProvider, want: f3
 /// request to the nearest unit of a coarse timescale (MP4) land on the next frame from there,
 /// showing one frame past the clip's source range and never its In (#318). Snapped down to the
 /// start of the `media_rate` frame that contains it, every reader shows that frame.
-pub(crate) fn video_source_time(item: &TrackItem, t: Tick, media_rate: filmcraft_time::FrameRate) -> Tick {
+pub(crate) fn video_source_time(item: &TrackItem, t: Tick, media_rate: impl FrameTimes) -> Tick {
     let ft = item.source_time_at(t);
-    if !item.reverse || item.frame_hold.is_some() || media_rate.frame_duration().0 <= 0 {
+    if !item.reverse || item.frame_hold.is_some() || !media_rate.usable() {
         return ft;
     }
     media_rate.tick_of(media_rate.frame_at(ft)).clamp(item.source_in.min(ft), ft)
@@ -610,7 +611,7 @@ pub(crate) fn video_source_time(item: &TrackItem, t: Tick, media_rate: filmcraft
 #[allow(clippy::too_many_arguments)]
 fn media_image(project: &Project, seq: &Sequence, item: &TrackItem, t: Tick, src: &SharedSource, frame: &VideoFrame, n: usize, want: f32) -> Image {
     let img = colorman::decode(project, item.item, frame, n, &seq.settings.color);
-    match interpolation_blend(item, t, src.info().frame_rate()) {
+    match interpolation_blend(item, t, src.frame_clock()) {
         Some((next_time, wgt)) => match src.video_frame(FrameRequest { time: next_time, scale: want }) {
             Ok(f2) if f2.width == frame.width && f2.height == frame.height => {
                 let b = colorman::decode(project, item.item, &f2, n, &seq.settings.color);
@@ -706,7 +707,10 @@ pub fn render_clip(
 /// its weight (0..1) at timeline `t`, or None when the exact media time falls on a source frame
 /// (or the clip plays at 100 %, is frame-held, or uses Frame Sampling). Frame Blending cross-fades
 /// the two frames; Optical Flow synthesises the in-between frame from their motion ([`flow`]).
-pub fn interpolation_blend(item: &TrackItem, t: Tick, src_rate: filmcraft_time::FrameRate) -> Option<(Tick, f32)> {
+///
+/// `src_rate` is the source's frame clock: on a variable-frame-rate source the next frame and the
+/// mix follow the frames' own times.
+pub fn interpolation_blend(item: &TrackItem, t: Tick, src_rate: impl FrameTimes) -> Option<(Tick, f32)> {
     if item.time_interpolation == filmcraft_project::TimeInterpolation::FrameSampling || item.frame_hold.is_some() {
         return None;
     }
@@ -714,7 +718,7 @@ pub fn interpolation_blend(item: &TrackItem, t: Tick, src_rate: filmcraft_time::
         return None;
     }
     let mt = item.source_time_at(t);
-    if src_rate.frame_duration().0 <= 0 {
+    if !src_rate.usable() {
         return None;
     }
     // position in source frames from the media origin

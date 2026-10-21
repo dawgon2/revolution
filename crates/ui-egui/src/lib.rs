@@ -1270,8 +1270,18 @@ impl FilmcraftApp {
         // Premiere workspace for a page's name (fork RS3, `dock::for_workflow`)
         let name = dock::for_workflow(name, self.resolve_workflow()).to_string();
         let name = name.as_str();
+        // fork LAY.2: the workspace being left keeps its arrangement, saved or not
+        if self.ui.workspace != name {
+            let mut next = self.workspaces.clone();
+            let outgoing = dock::Layout { root: self.ui.dock.clone(), floating: self.ui.floating.clone() };
+            if next.keep_working(&self.ui.workspace, &outgoing)
+                && let Err(e) = self.set_workspaces(next)
+            {
+                self.ui.status = e;
+            }
+        }
         self.ui.workspace = name.to_string();
-        let layout = dock::saved_docking(&self.workspaces, name);
+        let layout = dock::current_docking(&self.workspaces, name);
         self.ui.dock = layout.root;
         self.ui.floating = layout.floating;
         self.pending_panel_raise = None;
@@ -2616,6 +2626,12 @@ impl eframe::App for FilmcraftApp {
     }
 
     fn on_exit(&mut self) {
+        // fork LAY.2: the workspace in use keeps its arrangement for the next launch
+        let mut next = self.workspaces.clone();
+        let layout = dock::Layout { root: self.ui.dock.clone(), floating: self.ui.floating.clone() };
+        if next.keep_working(&self.ui.workspace, &layout) {
+            let _ = self.set_workspaces(next);
+        }
         // a project opened from a remote location gives its lock back (STORAGE-PLAN S2)
         let _ = self.session.execute("remote.closeProject", serde_json::json!({}));
         // taskbar progress, inhibitors and the single-instance name go first (`desktop`)

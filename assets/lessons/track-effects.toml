@@ -1,0 +1,47 @@
+# Coach lesson (fork AUDIO-PLAN A3.5: track effects and sends from the timeline). Format:
+# crates/engine/src/coach.rs. Written for this fork in our own words.
+id = "track-effects"
+title = "One effect for a whole track (track effects and sends)"
+summary = "Put an audio effect on a whole track from the timeline, adjust it next to your clips, and send the track to a shared bus."
+provenance = ["fork"]
+order = 15
+
+[[step]]
+text = "A clip effect changes one recording. A track effect changes everything on the track, now and for every clip you add later. A send copies the track's sound to a bus, where one effect can serve several tracks."
+why = "Pick the clip for fixing a single recording; pick the track (or a bus) when the same treatment belongs on everything, like an EQ for one microphone or one shared reverb."
+expect = { manual = true }
+
+[[step]]
+text = "Open the Effects panel and type reverb in its search box."
+why = "Audio effects live in the Effects panel's Audio Effects folder; the search finds them quickly."
+target = "panel.Effects"
+expect = { element = "effects.item.studio_reverb" }
+
+[[step]]
+text = "Drag Studio Reverb onto the header of audio track A1 (the area with its name, left of the clips) and let go."
+why = "Dropping it on the header, not on a clip, makes it a track effect. It goes into the track's first free effect slot."
+target = ["effects.item.studio_reverb", "timeline.track.A1.header"]
+expect = { command = "mixer.addInsert" }
+
+[[step]]
+text = "Click an empty part of A1's header."
+why = "Selecting the track shows its effects where you normally adjust clips: Effect Controls, or the Inspector's Audio tab in the Resolve workflow."
+target = "timeline.track.A1.header"
+expect = { element = "effectControls.track.fx.0" }
+
+[[step]]
+text = "Untick On to hear the track without the reverb, then tick it again."
+why = "Bypassing is the quickest before / after check. It keeps the settings."
+target = "effectControls.track.fx.0.enabled"
+expect = { command = "mixer.setInsert" }
+
+[[step]]
+text = "Right-click A1's header, open Send to, and choose New Bus (New Submix in the Premiere workflow)."
+why = "A bus gathers sound from several tracks. Send other tracks to the same bus and put one reverb on it, so they all sit in the same room."
+target = "timeline.track.A1.header"
+expect = { command = "mixer.addSend" }
+
+[[step]]
+text = "Open the Audio Track Mixer to see the new bus strip and the send in A1's send slots. You can set the send's level there."
+why = "Beginners can stop at track effects. Sends and buses are worth it once several tracks need the same treatment."
+expect = { manual = true }

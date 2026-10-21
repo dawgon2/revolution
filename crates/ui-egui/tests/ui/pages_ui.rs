@@ -373,6 +373,42 @@ fn workflow_round_trip_keeps_unsaved_layouts_and_modes_land_on_pages() {
 /// XPS item 15: on a narrow window (the 16" panel at 2×: 960 × 600 points, and smaller) the page
 /// buttons shrink into the room between the app's name and the coach's buttons instead of
 /// sliding under them; every page stays clickable.
+/// Fork LAY.1: Save Layout, left of Lessons, keeps the page's arrangement; its right-click menu
+/// resets unsaved changes and restores the page's original layout.
+#[test]
+fn save_layout_button_keeps_resets_and_restores_a_page_layout() {
+    let mut d = Driver::demo(Workflow::Resolve);
+    d.click("page.edit");
+    let (save, lessons) = (d.rect("pageBar.saveLayout"), d.rect("coach.lessons.open"));
+    assert!(save[0] + save[2] <= lessons[0] && (save[1] - lessons[1]).abs() < 1.0, "left of Lessons: {save:?} {lessons:?}");
+    assert!(!d.has("panel.Inspector"));
+    d.click("pageToolbar.Inspector");
+    d.click("pageBar.saveLayout");
+    assert!(d.harness.state().ui.status.contains("Edit page"), "{}", d.harness.state().ui.status);
+    d.shot("save-layout");
+    d.click("page.color");
+    d.click("page.edit");
+    assert!(d.has("panel.Inspector"), "the saved layout comes back");
+    // an unsaved change, then Reset to Saved Layout from the right-click menu
+    d.click("pageToolbar.Inspector");
+    assert!(!d.has("panel.Inspector"));
+    d.ok("ui.click", json!({"id": "pageBar.saveLayout", "button": "right"}));
+    d.frames(3);
+    d.click("pageBar.saveLayout.reset");
+    assert!(d.has("panel.Inspector"), "reset to the saved layout");
+    // Restore Original Layout: the built-in Edit page again
+    d.ok("ui.click", json!({"id": "pageBar.saveLayout", "button": "right"}));
+    d.frames(3);
+    d.click("pageBar.saveLayout.original");
+    assert!(!d.has("panel.Inspector"), "the original Edit page");
+    // LAY.3: the same menu saves every page as a preset
+    d.ok("ui.click", json!({"id": "pageBar.saveLayout", "button": "right"}));
+    d.frames(3);
+    d.click("pageBar.saveLayout.preset");
+    assert!(d.harness.state().ui.layout_preset_dialog.is_some(), "Save Layout as Preset… opens its dialog");
+    assert!(!d.harness.state().workspaces.saved.iter().any(|s| s.name == "Edit Page"));
+}
+
 #[test]
 fn page_bar_fits_a_narrow_window_without_overlaps() {
     for width in [960.0f32, 800.0] {
@@ -383,7 +419,7 @@ fn page_bar_fits_a_narrow_window_without_overlaps() {
         let pages: Vec<String> = d.ids("page.").into_iter().filter(|i| i.matches('.').count() == 1).collect();
         assert!(pages.len() >= 5, "{pages:?}");
         let mut others: Vec<[f64; 4]> = Vec::new();
-        for id in ["pageBar.app", "assistant.open", "coach.ask.open", "coach.lessons.open", "pageBar.home"] {
+        for id in ["pageBar.app", "pageBar.saveLayout", "assistant.open", "coach.ask.open", "coach.lessons.open", "pageBar.home"] {
             if d.has(id) {
                 others.push(d.rect(id));
             }

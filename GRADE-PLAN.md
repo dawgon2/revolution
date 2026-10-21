@@ -279,7 +279,7 @@ whose run-time-dispatched candle inference layer this reuses (FORK-PLAN §1a.6, 
    with video propagation (e.g. the SAM 2 family) that candle can run; measure per-frame time on
    the i5-11600K CPU (candle has no AMD GPU backend) at preview and full resolution. Write the
    choice and numbers in §7. **The model download needs the owner's yes when G3 starts** (his
-   A2 consent covers only the audio model).
+   A2 consent covers only the audio model). **Given 2026-10-21 (FORK-PLAN §1a.119 (iii)).**
 2. **Tool:** on a grade node, click / scribble on a person or object (or "person" / "face" /
    "clothing" quick modes if the model supports them); the mask propagates forward and back as a
    background job (`catch_unwind`, cancellable), cached per frame like the render cache, and

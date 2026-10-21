@@ -50,6 +50,26 @@ const X265_MAIN10: &[&str] = &[
     "-x265-params",
     "log-level=error",
 ];
+/// A phone-like variable frame rate (Y2): ±1 ms jitter around 1/30 s and one doubled gap every
+/// 200 frames (≈ 29.85 fps on average), timestamps kept as made.
+const X264_VFR: &[&str] = &[
+    "-vf",
+    "settb=1/90000,setpts='((N+floor(N/200))/30+(mod(N,3)-1)*0.001)/TB'",
+    "-fps_mode",
+    "passthrough",
+    "-enc_time_base:v",
+    "1/90000",
+    "-video_track_timescale",
+    "90000",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "fast",
+    "-crf",
+    "20",
+    "-pix_fmt",
+    "yuv420p",
+];
 /// AV1 where ffmpeg has libaom but not SVT-AV1 (the Windows builds): slower to encode, same role.
 const AV1_AOM: &[&str] = &["-c:v", "libaom-av1", "-crf", "35", "-b:v", "0", "-cpu-used", "8", "-row-mt", "1", "-g", "48", "-pix_fmt", "yuv420p"];
 const PRORES: &[&str] = &["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le", "-vendor", "apl0"];
@@ -59,6 +79,7 @@ const SPECS: &[Spec] = &[
     Spec { name: "a1080.mp4", src: "testsrc2=s=1920x1080:r=24000/1001:d=20,noise=alls=6:allf=t", secs: 20, audio: true, codec: X264 },
     Spec { name: "b1080.mp4", src: "mandelbrot=s=1920x1080:r=24000/1001,trim=duration=20,noise=alls=6:allf=t", secs: 20, audio: false, codec: X264 },
     Spec { name: "c1080.mp4", src: "smptehdbars=s=1920x1080:r=24000/1001:d=20,noise=alls=10:allf=t+u", secs: 20, audio: false, codec: X264 },
+    Spec { name: "vfr1080.mp4", src: "testsrc2=s=1920x1080:r=30:d=20,noise=alls=6:allf=t", secs: 20, audio: true, codec: X264_VFR },
     Spec { name: "a2160.mp4", src: "testsrc2=s=3840x2160:r=24000/1001:d=10,noise=alls=6:allf=t", secs: 10, audio: false, codec: X264 },
     Spec { name: "hevc2160.mp4", src: "testsrc2=s=3840x2160:r=24000/1001:d=10,noise=alls=6:allf=t", secs: 10, audio: false, codec: X265 },
     Spec { name: "vp92160.webm", src: "testsrc2=s=3840x2160:r=24000/1001:d=10,noise=alls=6:allf=t", secs: 10, audio: false, codec: VP9 },

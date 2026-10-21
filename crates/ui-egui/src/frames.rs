@@ -405,6 +405,16 @@ impl filmcraft_media::MediaSource for TimedSource {
     fn info(&self) -> &filmcraft_media::MediaInfo {
         self.0.info()
     }
+    fn set_handoff_scale(&self, scale: f32) {
+        self.0.set_handoff_scale(scale);
+    }
+    fn decoder_name(&self) -> Option<String> {
+        self.0.decoder_name()
+    }
+    // (a variable-frame-rate source's own frame times, Y2)
+    fn frame_clock(&self) -> filmcraft_media::timing::FrameClock {
+        self.0.frame_clock()
+    }
     fn video_frame(&self, req: filmcraft_media::FrameRequest) -> filmcraft_media::Result<Arc<filmcraft_frame::VideoFrame>> {
         timed_source(|| self.0.video_frame(req))
     }
@@ -1398,6 +1408,44 @@ fn render_job(job: &Job, pool: &Arc<MediaPool>, services: &Arc<dyn Services>, pr
 #[cfg(test)]
 mod tests {
     use super::{PlaybackMeter, SkimControl, Target, background_work, playback_plan};
+
+    /// Y2 review: the job wrapper must pass a variable-frame-rate source's own frame times on
+    /// (it gave the typical rate's grid, so the app's reverse snap / blends / TNR ignored them).
+    #[test]
+    fn timed_sources_keep_a_variable_frame_rate_clock() {
+        use filmcraft_media::MediaSource;
+        use filmcraft_media::timing::FrameClock;
+        use filmcraft_time::{FrameRate, Tick};
+        struct Vfr(filmcraft_media::MediaInfo);
+        impl MediaSource for Vfr {
+            fn info(&self) -> &filmcraft_media::MediaInfo {
+                &self.0
+            }
+            fn frame_clock(&self) -> FrameClock {
+                FrameClock::from_starts([Tick(0), Tick(10), Tick(30)], FrameRate::FPS_30)
+            }
+            fn video_frame(&self, _: filmcraft_media::FrameRequest) -> filmcraft_media::Result<std::sync::Arc<filmcraft_frame::VideoFrame>> {
+                Err(filmcraft_media::MediaError::NoStream("video"))
+            }
+            fn audio(&self, _: i64, frames: usize, sample_rate: u32) -> filmcraft_media::Result<filmcraft_frame::AudioBuffer> {
+                Ok(filmcraft_frame::AudioBuffer::silence(sample_rate, 2, frames))
+            }
+        }
+        let info = filmcraft_media::MediaInfo {
+            name: "vfr".into(),
+            kind: filmcraft_media::MediaKind::Movie,
+            duration: Tick(30),
+            video: None,
+            audio_streams: Vec::new(),
+            container: String::new(),
+            start_timecode: None,
+            file_size: None,
+        };
+        let inner: filmcraft_media::SharedSource = std::sync::Arc::new(Vfr(info));
+        let want = inner.frame_clock();
+        assert!(matches!(want, FrameClock::Times(_)));
+        assert_eq!(super::TimedSource(inner).frame_clock(), want);
+    }
     use filmcraft_project::ItemId;
     use web_time::Instant;
 

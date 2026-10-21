@@ -232,6 +232,11 @@ fn insert_effects() -> Vec<&'static filmcraft_project::EffectDef> {
         .collect()
 }
 
+/// A3.3: the effect being dragged from the Effects panel, when it can go in an insert slot.
+pub(crate) fn dragged_insert(ui: &egui::Ui) -> Option<String> {
+    crate::panels::dragged_effect(ui).filter(|e| insert_effects().iter().any(|d| d.id == e.as_str()))
+}
+
 /// Submixes a strip may route to (all of them for tracks; only later ones for submixes).
 fn targets(seq: &Sequence, id: TrackId) -> Vec<&Track> {
     let me = seq.submix_tracks.iter().position(|t| t.id == id);
@@ -806,6 +811,18 @@ fn strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, cx: &mut Ctx, id: TrackId, s
         name.text(pos2(nr.min.x + 30.0, nr.center().y), Align2::LEFT_CENTER, &tr.name, Tokens::ui(12.0), t.text);
     }
     app.auto.add(&format!("{ap}.name"), nr, &tr.name);
+    // A3.3: an audio effect dragged from the Effects panel and dropped on the strip goes in its first free slot
+    let target = sr.intersect(ui.clip_rect());
+    if let Some(effect) = dragged_insert(ui)
+        && ui.ctx().pointer_hover_pos().is_some_and(|q| target.contains(q))
+    {
+        ui.painter().rect_stroke(sr, 3.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+        app.auto.add(&format!("{ap}.fxDrop"), target, "Drop to add a track effect");
+        if ui.ctx().input(|i| i.pointer.any_released()) {
+            cx.cmd("mixer.addInsert", json!({"strip": sid, "effect": effect}));
+            crate::panels::clear_drag(ui);
+        }
+    }
 }
 
 /// The 5.1 panner: a puck in the listening square (x left … right, y rear … front; speakers drawn

@@ -769,7 +769,7 @@ fn parse_args() -> Args {
             "--json" => a.json = it.next(),
             "--help" | "-h" => {
                 println!(
-                    "bench_playback [--scenario h264-1080,stack3,stack3-blend,stack3-fx,h264-2160,hevc-2160,vp9-2160,av1-2160,demo,after-preview,seek-storm] [--res full,half] [--cpu|--gpu] [--seconds 8] [--refresh 60] [--workers N] [--repeat N] [--json out.json]"
+                    "bench_playback [--scenario h264-1080,vfr-1080,stack3,stack3-blend,stack3-fx,h264-2160,hevc-2160,vp9-2160,av1-2160,demo,after-preview,seek-storm] [--res full,half] [--cpu|--gpu] [--seconds 8] [--refresh 60] [--workers N] [--repeat N] [--json out.json]"
                 );
                 std::process::exit(0);
             }
@@ -792,6 +792,11 @@ pub fn scenario_session(name: &str) -> Option<(Session, ItemId)> {
         "h264-1080" | "seek-storm" => {
             let a = import(&mut s, &fixture("a1080.mp4")?);
             build_sequence(&mut s, 1920, 1080, &[(a, 100.0, None, 0.0, 100.0)], &[], 20.0)
+        }
+        // Y2: a variable-frame-rate phone-like clip on a 30 fps sequence
+        "vfr-1080" => {
+            let a = import(&mut s, &fixture("vfr1080.mp4")?);
+            build_sequence_at(&mut s, 1920, 1080, FrameRate::FPS_30, &[(a, 100.0, None, 0.0, 100.0)], &[], 19.0)
         }
         "stack3" | "stack3-blend" | "stack3-fx" => {
             let (a, b, c) = (fixture("a1080.mp4")?, fixture("b1080.mp4")?, fixture("c1080.mp4")?);

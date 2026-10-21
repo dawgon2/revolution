@@ -40,10 +40,17 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "clip.interpretFootage",
             "Interpret Footage…",
             &["Clip", "Modify"],
-            r#"{"items":[id]?,"colorSpace":"auto"|"<color space id>"?,"pixelAspect":[num,den]|"file"|"auto"|"<id of media.pixelAspects>"|"N:D"?}"#,
+            r#"{"items":[id]?,"colorSpace":"auto"|"<color space id>"?,"pixelAspect":[num,den]|"file"|"auto"|"<id of media.pixelAspects>"|"N:D"?,"frameRate":fps|[num,den]|"N/D"|"file"?}"#,
             has_footage,
             interpret,
         ),
+        spec("clip.interpretAsCfr", "Interpret as Constant Frame Rate", &["Clip", "Modify"], r#"{"items":[id]?}"#, has_footage, |s, p| {
+            interpret_rate(s, p, "clip.interpretAsCfr", "Interpret as Constant Frame Rate", None)
+        }),
+        spec("clip.conformToSequenceRate", "Conform to Sequence Frame Rate", &["Clip", "Modify"], r#"{"items":[id]?}"#, has_footage, |s, p| {
+            let rate = s.active_sequence().map(|q| q.settings.frame_rate).ok_or_else(|| bad("clip.conformToSequenceRate", "no active sequence"))?;
+            interpret_rate(s, p, "clip.conformToSequenceRate", "Conform to Sequence Frame Rate", Some(rate))
+        }),
         query("color.spaces", "List Colour Spaces", "{}", spaces),
         query("media.pixelAspects", "List Pixel Aspect Ratios", "{}", pixel_aspects),
         query("lumetri.presets", "List Lumetri Presets", r#"{"folder":str?}"#, list_presets),
@@ -410,8 +417,13 @@ fn interpret(s: &mut Session, p: &Value) -> Result<Value> {
             )
         })?)),
     };
-    if cs.is_none() && par.is_none() {
-        return Err(bad(CMD, "need `colorSpace` (auto or a colour space id) or `pixelAspect`"));
+    let rate = match p.get("frameRate") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(f)) if f == "file" || f == "auto" || f.is_empty() => Some(None),
+        Some(v) => Some(Some(rate_p(v).ok_or_else(|| bad(CMD, "frameRate must be fps (1–1000), [num, den], \"N/D\" or \"file\""))?)),
+    };
+    if cs.is_none() && par.is_none() && rate.is_none() {
+        return Err(bad(CMD, "need `colorSpace` (auto or a colour space id), `pixelAspect` or `frameRate`"));
     }
     s.edit("Interpret Footage", |pr, _| {
         for i in &items {
@@ -421,6 +433,9 @@ fn interpret(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 if let Some(par) = par {
                     m.interpret.par = par;
+                }
+                if let Some(rate) = rate {
+                    m.interpret.frame_rate = rate;
                 }
             }
         }
@@ -434,7 +449,55 @@ fn interpret(s: &mut Session, p: &Value) -> Result<Value> {
         "colorSpace": first.and_then(|m| m.interpret.color_space).map(|c| c.id()).unwrap_or("auto"),
         "pixelAspect": first.map(|m| m.pixel_aspect()),
         "pixelAspectOverride": first.and_then(|m| m.interpret.par).map(|(n, d)| format!("{n}:{d}")).unwrap_or_else(|| "auto".into()),
+        "frameRate": first.and_then(|m| m.interpret.frame_rate).map(|r| json!([r.num, r.den])).unwrap_or_else(|| json!("file")),
     }))
+}
+
+/// A frame rate parameter: fps as a number (1–1000), `[num, den]` or `"N/D"`.
+fn rate_p(v: &Value) -> Option<filmcraft_time::FrameRate> {
+    let r = match v {
+        Value::Number(n) => n.as_f64().filter(|f| f.is_finite() && (1.0..=1000.0).contains(f)).map(filmcraft_time::FrameRate::from_f64)?,
+        Value::Array(a) => match a.as_slice() {
+            [n, d] => filmcraft_time::FrameRate::new(n.as_i64()?, d.as_i64()?),
+            _ => return None,
+        },
+        Value::String(s) => {
+            let (n, d) = s.split_once('/')?;
+            filmcraft_time::FrameRate::new(n.trim().parse().ok()?, d.trim().parse().ok()?)
+        }
+        _ => return None,
+    };
+    (r.num > 0 && r.den > 0 && (1.0..=1000.0).contains(&r.as_f64())).then_some(r)
+}
+
+/// `clip.interpretAsCfr` / `clip.conformToSequenceRate` (Y2): every targeted movie plays its
+/// frames evenly at `rate`, or (None) at its own typical rate (a variable-frame-rate clip's most
+/// common spacing). One undo step; Interpret Footage ▸ `frameRate: "file"` undoes it later.
+fn interpret_rate(s: &mut Session, p: &Value, cmd: &str, label: &str, rate: Option<filmcraft_time::FrameRate>) -> Result<Value> {
+    let items: Vec<ItemId> = footage_targets(s, p)
+        .into_iter()
+        .filter(|i| s.project.item(*i).and_then(|it| it.as_media()).is_some_and(|m| m.info.kind == filmcraft_media::MediaKind::Movie && m.info.video.is_some()))
+        .collect();
+    if items.is_empty() {
+        return Err(bad(cmd, "no movie selected"));
+    }
+    let rate_of = |m: &filmcraft_project::MediaClip| {
+        rate.or_else(|| m.info.video.as_ref().and_then(|v| v.vfr.and_then(|t| t.typical_rate()).or(Some(v.frame_rate)))).filter(|r| r.num > 0 && r.den > 0)
+    };
+    s.edit(label, |pr, _| {
+        for i in &items {
+            if let Some(ItemKind::Media(m)) = pr.item_mut(*i).map(|it| &mut it.kind) {
+                m.interpret.frame_rate = rate_of(m);
+            }
+        }
+        Ok(())
+    })?;
+    let rates: Vec<Value> = items
+        .iter()
+        .filter_map(|i| s.project.item(*i)?.as_media())
+        .map(|m| json!({"frameRate": m.interpret.frame_rate.map(|r| [r.num, r.den]), "duration": m.duration().0}))
+        .collect();
+    Ok(json!({"items": items.iter().map(|i| i.0).collect::<Vec<_>>(), "clips": rates}))
 }
 
 /// `[num, den]` as a pixel aspect ratio FilmCraft can use ([`filmcraft_project::checked_par`]).

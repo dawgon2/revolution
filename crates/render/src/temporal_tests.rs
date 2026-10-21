@@ -41,6 +41,7 @@ fn info(name: &str) -> MediaInfo {
         duration: FPS.tick_of(fixture::FRAMES as i64),
         video: Some(VideoStreamInfo {
             camera_color_space: None,
+            vfr: None,
             width: fixture::W as u32,
             height: fixture::H as u32,
             frame_rate: FPS,
@@ -564,4 +565,49 @@ fn grade_match_ignores_temporal_nr() {
     let mut with_keys = g.clone();
     with_keys.nodes[0].params.insert("tnr.luma".into(), Param::new(ParamValue::Float(0.8)));
     assert!(crate::grade_match::same_grade(&g, &with_keys));
+}
+
+/// A variable-frame-rate clock (Y2): frames on the `FPS` grid up to source frame 110, then only
+/// every other grid frame (a phone dropping to half rate in low light).
+fn vfr_clock() -> filmcraft_media::timing::FrameClock {
+    let starts = (0..200i64).map(|i| if i < 110 { FPS.tick_of(i) } else { FPS.tick_of(110 + 2 * (i - 110)) });
+    filmcraft_media::timing::FrameClock::from_starts(starts, FPS)
+}
+
+#[test]
+fn neighbours_blends_and_reverse_snaps_follow_a_variable_frame_rate_clock() {
+    use filmcraft_media::timing::FrameTimes;
+    let clock = vfr_clock();
+    // source 115 is inside the frame starting at grid 114 (index 112); the next one starts at 116
+    let it = item(0, 20);
+    let got: Vec<i64> = neighbour_times(&it, FPS.tick_of(15), FPS, &clock, 2).iter().map(|n| n.frame).collect();
+    assert_eq!(got, vec![113, 111], "distinct real frames only");
+    let grid: Vec<i64> = neighbour_times(&it, FPS.tick_of(15), FPS, FPS, 2).iter().map(|n| n.frame).collect();
+    assert_eq!(grid.len(), 4, "{grid:?}");
+
+    // half speed: timeline 31 is source 115.5: three quarters of the way from 114 to 116
+    let mut slow = item(0, 40);
+    slow.speed = 0.5;
+    slow.time_interpolation = filmcraft_project::TimeInterpolation::FrameBlending;
+    let (next, w) = crate::interpolation_blend(&slow, FPS.tick_of(31), &clock).expect("a blend");
+    assert_eq!(next, FPS.tick_of(116));
+    assert!((w - 0.75).abs() < 1e-3, "{w}");
+    let (gnext, gw) = crate::interpolation_blend(&slow, FPS.tick_of(31), FPS).expect("a blend");
+    assert_eq!(gnext, FPS.tick_of(116));
+    assert!((gw - 0.5).abs() < 1e-3, "{gw}");
+
+    // reverse: snapped down to the start of the real frame holding the source time
+    let mut rev = item(0, 20);
+    rev.reverse = true;
+    for f in 0..20 {
+        let ft = rev.source_time_at(FPS.tick_of(f));
+        let snapped = crate::video_source_time(&rev, FPS.tick_of(f), &clock);
+        assert!(snapped <= ft, "{f}");
+        let g = FPS.frame_at(snapped);
+        assert_eq!(FPS.tick_of(g), snapped, "on a frame start");
+        if g >= 110 {
+            assert_eq!(g % 2, 0, "{f}: {g} is not a real frame");
+        }
+        assert_eq!(snapped, clock.tick_of(clock.frame_at(ft)).clamp(rev.source_in.min(ft), ft));
+    }
 }

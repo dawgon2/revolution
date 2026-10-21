@@ -45,10 +45,38 @@ Each strip has effect slots. `mixer.addInsert` puts an audio effect in a slot (`
 parameters, `mixer.removeInsert` takes it out. Pre-fader effects see the track before its volume;
 post-fader effects see it after.
 
+To add one without opening the mixer's slot menu:
+
+1. Open the **Effects** panel and find an audio effect (Audio Effects folder, or type its name in the search box).
+2. Drag it onto an audio track's header in the timeline (left of the clips, `timeline.track.A1.fxDrop` while you
+   hover) or onto a strip in the **Audio Track Mixer** (`mixer.A1.fxDrop`). The header or strip gets an outline.
+3. Let go. The effect goes into the track's first free slot, pre-fader, as one undo step. If all slots are full, the
+   status bar says so and nothing changes. Video effects, presets and transitions are ignored there.
+
+Dropping it on a clip instead puts it on that clip only (Effect Controls).
+
+To see and change a track's effects next to where you edit clips:
+
+1. Click an empty part of an audio track's header in the timeline (right of the track name;
+   `timeline.track.A1.header`). The header gets a thin outline and the clip selection is cleared.
+2. **Effect Controls** (Premiere workflow) or the **Inspector ▸ Audio** tab (Resolve workflow) now shows
+   "Track · A1 · …" with each track effect: **On** (untick to bypass), **Post-Fader**, **Edit…** for the
+   EQs and dynamics, **Remove**, and every parameter. Dragging a value is one undo step.
+3. You can also drop an audio effect on this view to add it to the track.
+4. Click a clip to get the clip's controls back.
+
+This differs from Premiere, where track effects live only in the Audio Track Mixer, and from Resolve, where
+they are added from the Mixer; here the mixer slots still work the same way.
+
 | Option | Good for | Trade-offs |
 |---|---|---|
 | **Clip effects** (Effect Controls, Essential Sound) | Fixing one recording: noise, hum, a harsh voice | One instance per clip |
 | **Track inserts** | The same treatment for everything on a track; a limiter on the Mix for delivery | Applies to every clip on the track, even ones that don't need it |
+
+- **Beginner:** fix individual recordings with clip effects; add a track effect only when every clip
+  on the track wants it (one EQ for one microphone).
+- **Pro:** keep one voice per track so its track inserts suit that voice, and share reverb or
+  delay through a bus with sends instead of one copy per track.
 
 ## Submixes and sends
 
@@ -67,6 +95,10 @@ that controls several tracks at once (all the dialogue tracks, say).
    send's level goes to the submix as well (`mixer.setSend` sets the level, `mixer.removeSend`
    removes it). Put a reverb insert on the submix and send several tracks to it for one shared
    room.
+
+From the timeline: right-click an audio track's header ▸ **Send to** ▸ a submix
+(`timeline.track.A1.sendTo.<id>`), or **New Bus** (Resolve workflow) / **New Submix** (Premiere workflow) to
+add a submix and send to it. Submixes the track sends to are greyed out. Sends start post-fader at 0 dB.
 
 ## Automation: recording mixer moves while playing
 

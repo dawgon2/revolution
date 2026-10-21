@@ -429,3 +429,26 @@ fn cleanup_gate() {
     }
     assert!(failed.is_empty(), "one-click loses to the manual process: {failed:?}");
 }
+
+#[test]
+fn voice_isolation_limit_follows_the_noise_level() {
+    use crate::voice_cleanup::{Analysis, suggest};
+    let at =
+        |snr: f64, model: Option<f64>| Analysis { noise_db: -20.0 - snr, speech_db: -20.0, low_db: -30.0, sibilance_db: -20.0, lra: None, model_snr_db: model };
+    let limit = |a: &Analysis| suggest(a, true, None, -1.0).repair.isolate_limit_db;
+    assert_eq!(limit(&at(8.0, None)), 100.0, "heavy noise: no limit");
+    assert_eq!(limit(&at(20.0, None)), 100.0, "medium noise: no limit");
+    assert_eq!(limit(&at(30.0, None)), 12.0, "mild noise");
+    // clean: Voice Isolation stays off and the limit at its default
+    let clean = suggest(&at(50.0, None), true, None, -1.0);
+    assert!(!clean.repair.isolate.on);
+    assert_eq!(clean.repair.isolate_limit_db, 100.0);
+    // the model's own measurement wins; a NaN one is ignored
+    assert_eq!(limit(&at(30.0, Some(8.0))), 100.0);
+    assert_eq!(limit(&at(30.0, Some(f64::NAN))), 12.0);
+    // the chosen limit reaches the effect
+    let st = suggest(&at(30.0, None), true, None, -1.0);
+    let fx = st.effects();
+    let vi = fx.iter().find(|e| e.effect == "voice_isolate").expect("voice isolation on");
+    assert_eq!(vi.f64_at("limit", filmcraft_time::Tick::ZERO), 12.0);
+}

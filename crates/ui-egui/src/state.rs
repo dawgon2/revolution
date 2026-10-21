@@ -679,6 +679,10 @@ pub struct UiState {
     /// Open Clip / Track Fx Editor windows (graphical audio-effect editors).
     #[serde(default)]
     pub audio_fx_editors: Vec<crate::panels::audio_fx_editor::FxTarget>,
+    /// A3.3: the audio track whose header was clicked last (its inserts show in Effect Controls
+    /// while no clip or transition is selected).
+    #[serde(default)]
+    pub selected_track: Option<u64>,
     /// Synchronize / Merge Clips / Create Multi-Camera Source Sequence dialog (open when Some).
     #[serde(default)]
     pub sync_dialog: Option<SyncDraft>,
@@ -697,6 +701,9 @@ pub struct UiState {
     /// Open Window ▸ Workspaces dialog.
     #[serde(default)]
     pub workspace_dialog: Option<WorkspaceDialog>,
+    /// Fork LAY.3: Save Layout as Preset… / Manage Layout Presets….
+    #[serde(default)]
+    pub layout_preset_dialog: Option<crate::panels::layout_presets::PresetDialog>,
     /// Edit / Clip / File menu dialog (Paste Attributes, Make Subclip, Frame Hold Options, …;
     /// open when Some). See `panels::clip_dialogs`.
     #[serde(default)]
@@ -1145,12 +1152,14 @@ impl Default for UiState {
             mask_pen: None,
             save_preset: None,
             audio_fx_editors: Vec::new(),
+            selected_track: None,
             sync_dialog: None,
             multicam_record: true,
             edit_cameras: None,
             guide_dialog: None,
             text_props_dialog: None,
             workspace_dialog: None,
+            layout_preset_dialog: None,
             clip_dialog: None,
             extras: Default::default(),
             gfx_templates: Default::default(),

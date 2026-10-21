@@ -420,7 +420,12 @@ pub(super) fn defs() -> Vec<EffectDef> {
         ),
         audio("denoise", "DeNoise", A_NOISE, vec![f("amount", "Amount", 40.0, 0.0, 100.0, "%")]),
         // Fork (AUDIO-PLAN A2): DeepFilterNet3 voice isolation; DeNoise when the model isn't installed.
-        audio("voice_isolate", "Voice Isolation", A_NOISE, vec![f("amount", "Amount", 100.0, 0.0, 100.0, "%")]),
+        audio(
+            "voice_isolate",
+            "Voice Isolation",
+            A_NOISE,
+            vec![f("amount", "Amount", 100.0, 0.0, 100.0, "%"), f("limit", "Attenuation Limit", 100.0, 6.0, 100.0, "dB")],
+        ),
         audio(
             "dereverb",
             "DeReverb",

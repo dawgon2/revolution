@@ -62,6 +62,8 @@ pub struct MkvSource {
     alpha: Option<Arc<crate::webm_alpha::AlphaLayer>>,
     /// The playable audio tracks in file order: `info.audio_streams[k]` describes `audios[k]`.
     audios: Vec<MkvAudio>,
+    /// The frames' own start times for a variable-frame-rate track (Y2), else the rate's grid.
+    clock: filmcraft_media::timing::FrameClock,
     /// [`MediaSource::set_handoff_scale`] (f32 bits; 1.0: unscaled).
     handoff_scale: std::sync::atomic::AtomicU32,
 }
@@ -367,6 +369,12 @@ impl MkvSource {
                     FrameRate::from_f64(1.0 / step)
                 }
             };
+            // a variable-frame-rate clip's rate is its typical one (Y2)
+            let vfr = {
+                let (n, d) = tb(t);
+                filmcraft_media::timing::FrameTiming::detect(t.samples.iter().map(|s| s.pts), d as f64 / n as f64)
+            };
+            let rate = vfr.and_then(|v| v.typical_rate()).unwrap_or(rate);
             ventry = sample_entry(&t.codec, &t.codec_private, t.video.as_ref(), w as u16, h as u16);
             let (color, explicit) = color_of(&v, w, h, ventry.as_ref().and_then(|e| crate::stream_color::from_codec_config(&e.codec)));
             if explicit {
@@ -377,6 +385,7 @@ impl MkvSource {
             let ((w, h), par) = if rotation % 2 == 1 { ((h, w), (v.pixel_aspect().1, v.pixel_aspect().0)) } else { ((w, h), v.pixel_aspect()) };
             VideoStreamInfo {
                 camera_color_space: None,
+                vfr,
                 width: w,
                 height: h,
                 frame_rate: rate,
@@ -437,7 +446,14 @@ impl MkvSource {
             matches!(t.codec, Codec::Vp9 { .. }) && t.video.as_ref().is_some_and(|v| v.alpha_mode != 0) && t.samples.iter().any(|s| s.addition.is_some())
         });
         let alpha = alpha.map(|t| Arc::new(crate::webm_alpha::AlphaLayer::new(bytes.clone(), t.samples.iter().map(|s| (s.pts, s.addition)))));
+        let clock = match (vtrack.and_then(|i| file.tracks.get(i)), info.video.as_ref()) {
+            (Some(t), Some(v)) if v.vfr.is_some() => {
+                filmcraft_media::timing::FrameClock::from_starts(t.samples.iter().map(|s| to_tick(t, s.pts)), v.frame_rate)
+            }
+            _ => filmcraft_media::timing::FrameClock::Grid(info.frame_rate()),
+        };
         Ok(Self {
+            clock,
             info,
             bytes,
             file,
@@ -579,6 +595,9 @@ impl MediaSource for MkvSource {
     }
     fn info(&self) -> &MediaInfo {
         &self.info
+    }
+    fn frame_clock(&self) -> filmcraft_media::timing::FrameClock {
+        self.clock.clone()
     }
     fn set_handoff_scale(&self, scale: f32) {
         let s = if scale.is_finite() && scale > 0.0 && scale < 1.0 { scale } else { 1.0 };

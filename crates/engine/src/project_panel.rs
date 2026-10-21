@@ -360,7 +360,10 @@ pub fn cell(p: &Project, it: &ProjectItem, column: &str) -> (String, SortKey) {
         "Name" => text(it.name.clone()),
         "Label" => text(it.label.name().to_string()),
         "Media Type" => text(it.type_label().to_string()),
-        "Frame Rate" if has_v => (format!("{} fps", rate.label()), SortKey::Num(rate.num as f64 / rate.den.max(1) as f64)),
+        "Frame Rate" if has_v => {
+            let vfr = if matches!(&it.kind, ItemKind::Media(m) if m.vfr().is_some()) { " (VFR)" } else { "" };
+            (format!("{} fps{vfr}", rate.label()), SortKey::Num(rate.num as f64 / rate.den.max(1) as f64))
+        }
         "Frame Rate" => (String::new(), SortKey::Num(0.0)),
         "Media Start" => time(Some(first)),
         "Media End" => time(Some(if dur > Tick::ZERO { first + dur - fd } else { first })),

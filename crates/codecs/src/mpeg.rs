@@ -14,6 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use filmcraft_frame::{AudioBuffer, VideoFrame};
+use filmcraft_media::timing::{FrameClock, FrameTimes, FrameTiming};
 use filmcraft_media::{AudioStreamInfo, FrameRequest, MediaError, MediaInfo, MediaKind, MediaSource, SharedSource, VideoStreamInfo};
 use filmcraft_mpegts::{Codec, File, Kind, Unit};
 use filmcraft_time::{FrameRate, Tick};
@@ -104,6 +105,8 @@ pub struct MpegSource {
     es: Option<(Arc<[u8]>, Vec<std::ops::Range<usize>>)>,
     video: Option<VideoTrack>,
     gop: GopCache,
+    /// The pictures' own times for a variable-frame-rate stream (Y2), else the rate's grid.
+    clock: FrameClock,
     audio: Option<AudioTrack>,
     /// Why the video or audio stream cannot be decoded.
     unsupported_video: Option<String>,
@@ -221,6 +224,7 @@ impl MpegSource {
             es: None,
             video: None,
             gop: GopCache::new(None),
+            clock: FrameClock::Grid(FrameRate::default()),
             audio: None,
             unsupported_video: None,
             unsupported_audio: None,
@@ -263,6 +267,7 @@ impl MpegSource {
                     src.unsupported_video = Some(format!("{} video in {} (Revolution has no decoder for it)", st.codec.name(), file.format.name()));
                     src.info.video = Some(VideoStreamInfo {
                         camera_color_space: None,
+                        vfr: None,
                         width: 0,
                         height: 0,
                         frame_rate: FrameRate::FPS_25,
@@ -274,6 +279,7 @@ impl MpegSource {
                         bitrate: None,
                         hdr: None,
                     });
+                    src.clock = FrameClock::Grid(FrameRate::FPS_25);
                     src.setup_audio(file, astream, None);
                 }
             }
@@ -327,6 +333,7 @@ impl MpegSource {
             es: Some((all, aus)),
             video: Some(track),
             gop: GopCache::new(None),
+            clock: FrameClock::Grid(FrameRate::default()),
             audio: None,
             unsupported_video: None,
             unsupported_audio: None,
@@ -363,20 +370,28 @@ impl MpegSource {
     /// whose PES packet carried none are interpolated at the frame duration from the nearest
     /// frame with one (`None` only when no frame has a timestamp, and for elementary streams).
     pub fn video_pts(&self) -> Vec<Option<i64>> {
-        let (Some(v), Some(f)) = (&self.video, &self.file) else { return Vec::new() };
-        let units = &f.streams[v.stream].units;
-        let raw: Vec<Option<i64>> = v.order.iter().map(|&i| units[v.units[i]].pts).collect();
+        let raw = self.raw_video_pts();
         let rate = self.info.frame_rate();
         let dur = |k: i64| (k as i128 * 90_000 * rate.den as i128 / rate.num.max(1) as i128) as i64;
         let known: Vec<usize> = (0..raw.len()).filter(|&i| raw[i].is_some()).collect();
         (0..raw.len())
             .map(|i| {
                 raw[i].or_else(|| {
-                    let j = known.iter().rev().find(|&&j| j < i).or_else(|| known.iter().find(|&&j| j > i))?;
+                    // the nearest frame with a timestamp before `i`, else after it
+                    let k = known.partition_point(|&j| j < i);
+                    let j = k.checked_sub(1).and_then(|k| known.get(k)).or_else(|| known.get(k))?;
                     Some(raw[*j]? + dur(i as i64 - *j as i64))
                 })
             })
             .collect()
+    }
+
+    /// The timestamps (90 kHz) the presented video frames carry, in display order (None where a
+    /// PES packet had none; empty for elementary streams).
+    fn raw_video_pts(&self) -> Vec<Option<i64>> {
+        let (Some(v), Some(f)) = (&self.video, &self.file) else { return Vec::new() };
+        let Some(units) = f.streams.get(v.stream).map(|s| &s.units) else { return Vec::new() };
+        v.order.iter().map(|&i| v.units.get(i).and_then(|&u| units.get(u)).and_then(|u| u.pts)).collect()
     }
 
     fn read_unit(&self, v: &VideoTrack, i: usize) -> crate::Result<Vec<u8>> {
@@ -463,6 +478,7 @@ impl MpegSource {
         self.info.duration = duration;
         self.info.video = Some(VideoStreamInfo {
             camera_color_space: None,
+            vfr: None,
             width,
             height,
             frame_rate: rate,
@@ -474,6 +490,25 @@ impl MpegSource {
             bitrate: (secs > 0.0).then(|| (total_bytes as f64 * 8.0 / secs) as u64),
             hdr: None,
         });
+        self.clock = FrameClock::Grid(rate);
+        // variable frame rate (Y2): only from a full, strictly increasing set of the stream's own
+        // timestamps (a missing one or a 33-bit wrap keeps the grid)
+        let shown = self.raw_video_pts();
+        let first = shown.first().copied().flatten();
+        let times: Option<Vec<Tick>> = shown.iter().map(|p| Some(Tick::from_rational(p.as_ref()?.checked_sub(first?)?, 1, 90_000))).collect();
+        if let Some(times) = times.filter(|t| t.len() >= 2 && t.windows(2).all(|w| w[0] < w[1])) {
+            let vfr = FrameTiming::detect(times.iter().map(|t| t.0), filmcraft_time::TICKS_PER_SECOND as f64);
+            let clock = FrameClock::from_starts(times.iter().copied(), rate);
+            if let (Some(vfr), FrameClock::Times(all)) = (vfr, &clock)
+                && all.len() == times.len() + 1
+            {
+                self.info.duration = clock.tick_of(times.len() as i64);
+                if let Some(v) = self.info.video.as_mut() {
+                    v.vfr = Some(vfr);
+                }
+                self.clock = clock;
+            }
+        }
         Ok(())
     }
 
@@ -772,6 +807,9 @@ impl MediaSource for MpegSource {
     fn info(&self) -> &MediaInfo {
         &self.info
     }
+    fn frame_clock(&self) -> FrameClock {
+        self.clock.clone()
+    }
 
     fn video_frame(&self, req: FrameRequest) -> Result<Arc<VideoFrame>, MediaError> {
         if let Some(why) = &self.unsupported_video {
@@ -782,8 +820,8 @@ impl MediaSource for MpegSource {
             return Err(MediaError::Decode("no pictures".into()));
         }
         let rate = self.info.frame_rate();
-        let f = rate.frame_at(req.time.max(Tick::ZERO)).clamp(0, v.order.len() as i64 - 1);
-        let late = filmcraft_media::cancel::catch_up().map(|m| rate.frame_at(req.time - m));
+        let f = self.clock.frame_at(req.time.max(Tick::ZERO)).clamp(0, v.order.len() as i64 - 1);
+        let late = filmcraft_media::cancel::catch_up().map(|m| self.clock.frame_at(req.time - m));
         let tol = filmcraft_media::cancel::skim().map(|d| rate.frame_at(d));
         Ok(self.gop.frame_skim(&MpegVideo { src: self, v }, f, late, tol)?)
     }

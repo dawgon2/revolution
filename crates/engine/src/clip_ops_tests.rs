@@ -1050,3 +1050,38 @@ fn keyboard_slip_keeps_linked_clips_in_sync_past_the_shorter_handle() {
     s.execute("timeline.slipLeft5", json!({})).unwrap();
     assert_eq!((clip(&s, v).source_in, clip(&s, a).source_in), (Tick(fr.0 * 30), Tick(fr.0 * 35)));
 }
+
+/// Y2: a phone-like clip that drops from 30 to 15 fps after frame 45 (ffmpeg-made). Stepping in
+/// the Source monitor lands on its real frames, not on the 30 fps grid.
+#[test]
+fn source_steps_land_on_a_variable_frame_rate_clips_own_frames() {
+    let Some(ffmpeg) = filmcraft_testkit::oracle::ffmpeg_or_skip("vfr source step") else { return };
+    let out = filmcraft_testkit::fixtures_dir("engine/vfr").join("drop.mp4");
+    let made = filmcraft_testkit::fixtures::generate(&out, |tmp| {
+        std::process::Command::new(&ffmpeg)
+            .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=128x72:rate=30:duration=3"])
+            .args(["-vf", "settb=1/90000,setpts='(if(lt(N,45),N,45+2*(N-45))/30)/TB'", "-fps_mode", "passthrough", "-enc_time_base:v", "1/90000"])
+            .args(["-c:v", "libx264", "-preset", "ultrafast", "-g", "15", "-pix_fmt", "yuv420p", "-video_track_timescale", "90000"])
+            .arg(tmp)
+            .status()
+            .is_ok_and(|s| s.success())
+    });
+    let Some(path) = made else { return };
+    let mut s = Session::default();
+    s.execute("file.import", json!({"paths": [path]})).unwrap();
+    let item = s.project.items.values().find(|i| i.as_media().is_some()).map(|i| i.id).expect("imported");
+    assert!(s.project.item(item).and_then(|i| i.as_media()).and_then(|m| m.vfr()).is_some(), "detected as VFR");
+    let v = crate::clip_ops::source_view(&s, item).unwrap();
+    let r = filmcraft_time::FrameRate::new(30, 1);
+    // (ffmpeg rounds some frame times by one 90 kHz unit: compared within a millisecond)
+    let step = |from: i64, n: i64| {
+        let got = crate::clip_ops::source_step(&s, &v, r.tick_of(from), n);
+        (got.0 as f64 / TICKS_PER_SECOND as f64 * 30.0 * 1000.0).round() / 1000.0
+    };
+    assert_eq!(step(43, 1), 44.0);
+    assert_eq!(step(45, 1), 47.0, "the next real frame, two grid frames on");
+    assert_eq!(step(46, 1), 47.0, "from inside a frame");
+    assert_eq!(step(48, -1), 45.0);
+    assert_eq!(step(48, 5), 57.0);
+    assert_eq!(step(0, -1), -1.0, "before the first frame: one gap back (the caller clamps)");
+}

@@ -29,6 +29,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use filmcraft_frame::VideoFrame;
+use filmcraft_media::timing::FrameTimes;
 use filmcraft_media::{MediaSource, SharedSource};
 use filmcraft_project::{ItemKind, Project, Sequence, TrackItem};
 use filmcraft_time::{FrameRate, Tick};
@@ -52,8 +53,10 @@ pub struct NeighbourTime {
 }
 
 /// The source frame a clip shows at timeline `t` (None: the media has no usable frame rate).
-pub fn source_frame_at(item: &TrackItem, t: Tick, media_rate: FrameRate) -> Option<(Tick, i64)> {
-    if media_rate.frame_duration().0 <= 0 {
+/// `media_rate` is the source's frame clock (a frame rate, or a variable-frame-rate source's
+/// [`filmcraft_media::timing::FrameClock`]), so frames are told apart by their own times.
+pub fn source_frame_at(item: &TrackItem, t: Tick, media_rate: impl FrameTimes + Copy) -> Option<(Tick, i64)> {
+    if !media_rate.usable() {
         return None;
     }
     let ft = crate::video_source_time(item, t, media_rate);
@@ -64,7 +67,7 @@ pub fn source_frame_at(item: &TrackItem, t: Tick, media_rate: FrameRate) -> Opti
 /// [`crate::tnr::MAX_RADIUS`]): see the module docs. Ordered by distance (±1 before ±2), at most
 /// [`crate::tnr::MAX_NEIGHBOURS`]. Empty for a hold, a clip one frame long, a sequence or media
 /// without a usable frame rate.
-pub fn neighbour_times(item: &TrackItem, t: Tick, seq_rate: FrameRate, media_rate: FrameRate, radius: u8) -> Vec<NeighbourTime> {
+pub fn neighbour_times(item: &TrackItem, t: Tick, seq_rate: FrameRate, media_rate: impl FrameTimes + Copy, radius: u8) -> Vec<NeighbourTime> {
     neighbour_times_in(item, (item.start, item.end()), t, seq_rate, media_rate, radius)
 }
 
@@ -84,7 +87,14 @@ pub fn clip_bounds(seq: &Sequence, item: &TrackItem, t: Tick) -> (Tick, Tick) {
 
 /// [`neighbour_times`] within the timeline span `bounds` (start inclusive, end exclusive; see
 /// [`clip_bounds`]) instead of the item's own range.
-pub fn neighbour_times_in(item: &TrackItem, bounds: (Tick, Tick), t: Tick, seq_rate: FrameRate, media_rate: FrameRate, radius: u8) -> Vec<NeighbourTime> {
+pub fn neighbour_times_in(
+    item: &TrackItem,
+    bounds: (Tick, Tick),
+    t: Tick,
+    seq_rate: FrameRate,
+    media_rate: impl FrameTimes + Copy,
+    radius: u8,
+) -> Vec<NeighbourTime> {
     let radius = crate::tnr::radius(radius);
     let step = seq_rate.frame_duration().0;
     // (a time outside the span has no frame of the clip to start from)
@@ -390,7 +400,7 @@ fn neighbours<P: Clone>(
 /// Blending / Optical Flow makes between two source frames (a retimed clip) is left out, as the
 /// flows are estimated between source frames; when the frame at `t` itself is such a frame, none
 /// (temporal NR doesn't run on interpolated frames).
-fn timed_neighbours(seq: &Sequence, item: &TrackItem, t: Tick, rate: FrameRate, radius: u8) -> Vec<NeighbourTime> {
+fn timed_neighbours(seq: &Sequence, item: &TrackItem, t: Tick, rate: impl FrameTimes + Copy, radius: u8) -> Vec<NeighbourTime> {
     if crate::interpolation_blend(item, t, rate).is_some() {
         return Vec::new();
     }
@@ -453,7 +463,8 @@ pub(crate) fn attach_frames(
         crate::grade::strip_temporal(ops);
         return;
     };
-    let rate = src.info().frame_rate();
+    let clock = src.frame_clock();
+    let rate = &clock;
     let Some((_, cur_f)) = source_frame_at(item, t, rate) else {
         crate::grade::strip_temporal(ops);
         return;
@@ -509,7 +520,8 @@ pub(crate) fn attach_images(
         crate::grade::strip_temporal(ops);
         return;
     };
-    let rate = src.info().frame_rate();
+    let clock = src.frame_clock();
+    let rate = &clock;
     let current = source_frame_at(item, t, rate).and_then(|(ft, f)| crate::clip_frame(src.as_ref(), item, ft, want).ok().map(|fr| (f, fr)));
     let Some((cur_f, current)) = current else {
         crate::grade::strip_temporal(ops);

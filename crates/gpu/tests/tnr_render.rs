@@ -41,6 +41,7 @@ fn project(frames: f64) -> (Project, filmcraft_project::ItemId, SourceMap) {
         duration: FPS.tick_of(fixture::FRAMES as i64),
         video: Some(VideoStreamInfo {
             camera_color_space: None,
+            vfr: None,
             width: fixture::W as u32,
             height: fixture::H as u32,
             frame_rate: FPS,

@@ -3635,3 +3635,26 @@
 	App icon	Icône de l’application
 	Rounded (macOS style)	Arrondi (style macOS)
 	Click to reset peak hold and clip light	Cliquez pour réinitialiser le maintien des crêtes et le voyant d’écrêtage
+	Save Layout	Enregistrer la disposition
+	Keep this page arranged the way it is now: it opens like this every time. Right-click to reset.	Garder cette page telle qu’elle est : elle s’ouvrira ainsi à chaque fois. Clic droit pour réinitialiser.
+	Restore Original Layout	Restaurer la disposition d’origine
+	Saved the {page} page layout. Right-click Save Layout to reset it.	Disposition de la page {page} enregistrée. Clic droit sur Enregistrer la disposition pour la réinitialiser.
+	Saved the {name} layout. Right-click Save Layout to reset it.	Disposition {name} enregistrée. Clic droit sur Enregistrer la disposition pour la réinitialiser.
+	My Layout	Ma disposition
+	Imported Layout	Disposition importée
+	Save Layout as Preset	Enregistrer la disposition comme préréglage
+	Save Layout as Preset…	Enregistrer la disposition comme préréglage…
+	Layout Presets	Préréglages de disposition
+	Import Preset…	Importer un préréglage…
+	Manage Layout Presets…	Gérer les préréglages de disposition…
+	Saves how every page is arranged now under one name.	Enregistre la disposition actuelle de chaque page sous un seul nom.
+	No layout presets yet: arrange the pages, then Save Layout as Preset…	Aucun préréglage pour l’instant : disposez les pages, puis Enregistrer la disposition comme préréglage…
+	Load	Charger
+	Update	Mettre à jour
+	Replace it with how the pages are arranged now	Le remplacer par la disposition actuelle des pages
+	Loaded the layout preset {n}.	Préréglage de disposition {n} chargé.
+	Track · {label} · {name}	Piste · {label} · {name}
+	No track effects. Drag an audio effect from the Effects panel here, onto the track header or onto its mixer strip.	Aucun effet de piste. Faites glisser un effet audio du panneau Effets ici, sur l’en-tête de la piste ou sur sa tranche de mixage.
+	Send to	Envoyer vers
+	New Bus	Nouveau bus
+	Attenuation Limit	Limite d’atténuation

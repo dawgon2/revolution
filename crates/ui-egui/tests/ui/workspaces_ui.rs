@@ -282,3 +282,114 @@ fn save_rename_and_delete_through_the_dialogs() {
     assert!(d.app().ui.workspace_dialog.is_none(), "Close closes the dialog");
     let _ = std::fs::remove_dir_all(&data);
 }
+
+/// Fork LAY.2: a workspace keeps an unsaved arrangement when you switch away and back and across
+/// a restart; Reset to Saved Layout drops it, and saving makes it the saved layout.
+#[test]
+fn unsaved_arrangements_survive_switches_and_restarts_until_reset() {
+    let data = data_dir("working");
+    let mut d = Driver::launch(&data);
+    assert_eq!(d.workspace(), "Editing");
+    d.ok("ui.panel.close", json!({"panel": "Metadata"}));
+    d.menu("window.workspace.color", json!({}));
+    assert!(d.shows(PanelKind::LumetriColor));
+    d.menu("window.workspace.editing", json!({}));
+    assert!(!d.shows(PanelKind::Metadata), "the unsaved change came back with the workspace");
+    assert_eq!(saved_file(&data)["saved"], json!([]), "nothing was saved");
+    // quitting keeps it too (on_exit), and an untouched workspace leaves nothing behind
+    eframe::App::on_exit(d.app());
+    drop(d);
+    let names: Vec<Value> = saved_file(&data)["working"].as_array().unwrap().iter().map(|w| w["name"].clone()).collect();
+    assert_eq!(names, [json!("Editing")], "only the changed workspace is kept");
+    let mut d = Driver::launch(&data);
+    assert_eq!(d.workspace(), "Editing");
+    assert!(!d.shows(PanelKind::Metadata), "the arrangement survived the restart");
+    // Reset to Saved Layout: the built-in layout, and the kept arrangement is gone
+    d.menu("window.workspace.reset", json!({}));
+    assert!(d.shows(PanelKind::Metadata));
+    assert!(saved_file(&data).get("working").is_none_or(|w| w == &json!([])));
+    // a saved change isn't kept twice
+    d.ok("ui.panel.close", json!({"panel": "History"}));
+    d.menu("window.workspace.saveChanges", json!({}));
+    d.menu("window.workspace.color", json!({}));
+    d.menu("window.workspace.editing", json!({}));
+    assert!(!d.shows(PanelKind::History));
+    assert!(saved_file(&data).get("working").is_none_or(|w| w == &json!([])), "{}", saved_file(&data));
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+/// Fork LAY.3: Window ▸ Layout Presets saves every workspace's arrangement under one name, loads
+/// it as unsaved arrangements (Reset still goes back to the saved layout), and moves between
+/// computers as a `.revlayout` file; the dialogs do the same by click, and a bad file is refused.
+#[test]
+fn layout_presets_save_load_export_import_and_manage() {
+    let data = data_dir("presets");
+    let mut d = Driver::launch(&data);
+    d.ok("ui.panel.close", json!({"panel": "Metadata"}));
+    assert_eq!(d.menu("window.layoutPreset.save", json!({"name": "Tight"}))["saved"], "Tight");
+    assert!(d.menu_err("window.layoutPreset.save", json!({"name": "tight"})).contains("already exists"));
+    assert!(d.menu_err("window.layoutPreset.save", json!({"name": " "})).contains("needs a name"));
+    let lp: Vec<String> = d
+        .ok("ui.menu.list", json!({}))
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["path"] == json!(["Window", "Layout Presets"]))
+        .map(|i| i["label"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(lp, ["Tight", "Save Layout as Preset…", "Import Preset…", "Manage Layout Presets…"]);
+
+    // back to the original, then load the preset from another workspace
+    d.menu("window.workspace.reset", json!({}));
+    assert!(d.shows(PanelKind::Metadata));
+    d.menu("window.workspace.color", json!({}));
+    let r = d.menu("window.layoutPreset.load.tight", json!({}));
+    assert_eq!(r["workspace"], "Editing", "{r}");
+    assert_eq!(d.workspace(), "Editing");
+    assert!(!d.shows(PanelKind::Metadata), "the preset's arrangement");
+    d.menu("window.workspace.reset", json!({}));
+    assert!(d.shows(PanelKind::Metadata), "Reset still goes to the saved layout");
+
+    // export, delete, import twice (the second is renamed)
+    let file = data.join("tight.revlayout");
+    d.menu("window.layoutPreset.export", json!({"name": "Tight", "path": file.to_str().unwrap()}));
+    d.menu("window.layoutPreset.delete", json!({"name": "Tight"}));
+    assert!(d.app().workspaces.presets.is_empty());
+    assert_eq!(d.menu("window.layoutPreset.import", json!({"path": file.to_str().unwrap()}))["imported"], "Tight");
+    assert_eq!(d.menu("window.layoutPreset.import", json!({"path": file.to_str().unwrap()}))["imported"], "Tight 2");
+    assert_eq!(saved_file(&data)["presets"].as_array().unwrap().len(), 2, "presets are in workspaces.json");
+    // hostile files: not JSON, the wrong format, layouts that don't read
+    let bad = data.join("bad.revlayout");
+    for body in [
+        &b"\xff\x00garbage"[..],
+        br#"{"format":"other","preset":{}}"#,
+        br#"{"format":"revolution-layout-preset","preset":{"name":"X","layouts":[{"name":"Editing","layout":{"Nope":1}}]}}"#,
+    ] {
+        std::fs::write(&bad, body).unwrap();
+        let e = d.menu_err("window.layoutPreset.import", json!({"path": bad.to_str().unwrap()}));
+        assert!(e.contains("layout preset") || e.contains("no layout"), "{e}");
+    }
+
+    // the dialogs: save by name, then rename and delete in Manage
+    assert_eq!(d.menu("window.layoutPreset.save", json!({}))["dialog"], "saveLayoutPreset");
+    d.frames(2);
+    d.retype("layoutPresets.save.name", "Desk");
+    d.snapshot("preset-save");
+    d.click("layoutPresets.save.ok");
+    assert!(!d.has("layoutPresets.save.ok"));
+    assert!(d.app().workspaces.presets.iter().any(|p| p.name == "Desk"));
+    d.menu("window.layoutPreset.manage", json!({}));
+    d.frames(2);
+    d.click("layoutPresets.row.2");
+    d.retype("layoutPresets.name", "Desk Monitor");
+    d.snapshot("preset-manage");
+    d.click("layoutPresets.rename");
+    assert!(d.app().workspaces.presets.iter().any(|p| p.name == "Desk Monitor"));
+    d.click("layoutPresets.load");
+    assert!(d.app().ui.status.contains("Desk Monitor"), "{}", d.app().ui.status);
+    d.click("layoutPresets.delete");
+    assert_eq!(d.app().workspaces.presets.len(), 2);
+    d.click("layoutPresets.close");
+    assert!(d.app().ui.layout_preset_dialog.is_none());
+    let _ = std::fs::remove_dir_all(&data);
+}

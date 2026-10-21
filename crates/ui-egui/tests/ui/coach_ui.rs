@@ -867,6 +867,15 @@ fn walked() -> (Driver, BTreeSet<String>) {
 /// Guide ids the walk doesn't reach, each with the reason. Each must still be known to the app's
 /// check (a dynamic id) or a literal automation id in the UI source.
 const NOT_WALKED: &[(&str, &str)] = &[
+    ("pageBar.saveLayout.reset", "Save Layout's right-click menu (pages_ui covers it)"),
+    ("pageBar.saveLayout.original", "Save Layout's right-click menu (pages_ui covers it)"),
+    ("pageBar.saveLayout.preset", "Save Layout's right-click menu (pages_ui covers it)"),
+    ("pageBar.saveLayout.presets", "Save Layout's right-click menu (pages_ui covers it)"),
+    ("layoutPresets.save.name", "the Save Layout as Preset dialog (workspaces_ui covers it)"),
+    ("layoutPresets.load", "the Layout Presets dialog (workspaces_ui covers it)"),
+    ("layoutPresets.update", "the Layout Presets dialog (workspaces_ui covers it)"),
+    ("layoutPresets.export", "the Layout Presets dialog (workspaces_ui covers it)"),
+    ("layoutPresets.import", "the Layout Presets dialog (workspaces_ui covers it)"),
     ("inspector.tab.video", "the Resolve workflow's Inspector with a clip selected (inspector_ui covers its tabs and sections)"),
     ("inspector.tab.audio", "the Resolve workflow's Inspector with a clip selected (inspector_ui covers its tabs and sections)"),
     ("inspector.tab.file", "the Resolve workflow's Inspector with a clip selected (inspector_ui covers its tabs and sections)"),

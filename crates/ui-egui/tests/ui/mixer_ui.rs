@@ -327,4 +327,117 @@ fn audio_track_headers_carry_a_meter_that_resets_by_click() {
     let before = d.exec("sequence.inspect", json!({}));
     d.click("timeline.track.A1.meter");
     assert_eq!(d.exec("sequence.inspect", json!({})), before, "a meter click changed the sequence");
+    // A3.5: look at the headers in both workflows (with FILMCRAFT_UI_SNAPSHOT_DIR set)
+    d.snapshot("audio-headers-premiere", Some("timeline.track.A"));
+    d.exec("settings.setWorkflow", json!({"workflow": "resolve"}));
+    d.frames(4);
+    d.click("page.edit");
+    assert!(d.element("timeline.track.A1.meter").is_some(), "Resolve headers keep the meter");
+    d.snapshot("audio-headers-resolve", Some("timeline.track.A"));
+}
+
+#[test]
+fn dropping_an_audio_effect_on_a_track_header_or_strip_adds_an_insert() {
+    let mut d = Driver::demo();
+    let inserts = |d: &mut Driver, strip: &str| -> Vec<String> {
+        d.strip(strip)["inserts"].as_array().map(|a| a.iter().map(|e| e["effect"].as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()
+    };
+    d.ok("ui.panel.show", json!({"panel": "Effects"}));
+    d.ok("ui.set", json!({"effectsSearch": "reverb"}));
+    d.frames(3);
+    assert!(d.element("effects.item.studio_reverb").is_some(), "{:?}", d.ids("effects.item."));
+    // A1's header in the timeline
+    d.ok("ui.drag", json!({"from": {"id": "effects.item.studio_reverb"}, "to": {"id": "timeline.track.A1.meter"}, "steps": 8}));
+    d.frames(2);
+    assert_eq!(inserts(&mut d, "A1"), ["studio_reverb"]);
+    // a video effect on an audio header does nothing
+    d.ok("ui.set", json!({"effectsSearch": "gaussian"}));
+    d.frames(3);
+    d.ok("ui.drag", json!({"from": {"id": "effects.item.gaussian_blur"}, "to": {"id": "timeline.track.A1.meter"}, "steps": 8}));
+    d.frames(2);
+    assert_eq!(inserts(&mut d, "A1"), ["studio_reverb"], "a video effect became an insert");
+    // a mixer strip: the next free slot
+    d.ok("ui.set", json!({"workspace": "Audio"}));
+    d.ok("ui.panel.show", json!({"panel": "Effects"}));
+    d.ok("ui.set", json!({"effectsSearch": "reverb"}));
+    d.frames(3);
+    d.ok("ui.drag", json!({"from": {"id": "effects.item.studio_reverb"}, "to": {"id": "mixer.A1.fader"}, "steps": 8}));
+    d.frames(2);
+    assert_eq!(inserts(&mut d, "A1"), ["studio_reverb", "studio_reverb"]);
+    d.exec("edit.undo", json!({}));
+    assert_eq!(inserts(&mut d, "A1"), ["studio_reverb"], "one undo step per drop");
+}
+
+#[test]
+fn a_clicked_audio_track_header_shows_its_inserts_in_effect_controls_and_the_inspector() {
+    let mut d = Driver::demo();
+    d.exec("mixer.addInsert", json!({"strip": "A1", "effect": "studio_reverb"}));
+    d.ok("ui.panel.show", json!({"panel": "Effect Controls"}));
+    d.frames(2);
+    d.click("timeline.track.A1.header");
+    d.frames(2);
+    assert!(d.element("effectControls.track.fx.0").is_some(), "{:?}", d.ids("effectControls."));
+    assert_eq!(d.exec("sequence.inspect", json!({}))["selection"], json!([]), "header click clears the clip selection");
+    d.snapshot("track-inserts-effect-controls", None);
+    // bypass from Effect Controls, one undo step
+    d.click("effectControls.track.fx.0.enabled");
+    assert_eq!(d.strip("A1")["inserts"][0]["enabled"], false);
+    d.exec("edit.undo", json!({}));
+    assert_eq!(d.strip("A1")["inserts"][0]["enabled"], true);
+    // a clip selection takes Effect Controls back
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = seq["audio"][0]["items"][0]["clip"].as_u64().unwrap();
+    d.exec("timeline.select", json!({"clips": [clip]}));
+    d.frames(2);
+    assert!(d.element("effectControls.track.fx.0").is_none(), "clip selected but the track view stayed");
+    // remove from the Inspector's Audio tab (Resolve workflow, Edit page)
+    d.exec("settings.setWorkflow", json!({"workflow": "resolve"}));
+    d.frames(4);
+    d.click("page.edit");
+    d.exec("timeline.select", json!({"clips": []}));
+    d.click("timeline.track.A1.header");
+    if d.element("panel.Inspector").is_none() {
+        d.click("pageToolbar.Inspector");
+    }
+    d.frames(3);
+    assert!(d.element("inspector.tab.audio").is_some(), "{:?}", d.ids("inspector."));
+    d.click("inspector.tab.audio");
+    d.frames(2);
+    d.snapshot("track-inserts-inspector-resolve", None);
+    d.click("effectControls.track.fx.0.remove");
+    assert_eq!(d.strip("A1")["inserts"], json!([]));
+}
+
+#[test]
+fn send_to_on_an_audio_track_header_makes_a_bus_and_sends_to_it() {
+    let mut d = Driver::demo();
+    let sends = |d: &mut Driver, strip: &str| d.strip(strip)["sends"].as_array().map_or(0, Vec::len);
+    let open = |d: &mut Driver| {
+        d.ok("ui.click", json!({"id": "timeline.track.A1.header", "button": "right"}));
+        d.frames(2);
+        d.click("timeline.track.A1.sendTo");
+        d.frames(2);
+    };
+    open(&mut d);
+    let ids = d.ids("timeline.track.A1.sendTo.");
+    assert_eq!(ids, ["timeline.track.A1.sendTo.new"], "no buses yet: {ids:?}");
+    d.click("timeline.track.A1.sendTo.new");
+    let m = d.exec("mixer.inspect", json!({}));
+    let bus = m["strips"].as_array().unwrap().iter().find(|s| s["ref"].as_str().is_some_and(|r| r.starts_with('S'))).cloned().expect("a submix");
+    assert_eq!(sends(&mut d, "A1"), 1, "A1 sends to the new bus");
+    // A2 sends to the same bus from its own header
+    d.ok("ui.click", json!({"id": "timeline.track.A2.header", "button": "right"}));
+    d.frames(2);
+    d.click("timeline.track.A2.sendTo");
+    d.frames(2);
+    let bus_id = bus["id"]
+        .as_u64()
+        .or_else(|| d.ids("timeline.track.A2.sendTo.").iter().find(|i| !i.ends_with(".new")).and_then(|i| i.rsplit('.').next()?.parse().ok()))
+        .unwrap();
+    d.click(&format!("timeline.track.A2.sendTo.{bus_id}"));
+    assert_eq!(sends(&mut d, "A2"), 1);
+    // A1 already sends there: offered but disabled, so a click adds nothing
+    open(&mut d);
+    d.click(&format!("timeline.track.A1.sendTo.{bus_id}"));
+    assert_eq!(sends(&mut d, "A1"), 1);
 }

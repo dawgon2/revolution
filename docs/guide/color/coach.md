@@ -106,6 +106,7 @@ Hints you have seen are remembered the same way (`color.coach.hintsSeen`, see be
 | `splitter-combiner` | Grade the red, green and blue channels separately | Split a picture into channel nodes, correct the blue one, combine them again. |
 | `outside-node` | Grade everything except the selection (outside node) | Pick skin with a qualifier, then grade everything outside it with an outside node. |
 | `key-mixer` | Combine two selections (key mixer) | Two qualifiers, a key mixer that combines them, and a node limited by the result. |
+| `track-effects` | One effect for a whole track (track effects and sends) | An audio effect dropped on a track header, adjusted in Effect Controls, and the track sent to a new bus. |
 
 ## Context hints
 

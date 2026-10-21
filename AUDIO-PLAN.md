@@ -111,6 +111,18 @@ the owner's own voice in a quiet room if they're in `~/.local/share/filmcraft-fo
 licensed model only after the owner's yes to its download. Aim: the two missed bars (≥ 3 dB over
 DeNoise at 10 dB SNR, ≥ 20 dB on clean speech) without losing the noisy-speech gains.
 
+**A3.7 Stronger voice model (download approved by the owner 2026-10-21, FORK-PLAN §1a.120; tag `audio-3b`):**
+1. Spike: shortlist openly licensed (Apache-2.0 / MIT / BSD) speech-enhancement models with published weights
+   (e.g. FRCRN, MP-SENet, MossFormer2-SE, a larger DeepFilterNet variant), check each licence on its official
+   page, the sample rate (48 kHz preferred; 16 kHz needs resampling around it), size (≤ 1.5 GB) and how much
+   of a candle port it takes; pick one, write the choice and why in FORK-PLAN §7.
+2. Download it (official release only; name / URL / size / sha256 in §7), port the forward pass (candle via
+   `filmcraft-ml`, `catch_unwind` job, a missing / corrupt model says why and falls back to DeepFilterNet3).
+3. Measure with the existing LibriSpeech sweep on the Dell (`voice_isolation_limit_sweep` setup) against
+   DeepFilterNet3 and DeNoise; ship as the Voice Isolation model only if it beats DeepFilterNet3 at both bars,
+   otherwise keep it as an off-by-default option or drop it, with the numbers logged.
+4. Guide `audio` page: which model, its trade-offs (speed vs quality), how to switch.
+
 ## Not planned
 
 Fairlight-level features (ADR / cue lists, immersive / Atmos, surround panning beyond 5.1,

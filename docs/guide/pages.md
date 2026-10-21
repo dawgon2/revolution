@@ -20,7 +20,7 @@ project, the same timeline and one undo history behind every page, only the pane
 
 1. Along the bottom, the **page bar**: the app name on the left, the pages in the middle (an icon
    over each name; the page you are on is lit and underlined in orange-red) and, on the right,
-   **Project Manager** ({ui:pageBar.home}, the home screen of [projects.md](projects.md)) and
+   **Save Layout** (below), **Project Manager** ({ui:pageBar.home}, the home screen of [projects.md](projects.md)) and
    **Settings** ({ui:pageBar.settings}, Edit ▸ Preferences ▸ General, `app.settings.general`).
 2. Along the top, the menus on a row of their own, then the page's **toolbar**: buttons with a
    label that show or hide that page's panels, the project name in the middle.
@@ -248,7 +248,7 @@ the Timeline Viewer; the Summary box is replaced by the estimated file size unde
 
 ## Rearrange a page and keep it
 
-> id: pages.layout | does: moves and resizes panels on a page and saves or resets the layout | cmd: window.workspace.saveChanges, window.workspace.reset, window.workspace.delete | resolve: Workspace ▸ Reset UI Layout | premiere: Workspaces ▸ Save Changes / Reset | when: making a page fit your screen and habits | see: pages.toolbar
+> id: pages.layout | does: moves and resizes panels on a page and saves or resets the layout | ui: pageBar.saveLayout, pageBar.saveLayout.reset, pageBar.saveLayout.original | cmd: window.workspace.saveChanges, window.workspace.reset, window.workspace.delete | resolve: Workspace ▸ Reset UI Layout | premiere: Workspaces ▸ Save Changes / Reset | when: making a page fit your screen and habits | see: pages.toolbar
 
 **[Revolution]** workspaces, **[Fork]** page layouts
 
@@ -260,12 +260,25 @@ save the result so the page opens your way every time.
 ### Steps
 
 1. Change the page: drag tabs and gutters, or use the toolbar.
-2. Choose Window ▸ Workspaces ▸ **Save Changes to this Workspace**
-   (`window.workspace.saveChanges`). The page's workspace (for example "Edit Page") keeps the
-   new layout.
-3. To go back to the original, choose Window ▸ Workspaces ▸ **Edit Workspaces…**, select the
-   page's workspace and delete its saved changes (`window.workspace.delete`), or **Reset to
-   Saved Layout** (`window.workspace.reset`) to undo unsaved changes.
+2. Click **Save Layout** at the bottom right, left of Lessons ({ui:pageBar.saveLayout}). The page
+   opens this way from now on, also after a restart; the status line names the page it saved.
+3. Changed something you don't want to keep? Right-click **Save Layout** ▸ **Reset to Saved
+   Layout** ({ui:pageBar.saveLayout.reset}) goes back to the last saved arrangement. **Restore
+   Original Layout** ({ui:pageBar.saveLayout.original}) throws your saved version away and brings
+   back the page as Revolution ships it.
+
+Without saving, each page still keeps how you left it when you go to another page and come back,
+and after you quit; Save Layout decides what Reset brings back.
+
+The same commands are in Window ▸ Workspaces: **Save Changes to this Workspace**
+(`window.workspace.saveChanges`), **Reset to Saved Layout** (`window.workspace.reset`) and, in
+**Edit Workspaces…**, deleting a page's saved changes (`window.workspace.delete`). On a small window
+Save Layout is left out so the pages keep their room; use the menu there.
+
+**Which to use.** Beginners: arrange the page, click Save Layout, and use Reset when a panel goes
+missing. If you switch between very different setups (a laptop screen and a desk monitor, or
+cutting and finishing), keep each as a **layout preset** (next section): one name brings back
+every page the way that setup wants it.
 
 In the Resolve workflow Window ▸ Workspaces lists the pages' workspaces (Media Page, Edit Page,
 Fairlight Page, Deliver Page, Color Grading) instead of Assembly, Editing, Audio and Color;
@@ -275,3 +288,39 @@ the workflow keeps each workflow's layout as you left it, unsaved changes includ
 back when you return. A workspace of your own saved before this release under one of the page
 names (for example "Edit Page") is renamed "Edit Page (custom)" once, so it stays in the list.
 In this workflow the Import mode (`mode.import`) opens the Media page.
+
+## Layout presets: every page together
+
+> id: pages.layout-presets | does: saves every page's arrangement under one name and loads it again | ui: pageBar.saveLayout.preset, layoutPresets.load | cmd: window.layoutPreset.save, window.layoutPreset.load, window.layoutPreset.manage, window.layoutPreset.export, window.layoutPreset.import | resolve: Workspace ▸ Layout Presets | premiere: Window ▸ Workspaces | when: swapping every page between two setups | see: pages.layout
+
+**[Resolve-style]** presets, **[Fork]** mechanism
+
+### Why
+
+Save Layout keeps one page. A preset keeps every page: the Media, Cut, Edit, Fusion, Color,
+Fairlight and Deliver pages as they are now (in the Premiere workflow, every workspace), and
+which one you were on. It is the quick way to switch between a laptop setup and a desk setup.
+
+### Steps
+
+1. Arrange the pages the way you want them.
+2. Choose Window ▸ Layout Presets ▸ **Save Layout as Preset…** (`window.layoutPreset.save`), or
+   right-click **Save Layout** ▸ **Save Layout as Preset…** ({ui:pageBar.saveLayout.preset}), and
+   give it a name.
+3. To use it, choose its name in Window ▸ Layout Presets (`window.layoutPreset.load`). Every page
+   takes the preset's arrangement and you land on the page it was saved on.
+4. **Manage Layout Presets…** ({ui:pageBar.saveLayout.presets}, `window.layoutPreset.manage`) lists
+   them: **Load** ({ui:layoutPresets.load}), **Update** ({ui:layoutPresets.update}) to replace one
+   with how the pages are now, rename, delete, **Export…** ({ui:layoutPresets.export}, `window.layoutPreset.export`) to a
+   `.revlayout` file and **Import…** ({ui:layoutPresets.import}, `window.layoutPreset.import`) one
+   from another computer.
+
+Loading a preset doesn't overwrite what Save Layout kept: each page's **Reset to Saved Layout**
+still goes back to its saved version. To make a preset's arrangement a page's saved layout, load
+it and click Save Layout. A preset made on a newer version with a panel this one doesn't have
+skips that page and loads the rest.
+
+**Which to use.** One page that isn't quite right: Save Layout. Two or more ways of working (a
+small and a big screen, or editing and color sessions): one preset each. Workspaces of your own
+(Window ▸ Workspaces ▸ Save as New Workspace…) are for an extra layout beside the pages, such as a
+second edit layout you switch to by name.

@@ -58,5 +58,6 @@ In the Premiere workflow, Window ▸ **Workspaces** switches the panel layout: *
 **Captions and Graphics**, **Review**, **Learning** and **All Panels**. Move or resize panels and
 **Save Changes to This Workspace** (`window.workspace.saveChanges`), **Save as New Workspace…**
 (`window.workspace.saveAs`), **Reset to Saved Layout** (`window.workspace.reset`) or delete one
-you made (`window.workspace.delete`). In the Resolve workflow the same idea is the page bar
+you made (`window.workspace.delete`). A workspace keeps unsaved changes when you switch to another
+one and back, and after you quit, until you reset it. In the Resolve workflow the same idea is the page bar
 ([pages.md](pages.md)).

@@ -524,12 +524,13 @@ fn push_item(
         let motion = motion_matrix(seq, item, size, crate::source_par(project, item.item), mt);
         let lin = ((motion.a * motion.a + motion.b * motion.b).sqrt()).max((motion.c * motion.c + motion.d * motion.d).sqrt());
         let want = (lin * opts.scale as f64).clamp(1.0 / 64.0, 1.0) as f32;
-        let time = crate::video_source_time(item, t, src.info().frame_rate());
+        let clock = src.frame_clock();
+        let time = crate::video_source_time(item, t, &clock);
         let Ok(frame) = crate::clip_frame(src.as_ref(), item, time, want) else { return };
         let cs = crate::colorman::source_space(project, item.item, &frame);
         // blended in-between frames (Frame Blending / Optical Flow on speed-changed clips) are
         // made on the CPU (below)
-        let single = crate::interpolation_blend(item, t, src.info().frame_rate()).is_none();
+        let single = crate::interpolation_blend(item, t, &clock).is_none();
         let managed = crate::colorman::needs_management(&seq.settings.color, cs, &frame);
         // Log / HDR / wide-gamut Y'CbCr media: the GPU gets the decoded signal and converts it
         // with the input transform as its first colour operations (fork ADR 0003); RGB stills

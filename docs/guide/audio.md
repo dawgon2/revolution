@@ -24,6 +24,14 @@ Reduction/Restoration ▸ Voice Isolation**. Drop it on a clip like any audio ef
 - **Amount** (0–100 %, default 100 %): how much of the cleaned voice you hear. 100 % is fully
   cleaned; lower values mix the original back in, which keeps some room sound and hides small
   artefacts. Keyframe it like any effect parameter.
+- **Attenuation Limit** (6–100 dB, default 100 dB = no limit): the most the effect may take away.
+  At 20 dB a noise floor is lowered by at most 20 dB instead of removed, and a clean voice is barely
+  changed, so the result sounds more natural on mildly noisy recordings. Lower it when the cleaned
+  voice sounds dry or "underwater"; leave it at 100 dB for loud noise (traffic, wind).
+  Essential Sound ▸ Repair shows the same setting under Voice Isolation as **Attenuation Limit**
+  (`repair.isolateLimitDb`); Clean Up Voice sets it for you: 12 dB for mild noise, no limit for
+  moderate or loud noise (measured on recorded speech: on mild noise the limit sounds more natural
+  and scores better; with loud clicks such as typing, a limit lets them through).
 - **Delay:** the effect looks 20 ms ahead and works in 10 ms steps, 40 ms in all; playback and
   export compensate for it, so the clip stays in sync.
 

@@ -1281,6 +1281,8 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
     let tg = app.session.targeting();
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut vo_action = None;
+    // A3.4: "Send to ▸ New Bus" on an audio header: add a submix, then a send from this track to it
+    let mut new_bus: Option<u64> = None;
     // A3.2: levels of the playing mix, the same the mixer strips show
     let meters = if rows.iter().any(|r| r.kind == TrackKind::Audio) { super::mixer::poll_meters(app, ui) } else { Default::default() };
     for r in rows {
@@ -1420,6 +1422,43 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             let h = if r.kind == TrackKind::Video { &mut app.ui.timeline.video_track_h } else { &mut app.ui.timeline.audio_track_h };
             *h = if *h < 50.0 { 64.0 } else { 30.0 };
         }
+        // A3.3: a click on an audio header selects the track: its effects show in Effect Controls / the Inspector
+        if r.kind == TrackKind::Audio {
+            if resp.clicked() {
+                app.ui.selected_track = Some(r.track.0);
+                actions.push(("timeline.select".into(), json!({"clips": []})));
+            }
+            if app.ui.selected_track == Some(r.track.0) {
+                p.rect_stroke(hrect.shrink(0.5), 0.0, Stroke::new(1.0, t.accent.gamma_multiply(0.7)), StrokeKind::Inside);
+            }
+            app.auto.add(&format!("timeline.track.{label}.header"), resp.rect, &format!("Track {label}"));
+            // A3.4: right-click ▸ Send to: an existing submix (bus) or a new one
+            resp.context_menu(|ui| {
+                ui.set_min_width(180.0);
+                let sub = ui.menu_button(tl!("Send to"), |ui| {
+                    let full = tr.mixer.sends.len() >= filmcraft_project::mixer::MAX_SENDS;
+                    for sm in &seq.submix_tracks {
+                        let sent = tr.mixer.sends.iter().any(|x| x.target == sm.id);
+                        let b = ui.add_enabled(!sent && !full, egui::Button::new(&sm.name).selected(sent));
+                        app.auto.add(&format!("timeline.track.{label}.sendTo.{}", sm.id.0), b.rect, &sm.name);
+                        if b.clicked() {
+                            actions.push(("mixer.addSend".into(), json!({"strip": r.track.0, "target": sm.id.0})));
+                            ui.close();
+                        }
+                    }
+                    if !seq.submix_tracks.is_empty() {
+                        ui.separator();
+                    }
+                    let b = ui.add_enabled(!full, egui::Button::new(if rh { tl!("New Bus") } else { tl!("New Submix") }));
+                    app.auto.add(&format!("timeline.track.{label}.sendTo.new"), b.rect, "New Bus");
+                    if b.clicked() {
+                        new_bus = Some(r.track.0);
+                        ui.close();
+                    }
+                });
+                app.auto.add(&format!("timeline.track.{label}.sendTo"), sub.response.rect, "Send to");
+            });
+        }
         // A3.2: a thin always-visible meter at the audio header's right edge (the loudest channel),
         // clip light on top latched like the mixer's; click it to reset
         if r.kind == TrackKind::Audio && hrect.height() >= 14.0 {
@@ -1439,6 +1478,18 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
             }
             app.auto.add(&format!("timeline.track.{label}.meter"), mr, &format!("Meter {:.1} dB{}", m[0], if clipped { ", clipped" } else { "" }));
         }
+        // A3.3: drop an audio effect from the Effects panel on an audio header → the track's first free insert
+        if r.kind == TrackKind::Audio
+            && let Some(effect) = super::mixer::dragged_insert(ui)
+            && ui.ctx().pointer_hover_pos().is_some_and(|q| visible.contains(q))
+        {
+            p.rect_stroke(hrect.shrink(1.0), 3.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+            app.auto.add(&format!("timeline.track.{label}.fxDrop"), visible, "Drop to add a track effect");
+            if ui.ctx().input(|i| i.pointer.any_released()) {
+                actions.push(("mixer.addInsert".into(), json!({"strip": r.track.0, "effect": effect})));
+                crate::panels::clear_drag(ui);
+            }
+        }
     }
     // column separator
     ui.painter()
@@ -1450,6 +1501,13 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
     }
     if let Some(a) = vo_action {
         super::voiceover::run(app, &ui.ctx().clone(), a);
+    }
+    if let Some(track) = new_bus {
+        let made = app.session.execute("mixer.addSubmix", json!({}));
+        let r = made.and_then(|v| app.session.execute("mixer.addSend", json!({"strip": track, "target": v["id"]})));
+        if let Err(e) = r {
+            app.ui.status = e.to_string();
+        }
     }
 }
 

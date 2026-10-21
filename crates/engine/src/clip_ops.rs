@@ -469,6 +469,19 @@ impl SourceView {
     }
 }
 
+/// The Source playhead `frames` frames on from `from` (negative: back). A variable-frame-rate clip
+/// steps to its real previous / next frame (Y2); a sequence, an interpreted clip or a constant-rate
+/// one steps on `v.rate`'s grid. `from` itself when there is no usable spacing.
+pub fn source_step(s: &Session, v: &SourceView, from: Tick, frames: i64) -> Tick {
+    use filmcraft_media::timing::{FrameClock, FrameTimes};
+    let vfr = s.project.item(v.media).and_then(|i| i.as_media()).and_then(|m| m.vfr()).is_some();
+    let clock = vfr.then(|| s.source(v.media)).flatten().map(|src| src.frame_clock()).unwrap_or(FrameClock::Grid(v.rate));
+    if !clock.usable() {
+        return from;
+    }
+    clock.tick_of(clock.frame_at(from).saturating_add(frames))
+}
+
 /// The Source monitor view of `item` (see [`SourceView`]).
 pub fn source_view(s: &Session, item: ItemId) -> Option<SourceView> {
     let pi = s.project.item(item)?;
@@ -691,7 +704,7 @@ pub(crate) fn item_range(p: &Project, id: ItemId, still: Tick) -> Option<TimeRan
     Some(match &it.kind {
         ItemKind::Media(m) => {
             let is_still = matches!(m.info.kind, filmcraft_media::MediaKind::Still);
-            let full = if m.info.duration.0 > 0 && !is_still { m.info.duration } else { still };
+            let full = if m.info.duration.0 > 0 && !is_still { m.duration() } else { still };
             let a = m.mark_in.unwrap_or(Tick::ZERO);
             let b = m.mark_out.map(|o| o + rate.frame_duration()).unwrap_or(full);
             TimeRange::from_bounds(a, b.max(a + rate.frame_duration()))
@@ -765,6 +778,7 @@ fn offline_file(s: &mut Session, p: &Value) -> Result<Value> {
         duration,
         video: has_v.then(|| filmcraft_media::VideoStreamInfo {
             camera_color_space: None,
+            vfr: None,
             width,
             height,
             frame_rate: rate,
@@ -1133,7 +1147,7 @@ fn subclip_plan(s: &Session, p: &Value) -> Result<(ItemId, TimeRange, String, La
         let rate = m.frame_rate();
         let still = s.prefs.timeline.still_duration(rate);
         let is_still = matches!(m.info.kind, filmcraft_media::MediaKind::Still);
-        let full = sub.unwrap_or(TimeRange::new(Tick::ZERO, if m.info.duration.0 > 0 && !is_still { m.info.duration } else { still }));
+        let full = sub.unwrap_or(TimeRange::new(Tick::ZERO, if m.info.duration.0 > 0 && !is_still { m.duration() } else { still }));
         let range = if sub.is_some() {
             full
         } else {
