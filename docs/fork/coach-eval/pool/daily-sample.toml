@@ -25,9 +25,8 @@ ids = [
   "pool-c3-lumetri-wb-keys",
   "pool-c3-splitter",
   # color-4
-  "pool-c4-shot-match-steps",
-  "pool-c4-ai-checked",
-  "pool-c4-ai-agent",
+  "pool-c4-wipe-steps",
+  "pool-c4-apply-from",
   # color-5
   "pool-c5-lut-balance-first",
   "pool-c5-open-scopes",
@@ -143,6 +142,8 @@ ids = [
   # feature-gpu-rule
   "feat-gpu-kinds-vs-named",
   "feat-gpu-script-check",
+  # feature-layout
+  "feat-lay-preset-what",
   # feature-network-storage-check
   "feat-ns1-clip-on-nas",
   "feat-ns1-script-list",

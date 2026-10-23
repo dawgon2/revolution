@@ -330,6 +330,13 @@ fn validate_loaded(mut loaded: Loaded) -> Result<Loaded, FormatError> {
                         clip.audio_stream = 0;
                     }
                 }
+                // (C4.2: an over-long parameter expression is dropped; clip effects keep but
+                // don't evaluate them)
+                for clip in sequence.video_tracks.iter_mut().chain(sequence.audio_tracks.iter_mut()).flat_map(|t| t.items.iter_mut()) {
+                    for e in &mut clip.effects {
+                        e.params.values_mut().for_each(filmcraft_project::Param::cap_expression);
+                    }
+                }
             }
             // a comp from a file is brought within its caps (sizes, counts, texts); a cycle stays
             // for the renderer / Compositor panel to report
@@ -1033,6 +1040,24 @@ mod tests {
         let ItemKind::Comp(b) = &back.project.item(id).unwrap().kind else { panic!("not a comp") };
         assert_eq!(b.width, MAX_SIDE);
         assert_eq!(b.node(2).unwrap().label.chars().count(), MAX_LABEL);
+    }
+
+    /// Fork C4.2: a clip effect's over-long parameter expression is dropped on load; a short one
+    /// is kept (clip effects store but don't evaluate them).
+    #[test]
+    fn clip_effect_expressions_are_capped_on_load() {
+        let (mut p, seq) = graded_project();
+        let fx = &mut p.sequence_mut(seq).unwrap().video_tracks[0].items[0].effects[0];
+        let key = fx.params.keys().next().cloned().unwrap();
+        fx.params.get_mut(&key).unwrap().expression = Some("1+".repeat(5_000));
+        let back = decode(&encode(&p, false)).unwrap();
+        let fx = &back.project.sequence(seq).unwrap().video_tracks[0].items[0].effects[0];
+        assert_eq!(fx.params.get(&key).unwrap().expression, None);
+        let fx = &mut p.sequence_mut(seq).unwrap().video_tracks[0].items[0].effects[0];
+        fx.params.get_mut(&key).unwrap().expression = Some("time".into());
+        let back = decode(&encode(&p, false)).unwrap();
+        let fx = &back.project.sequence(seq).unwrap().video_tracks[0].items[0].effects[0];
+        assert_eq!(fx.params.get(&key).unwrap().expression.as_deref(), Some("time"));
     }
 
     /// Fork C1: random, hostile comps inside a project never panic on load, and whatever loads is

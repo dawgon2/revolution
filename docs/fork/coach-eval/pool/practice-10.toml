@@ -6,7 +6,7 @@
 id = "pool-r10-per-camera"
 kind = "multi-step"
 q = "X-M5 in F-Log2 plus an iPhone and a GoPro on one timeline, how do I set up colour management?"
-sources = ["practice.mixed-cameras.per-camera-input"]
+sources = ["practice.mixed-cameras.per-camera-input", "color.color-management.input"]
 must = ["Interpret Footage per camera (clip.interpretFootage): F-Log2 for the X-M5, Rec. 709 (or HLG) for the phone, the right log for the others", "one working space for the sequence"]
 must_not = []
 style = "beginner"

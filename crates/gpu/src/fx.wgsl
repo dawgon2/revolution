@@ -1284,3 +1284,43 @@ fn temporal_accumulate(@builtin(global_invocation_id) id: vec3<u32>) {
     // (alpha: the original's, bit for bit)
     textureStore(dst, p, vec4(out.rgb, orig.a));
 }
+
+// Bitmap matte mix (fork G3.2, `FxOp::MaskedBy`; CPU reference `filmcraft_render::matte`): the
+// effected image (`src`) mixed with the image before the effect (`aux`) by the matte (`R8Unorm`,
+// any size) stretched over the frame and sampled bilinearly at the pixel centre, edges clamped.
+// The interpolation is done here in f32 (not by a sampler) so it matches the CPU's.
+@group(1) @binding(13) var matte: texture_2d<f32>;
+
+fn matte_tap(n: u32, m: u32, i: u32) -> vec3<f32> {
+    let last = f32(m - 1u);
+    let c = clamp((f32(i) + 0.5) * (f32(m) / f32(max(n, 1u))) - 0.5, 0.0, last);
+    let a = min(floor(c), last);
+    let b = min(a + 1.0, last);
+    return vec3<f32>(a, b, c - a);
+}
+
+@compute @workgroup_size(16, 16)
+fn matte_mix(@builtin(global_invocation_id) id: vec3<u32>) {
+    let w = u.i0.y;
+    let h = u.i0.z;
+    if (id.x >= w || id.y >= h) {
+        return;
+    }
+    let md = textureDimensions(matte);
+    let tx = matte_tap(w, md.x, id.x);
+    let ty = matte_tap(h, md.y, id.y);
+    let x0 = i32(tx.x);
+    let x1 = i32(tx.y);
+    let y0 = i32(ty.x);
+    let y1 = i32(ty.y);
+    let m00 = textureLoad(matte, vec2<i32>(x0, y0), 0).r;
+    let m10 = textureLoad(matte, vec2<i32>(x1, y0), 0).r;
+    let m01 = textureLoad(matte, vec2<i32>(x0, y1), 0).r;
+    let m11 = textureLoad(matte, vec2<i32>(x1, y1), 0).r;
+    let top = m00 + (m10 - m00) * tx.z;
+    let bot = m01 + (m11 - m01) * tx.z;
+    let cov = top + (bot - top) * ty.z;
+    let e = textureLoad(src, vec2<i32>(id.xy), 0);
+    let o = textureLoad(aux, vec2<i32>(id.xy), 0);
+    textureStore(dst, vec2<i32>(id.xy), o + (e - o) * cov);
+}

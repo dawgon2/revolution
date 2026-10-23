@@ -74,7 +74,8 @@ fn full_size_in_comp(project: &Project, comp: ItemId, depth: u32, scales: &mut V
         return false;
     }
     let mut reads_track = false;
-    for n in &c.nodes {
+    // (groups' inner nodes included, C4.3)
+    for n in c.all_nodes() {
         match &n.kind {
             CompKind::MediaIn { source: MediaInSource::Layer { .. }, .. } => reads_track = true,
             CompKind::MediaIn { source: MediaInSource::Item { item }, .. } => full_size_item(project, *item, depth.saturating_add(1), scales),

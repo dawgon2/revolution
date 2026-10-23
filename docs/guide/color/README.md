@@ -105,11 +105,10 @@ Every step is one undo step (Ctrl+Z); dragging a control counts as one step howe
 **[Fork]**
 
 Not built yet: sliders for the mixer nodes' settings (parallel, layer and key mixer use commands
-for now, see [nodes](nodes.md)); an object mask that finds a person or thing for you
-(like Resolve's Magic Mask) comes in phase G3; a colour warper, extra tonal-zone wheels, a 3D
-qualifier and planar-tracked windows come in phase G4. Each page says what is missing.
+for now, see [nodes](nodes.md)). Each page says what is missing.
 
-Already here (they were listed as coming before): the qualifier, windows and tracking
-([secondaries](secondaries.md)), noise reduction ([noise](noise.md)), LUTs on a node
+Already here (they were listed as coming before): the qualifier (HSL and 3D), windows,
+tracking incl. planar tracking, Magic Mask and the colour warper ([secondaries](secondaries.md)),
+HDR zone wheels ([primaries](primaries.md)), noise reduction ([noise](noise.md)), LUTs on a node
 ([finishing](finishing.md)), "same grade?", Shot Match and the node explainer
 ([matching](matching.md)) and the Grading Coach ([coach](coach.md)).

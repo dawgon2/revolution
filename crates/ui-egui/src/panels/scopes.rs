@@ -56,7 +56,7 @@ pub fn frame_signal(app: &mut FilmcraftApp, ctx: &egui::Context, slot: &str, fra
     let space = st.color_space.resolve(hdr_seq);
     let pq = hdr_seq && space == ColorSpace::Rec2100;
     let rate = q.settings.frame_rate;
-    let rev = app.session.revision;
+    let rev = app.seq_revision();
     let id = egui::Id::new(("scope-signal", slot));
     let cached: Option<(u64, Arc<Signal>, bool)> = ctx.data(|d| d.get_temp(id));
     let key = hash_of((seq_id.0, frame, rev, pq));

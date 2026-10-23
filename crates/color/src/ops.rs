@@ -324,6 +324,150 @@ pub enum ColorOp {
     /// with `m` = the mask (`1 − mask` when `invert`); the mask register becomes `m`. Ops between
     /// [`ColorOp::Stash`] and this one act only where the mask is set.
     MixStash { invert: bool },
+    /// Colour warper (fork G4.1): a displacement field over hue × saturation or saturation ×
+    /// luma, in HSV on the signal ([`crate::warp`] says exactly how).
+    Warp2D(Arc<crate::warp::Warp2D>),
+    /// 3D qualifier key (fork G4.3): sets the mask register from the pixel's distance to the
+    /// include / exclude colour volumes ([`crate::key3d`] says exactly how). `rgb` is unchanged.
+    Key3d(Arc<crate::key3d::Key3d>),
+    /// Despill (fork G4.3): `rgb − amount · max(rgb · dir, 0) · dir`, `dir` a unit chroma
+    /// direction ([`crate::key3d::despill`]).
+    Despill { dir: [f32; 3], amount: f32 },
+    /// HDR zone wheels (fork G4.2, [`ZoneWheels`]) on working linear light.
+    ZoneWheels(Arc<ZoneWheels>),
+}
+
+/// Tonal zones of [`ZoneWheels`]; the first [`ZONE_DARK`] act below their edge, the rest above.
+pub const ZONE_COUNT: usize = 6;
+pub const ZONE_DARK: usize = 3;
+/// Values of a [`ColorOp::ZoneWheels`] GPU program: code, weights, pivot, global, the zones.
+pub const ZONE_PROGRAM_LEN: usize = 1 + 3 + 1 + 5 + ZONE_COUNT * 7;
+/// The total exposure of all wheels a pixel gets is clamped to ± this many stops.
+pub const ZONE_MAX_STOPS: f32 = 16.0;
+/// Pixel luminances relative to the pivot are taken as at most ± this many stops (black, 0 and
+/// negative luminances: the lowest).
+pub const ZONE_STOP_LIMIT: f32 = 30.0;
+/// The combined saturation a pixel gets is clamped to 0 … this.
+pub const ZONE_MAX_SAT: f32 = 65_536.0;
+/// The narrowest soft edge [`ZoneWheels`] draws, in stops.
+pub const ZONE_MIN_FALLOFF: f32 = 0.05;
+/// Output channels are clamped to ± this (finite even for absurd inputs and settings).
+pub const ZONE_MAX_VALUE: f32 = 1e30;
+
+/// What one HDR wheel does where it acts fully.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ZoneAdjust {
+    /// Exposure in stops: `rgb · 2^exposure`.
+    pub exposure: f32,
+    /// Saturation around the luminance (1: none).
+    pub sat: f32,
+    /// Colour balance: a luminance-neutral shift (`weights · shift` = 0), added as `Y · shift`.
+    pub shift: [f32; 3],
+}
+
+impl ZoneAdjust {
+    pub const IDENTITY: ZoneAdjust = ZoneAdjust { exposure: 0.0, sat: 1.0, shift: [0.0; 3] };
+}
+
+/// One tonal zone: where it acts and what it does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Zone {
+    /// The zone's edge in stops from the pivot.
+    pub edge: f32,
+    /// The width of its soft edge, in stops (centred on the edge).
+    pub falloff: f32,
+    pub adjust: ZoneAdjust,
+}
+
+/// HDR zone wheels (fork G4.2), on working linear light (scene-referred in DWG).
+///
+/// Per pixel: the luminance `Y = weights · rgb` as stops from the pivot,
+/// `s = log2(Y / pivot)` (clamped to ±[`ZONE_STOP_LIMIT`]; `Y` ≤ 0 is the lowest). Each zone's
+/// weight is a smoothstep across its soft edge, `u = smoothstep((s − edge) / falloff + ½)`: a dark
+/// zone (the first [`ZONE_DARK`]) has weight `1 − u` (everything below its edge), a light zone
+/// `u` (everything above). Zones nest and overlap like Resolve's (a deep shadow is in Black, Dark
+/// and Shadow); their effects add up in exposure terms:
+///
+/// - exposure `E = global + Σ wᵢ·eᵢ` stops (clamped to ±[`ZONE_MAX_STOPS`]),
+/// - balance `D = global + Σ wᵢ·dᵢ` (luminance-neutral shifts),
+/// - saturation `S = global · Π (1 + wᵢ·(satᵢ − 1))`.
+///
+/// Then `rgb₁ = rgb + Y·D` (keeps the luminance; the same chromaticity shift at every exposure),
+/// `rgb₂ = rgb₁ · 2^E`, and `rgb₃ = Y₂ + (rgb₂ − Y₂)·S` with `Y₂ = weights · rgb₂`; clamped to
+/// ±[`ZONE_MAX_VALUE`], a NaN result (a NaN or ∞ pixel) becomes 0. The weights are smooth in
+/// `s`, so there is no banding at zone edges.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ZoneWheels {
+    /// Luminance weights of the working gamut.
+    pub weights: [f32; 3],
+    /// The luminance of mid grey (the stops' zero), > 0.
+    pub pivot: f32,
+    pub global: ZoneAdjust,
+    /// Black, Dark, Shadow, Light, Highlight, Specular.
+    pub zones: [Zone; ZONE_COUNT],
+}
+
+impl ZoneWheels {
+    /// The weight of zone `i` at `s` stops from the pivot (0 for an index past the zones).
+    pub fn weight(&self, i: usize, s: f32) -> f32 {
+        let Some(z) = self.zones.get(i) else { return 0.0 };
+        zone_weight(i < ZONE_DARK, s, z.edge, z.falloff)
+    }
+
+    /// Stops from the pivot of luminance `y` (what the zones see).
+    pub fn stops(&self, y: f32) -> f32 {
+        let pivot = if self.pivot.is_finite() && self.pivot > 0.0 { self.pivot } else { 0.18 };
+        let r = y / pivot;
+        // (NaN, 0 and negative: the lowest)
+        if r > (-ZONE_STOP_LIMIT).exp2() { r.log2().min(ZONE_STOP_LIMIT) } else { -ZONE_STOP_LIMIT }
+    }
+
+    // (max then min instead of `clamp`: NaN never propagates into the gain, as on the GPU)
+    #[allow(clippy::manual_clamp)]
+    pub fn apply(&self, c: [f32; 3]) -> [f32; 3] {
+        let w = self.weights;
+        let y = w[0] * c[0] + w[1] * c[1] + w[2] * c[2];
+        let s = self.stops(y);
+        let mut e = self.global.exposure;
+        let mut sat = self.global.sat;
+        let mut d = self.global.shift;
+        for (i, z) in self.zones.iter().enumerate() {
+            let k = zone_weight(i < ZONE_DARK, s, z.edge, z.falloff);
+            e += k * z.adjust.exposure;
+            sat *= 1.0 + k * (z.adjust.sat - 1.0);
+            for (dc, zc) in d.iter_mut().zip(z.adjust.shift) {
+                *dc += k * zc;
+            }
+        }
+        // (max then min: NaN-free, as on the GPU)
+        let gain = e.max(-ZONE_MAX_STOPS).min(ZONE_MAX_STOPS).exp2();
+        let sat = sat.max(0.0).min(ZONE_MAX_SAT);
+        let c2 = [0, 1, 2].map(|k| (c[k] + y * d[k]) * gain);
+        let y2 = w[0] * c2[0] + w[1] * c2[1] + w[2] * c2[2];
+        c2.map(|v| {
+            let o = y2 + (v - y2) * sat;
+            // (NaN: 0, the same on the GPU)
+            if o.is_nan() { 0.0 } else { o.max(-ZONE_MAX_VALUE).min(ZONE_MAX_VALUE) }
+        })
+    }
+
+    fn is_finite(&self) -> bool {
+        let adj = |a: &ZoneAdjust| a.exposure.is_finite() && a.sat.is_finite() && a.shift.iter().all(|v| v.is_finite());
+        self.weights.iter().all(|v| v.is_finite())
+            && self.pivot.is_finite()
+            && adj(&self.global)
+            && self.zones.iter().all(|z| z.edge.is_finite() && z.falloff.is_finite() && adj(&z.adjust))
+    }
+}
+
+/// A zone's weight at `s` stops: `smoothstep` across `edge ± falloff / 2`, reversed for a `dark`
+/// zone.
+#[inline]
+pub fn zone_weight(dark: bool, s: f32, edge: f32, falloff: f32) -> f32 {
+    let f = if falloff.is_finite() { falloff.max(ZONE_MIN_FALLOFF) } else { 1.0 };
+    let a = ((s - edge) / f + 0.5).clamp(0.0, 1.0);
+    let u = a * a * (3.0 - 2.0 * a);
+    if dark { 1.0 - u } else { u }
 }
 
 /// Half-range (not peak-to-peak) of the grain at strength 1 in the mid-tones, on the grading
@@ -436,6 +580,12 @@ impl ColorOp {
             ColorOp::HslCorrect { hue_shift, sat, temp, tint, .. } => all(&[*hue_shift, *sat, *temp, *tint]),
             ColorOp::Grain { strength, inv_size, softness, weights, .. } => all(&[*strength, *inv_size, *softness]) && all(weights),
             ColorOp::Stash | ColorOp::MixStash { .. } => true,
+            ColorOp::ZoneWheels(z) => z.is_finite(),
+            // (finite by construction: `Warp2D::new`)
+            ColorOp::Warp2D(w) => w.field().iter().chain(&w.weights()).all(|v| v.is_finite()),
+            // (finite by construction: `Key3d::new`)
+            ColorOp::Key3d(k) => k.soft().is_finite() && k.include().iter().chain(k.exclude()).flatten().all(|v| v.is_finite()),
+            ColorOp::Despill { dir, amount } => all(dir) && amount.is_finite(),
         }
     }
 
@@ -450,6 +600,9 @@ impl ColorOp {
                 .as_ref()
                 .map_or(0, |s| s.data.len().saturating_mul(3))
                 .saturating_add(lut.cube.as_ref().map_or(0, |c| c.data.len().saturating_mul(3))),
+            ColorOp::ZoneWheels(_) => ZONE_PROGRAM_LEN,
+            ColorOp::Warp2D(w) => w.field().len() + 8,
+            ColorOp::Key3d(k) => 4 * (k.include().len() + k.exclude().len()) + 8,
             _ => 0,
         }
     }
@@ -479,6 +632,10 @@ impl ColorOp {
                 }
                 let ml = ((h[2] - luma_min) / soft).clamp(0.0, 1.0).min(((luma_max - h[2]) / soft).clamp(0.0, 1.0));
                 regs.mask = mh * ms * ml;
+                c
+            }
+            ColorOp::Key3d(k) => {
+                regs.mask = k.matte(c);
                 c
             }
             ColorOp::Stash => {
@@ -610,6 +767,9 @@ impl ColorOp {
                 })
             }
             ColorOp::HslCurves(h) => h.apply(c),
+            ColorOp::ZoneWheels(z) => z.apply(c),
+            ColorOp::Warp2D(w) => w.apply(c),
+            ColorOp::Despill { dir, amount } => crate::key3d::despill(c, *dir, *amount),
             ColorOp::Lut { lut, intensity, hdr } => {
                 if !lut_ok(lut) {
                     return c;
@@ -628,7 +788,9 @@ impl ColorOp {
                 c.map(|v| v + d)
             }
             // (register operations: `apply_px`)
-            ColorOp::HslKey { .. } | ColorOp::HslCorrect { .. } | ColorOp::Stash | ColorOp::MixStash { .. } => self.apply_px(c, xy, &mut Regs::new(c)),
+            ColorOp::HslKey { .. } | ColorOp::Key3d(_) | ColorOp::HslCorrect { .. } | ColorOp::Stash | ColorOp::MixStash { .. } => {
+                self.apply_px(c, xy, &mut Regs::new(c))
+            }
         }
     }
 }
@@ -838,5 +1000,86 @@ mod tests {
             }
         }
         assert!(!ColorOp::Grain { strength: f32::NAN, inv_size: 1.0, softness: 0.5, seed: 0, weights: [0.3; 3] }.is_finite());
+    }
+
+    /// Zones at the defaults of `filmcraft_project::grade` (edges −4, −2.5, −1, 1, 2.5, 4.5;
+    /// falloff 1), nothing set.
+    fn zones() -> ZoneWheels {
+        let z = |edge| Zone { edge, falloff: 1.0, adjust: ZoneAdjust::IDENTITY };
+        ZoneWheels { weights: [0.25, 0.5, 0.25], pivot: 0.18, global: ZoneAdjust::IDENTITY, zones: [-4.0, -2.5, -1.0, 1.0, 2.5, 4.5].map(z) }
+    }
+
+    /// Fork G4.2: two hand-computed pixels. Grey 0.36 is 1 stop over the pivot: half in Light
+    /// (on its edge), in no other zone. Grey 0.09 is 1 stop under: half in Shadow.
+    #[test]
+    fn zone_wheels_match_hand_computed_pixels() {
+        let mut z = zones();
+        z.global.exposure = -1.0;
+        z.zones[3].adjust = ZoneAdjust { exposure: 2.0, sat: 0.0, shift: [0.2, -0.1, 0.0] };
+        z.zones[2].adjust.exposure = 1.0;
+        assert_eq!([0, 1, 2, 3, 4, 5].map(|i| z.weight(i, 1.0)), [0.0, 0.0, 0.0, 0.5, 0.0, 0.0]);
+        // E = −1 + ½·2 = 0; D = ½·(0.2, −0.1, 0); rgb₁ = 0.36·(1 + D) = (0.396, 0.342, 0.36), whose
+        // luminance stays 0.36; S = 1 + ½·(0 − 1) = ½
+        let o = z.apply([0.36; 3]);
+        for (got, want) in o.iter().zip([0.378f32, 0.351, 0.36]) {
+            assert!((got - want).abs() < 1e-6, "{o:?}");
+        }
+        // E = −1 + ½·1 = −½ stop
+        let o = z.apply([0.09; 3]);
+        assert!(o.iter().all(|v| (v - 0.09 * 0.5f32.sqrt()).abs() < 1e-6), "{o:?}");
+        // the stops: 0.18 is 0, 0 and negatives the lowest, NaN too
+        assert_eq!([z.stops(0.18), z.stops(0.72), z.stops(0.0), z.stops(-1.0), z.stops(f32::NAN)], [0.0, 2.0, -30.0, -30.0, -30.0]);
+    }
+
+    /// Fork G4.2: the weights are smooth (no banding: no step bigger than the slope of the
+    /// narrowest edge allows), dark zones nest below and light zones above, and nothing set is
+    /// the identity.
+    #[test]
+    fn zone_weights_are_smooth_and_nest() {
+        let z = zones();
+        for i in 0..ZONE_COUNT {
+            let mut prev = z.weight(i, -12.0);
+            for k in 1..=2400 {
+                let s = -12.0 + k as f32 * 0.01;
+                let w = z.weight(i, s);
+                assert!((w - prev).abs() <= 0.016, "zone {i} jumps at {s}: {prev} → {w}");
+                prev = w;
+            }
+        }
+        // a deep shadow is in every dark zone, a bright highlight in Light and Highlight
+        assert_eq!([0, 1, 2].map(|i| z.weight(i, -6.0)), [1.0; 3]);
+        assert_eq!([3, 4, 5].map(|i| z.weight(i, 3.5)), [1.0, 1.0, 0.0]);
+        assert_eq!(z.weight(9, 0.0), 0.0);
+        for c in [[0.0f32; 3], [0.18; 3], [0.3, 0.2, 0.1], [50.0, 2.0, -0.1], [-0.2; 3]] {
+            let o = z.apply(c);
+            assert!(o.iter().zip(c).all(|(a, b)| (a - b).abs() <= 1e-6 * b.abs().max(1.0)), "{c:?} → {o:?}");
+        }
+    }
+
+    /// Fork G4.2: 0, negative, huge and non-finite pixels and absurd settings never give ∞ (or a
+    /// panic); a non-finite op is refused for the GPU.
+    #[test]
+    fn hostile_zone_wheels_stay_finite() {
+        let mut z = zones();
+        z.global = ZoneAdjust { exposure: 1e30, sat: 1e30, shift: [1e30, -1e30, 0.0] };
+        for zone in &mut z.zones {
+            zone.falloff = 0.0;
+            zone.adjust = ZoneAdjust { exposure: -1e30, sat: 1e30, shift: [3.0, 0.0, -3.0] };
+        }
+        z.pivot = -1.0;
+        for c in [[0.0f32; 3], [-1.0; 3], [f32::MAX; 3], [1e20, -1e20, 0.0], [f32::INFINITY, 0.0, 0.0], [f32::NAN, 0.2, 0.2]] {
+            let o = ColorOp::ZoneWheels(Arc::new(z.clone())).apply(c);
+            assert!(o.iter().all(|v| !v.is_infinite()), "{c:?} → {o:?}");
+        }
+        // a NaN or ∞ pixel comes out as 0 where its result is NaN, never ±1e30 from NaN
+        let nan = ColorOp::ZoneWheels(Arc::new(zones())).apply([f32::NAN, 0.2, 0.2]);
+        assert_eq!(nan, [0.0; 3]);
+        let inf = ColorOp::ZoneWheels(Arc::new(zones())).apply([f32::INFINITY, 0.2, 0.2]);
+        assert!(inf.iter().all(|v| v.is_finite()), "{inf:?}");
+        let finite = [0.3f32, 0.2, 0.1];
+        assert!(ColorOp::ZoneWheels(Arc::new(z.clone())).apply(finite).iter().all(|v| v.is_finite()));
+        assert!(ColorOp::ZoneWheels(Arc::new(z.clone())).is_finite());
+        z.zones[4].edge = f32::NAN;
+        assert!(!ColorOp::ZoneWheels(Arc::new(z)).is_finite());
     }
 }

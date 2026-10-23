@@ -304,6 +304,15 @@ Runs after COMPOSITOR-PLAN C4 (its planar tracker is reused here); the order can
 3. **3D qualifier:** strokes in the image pick a volume in colour space (soft, despill), as an
    alternative key to the HSL qualifier.
 4. **Planar-tracked windows:** windows follow C3's planar tracker (signs, screens, walls).
+   *Built (G4.4):* `Mask.planar: Option<PlanarTrack>` (a homography per frame, serde default, so
+   old projects save byte-identical; hostile keys dropped on load) rather than baked path
+   keyframes, because a projected Bézier isn't a Bézier: `render::mask::prepare` maps the
+   *flattened* outline through it, so CPU and GPU (same polygon) stay identical. The stored path
+   stays in the reference frame; on-monitor handles show / drag it where it is seen.
+   `masks.trackPlanar` (both ways from the playhead, background job, frames streamed one at a
+   time at ≤ 1920 px, `jobs.cancel`, one undo step; re-tracking composes with the old track) and
+   `masks.clearPlanar`; Color page **Planar** / **✕ planar** (`grade.window.N.track.planar` /
+   `.clearPlanar`). Synthetic perspective plane: corners within 0.016 px over 60 frames.
 Tag `grade-4`.
 
 ### Later still: deferred (§6)

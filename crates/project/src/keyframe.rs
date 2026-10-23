@@ -171,11 +171,23 @@ pub struct Param {
     /// Sorted by time. Empty = static.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keyframes: Vec<Keyframe>,
+    /// A formula over the keyframed value (fork C4, ADR 0009 §1; see [`crate::expr`]). Comp node
+    /// parameters evaluate it ([`crate::comp::Comp::param_at`]); elsewhere it is kept, not used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
 }
 
 impl Param {
     pub fn new(value: ParamValue) -> Self {
-        Self { value, keyframes: Vec::new() }
+        Self { value, keyframes: Vec::new(), expression: None }
+    }
+
+    /// Drops an expression longer than [`crate::expr::MAX_SOURCE`] bytes (a damaged or hostile
+    /// file; it could never parse).
+    pub fn cap_expression(&mut self) {
+        if self.expression.as_ref().is_some_and(|s| s.len() > crate::expr::MAX_SOURCE) {
+            self.expression = None;
+        }
     }
     pub fn is_animated(&self) -> bool {
         !self.keyframes.is_empty()

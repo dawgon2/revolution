@@ -160,7 +160,10 @@ Commands take `clip?` (default: the first selected video clip) and nodes by stab
 master?]`, curves `[[x, y]…]`; clamped; animated params get a keyframe at the playhead;
 consecutive calls with the same `merge` key are one undo step, for drags),
 `grade.toggleAnimation {node, param}`, `grade.resetNode {node, param?}`, `grade.bypass {on?}`,
-`grade.clear`.
+`grade.clear`. HDR zone wheels (fork G4.2): `hdr.<zone>.exposure` / `.sat` / `.balance` (wheel) /
+`.range` / `.falloff` through `grade.setParam` (`<zone>`: `global` (no range / falloff), `black`,
+`dark`, `shadow`, `light`, `highlight`, `specular`); `grade.hdr.reset {node, zone?}` resets one
+wheel or all.
 
 **Keyboard shortcuts** (`crates/engine/src/shortcuts.rs`): `shortcuts.list {query?, panel?}`,
 `shortcuts.get`, `shortcuts.set {command, keys, panel?, add?, keepConflicts?}`, `shortcuts.clear`,

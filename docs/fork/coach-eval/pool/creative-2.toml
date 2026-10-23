@@ -278,6 +278,8 @@ kind = "creative"
 family = "remove-passer-by"
 q = "content-aware fill to remove a logo from a wall in a moving shot"
 sources = ["practice.editing.clean-plate", "effects.opacity", "tracking.what"]
+# G4.4: a mask that follows a wall is what the planar-tracked windows section tracks
+alt_sources = { "tracking.what" = ["color.secondaries.planar"] }
 must = ["Revolution has no content-aware fill / object removal yet", "workarounds: a patch of clean wall on a track above through a tracked mask, or blur / Mosaic the logo with a tracked mask", "a moving camera makes a clean plate hard to line up"]
 must_not = []
 style = "premiere-words"

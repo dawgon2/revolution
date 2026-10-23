@@ -363,6 +363,53 @@ fn a_graph_the_stage_cannot_route_renders_on_the_cpu() {
     assert!(d < 4e-3, "{d}");
 }
 
+/// Fork G3: Magic Mask mattes in branched grades on the GPU like on the CPU: a branch node's
+/// steps limited by its matte (`MaskedBy` inside its `Fx` pass), a key output limited by it
+/// (blurred-qualifier, plain and window-only keys: an outside node, a key mixer), an outside node
+/// limited by its own, a coarse matte stretched bilinearly, an empty matte.
+#[test]
+fn gpu_grade_graphs_with_magic_mask_mattes_match_cpu() {
+    use filmcraft_render::grade::NodeMattes;
+    use filmcraft_render::matte::BitmapMatte;
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = full_precision(&dev, &q);
+    let top = Arc::new(BitmapMatte::new(W, H, (0..W * H).map(|i| if i / W < H / 2 { 255 } else { 0 }).collect()).expect("matte"));
+    let coarse = Arc::new(BitmapMatte::new(5, 3, vec![0, 40, 255, 255, 90, 10, 200, 128, 0, 255, 255, 0, 60, 180, 30]).expect("matte"));
+    let empty = Arc::new(BitmapMatte::new(1, 1, vec![0]).expect("matte"));
+    let case = |name: &str| cases().into_iter().find(|(n, _)| n == name).expect("case").1;
+    let runs: Vec<(&str, Grade, Vec<(u64, Arc<BitmapMatte>)>)> = vec![
+        ("parallel, branch matte", case("parallel"), vec![(2, top.clone())]),
+        ("parallel, coarse matte on the qualified branch", case("parallel"), vec![(1, coarse.clone())]),
+        ("parallel, empty matte", case("parallel"), vec![(1, empty)]),
+        ("outside, matte on the inside node", case("outside"), vec![(1, top.clone())]),
+        ("outside, matte on the outside node", case("outside"), vec![(2, coarse.clone())]),
+        ("outside, both", case("outside"), vec![(1, coarse.clone()), (2, top.clone())]),
+        ("key mixer, matte on the window key", case("key mixer intersect"), vec![(1, coarse), (4, top)]),
+    ];
+    let mut failures = Vec::new();
+    for (name, g, m) in runs {
+        let mattes = NodeMattes(m.into_iter().collect());
+        let ctx = GradeCtx { seq_time: Tick(5), mattes: Some(&mattes), ..Default::default() };
+        let ops = compile_fx(&g, Tick(123_456_789), WorkingSpace::DaVinciWide, ctx, W as usize, H as usize);
+        let Some(FxOp::GradeGraph(p)) = ops.first() else { panic!("{name}: {ops:?}") };
+        let bitmap_key = p.passes.iter().any(|q| matches!(q, GradePass::Matte { bitmap: Some(_), .. }));
+        let bitmap_fx = p.passes.iter().any(|q| matches!(q, GradePass::Fx { ops, .. } if ops.iter().any(|o| matches!(o, FxOp::MaskedBy { .. }))));
+        assert!(bitmap_key || bitmap_fx, "{name}: no matte in the program");
+        assert!(ops.iter().all(FxOp::gpu_ok), "{name}: not GPU-capable");
+        let frame = VideoFrame::rgba_f32(W, H, picture(W, H));
+        assert!(c.effect_image(&frame, &LayerFx { size: (W, H), decimation: 1, ops: ops.clone() }).is_some(), "{name}: the stage refused it");
+        let (worst, flips) = parity(&mut c, ops);
+        eprintln!("{name}: max rel diff {worst:.2e}, {:.3}% off by > 2 %", flips * 100.0);
+        if worst > TOL || flips > 0.0 {
+            failures.push(format!("{name}: {worst:.2e}, flips {flips:.4}"));
+        }
+    }
+    assert!(failures.is_empty(), "GPU grade graphs with mattes differ from the CPU:\n{}", failures.join("\n"));
+}
+
 /// Half-float working textures (integrated GPUs' optional preview format) stay within
 /// [`HALF_TOL`] of the CPU.
 #[test]

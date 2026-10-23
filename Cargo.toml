@@ -49,6 +49,7 @@ filmcraft-remote = { path = "crates/remote" }
 filmcraft-ml = { path = "crates/ml" }
 filmcraft-tts = { path = "crates/tts" }
 filmcraft-voice = { path = "crates/voice" }
+filmcraft-mask = { path = "crates/mask" }
 filmcraft-usershader = { path = "crates/usershader" }
 filmcraft-tts-text = { path = "crates/tts-text" }
 filmcraft-render = { path = "crates/render" }

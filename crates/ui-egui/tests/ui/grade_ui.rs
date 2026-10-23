@@ -745,3 +745,206 @@ fn canvas_refits_on_release_after_a_change_with_the_pointer_held() {
     d.frames(3);
     assert!(node_in_canvas(&mut d, n2), "the canvas refits on release");
 }
+
+/// The Warper tab (fork G4.1): drag a hue-sat point (one undo step), pin a point, switch mesh.
+#[test]
+fn warper_tab_drags_and_pins_mesh_points() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(3);
+    d.click("grade.addFirst");
+    d.click("grade.tab.warper");
+    d.frames(2);
+    let p = d.element("grade.warper.point.8").unwrap_or_else(|| panic!("no warper point: {:?}", d.ids("grade.warper.")));
+    let plane = d.element("grade.warper.plane").expect("plane");
+    let (x, y) = (p[0] + p[2] / 2.0, p[1] + p[3] / 2.0);
+    // drag the red point of the second ring a little round the hue circle (clockwise on screen)
+    let to = (x - plane[2] * 0.03, y + plane[3] * 0.12);
+    d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": to.0, "y": to.1}, "steps": 8}));
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    let pts = g["nodes"][0]["warper"]["hueSat"]["points"].clone();
+    assert_eq!(pts.as_array().map(Vec::len), Some(1), "{g}");
+    assert_eq!(pts[0]["index"], json!(8), "{g}");
+    let hue = pts[0]["to"][0].as_f64().unwrap();
+    assert!(hue > 0.02 && hue < 0.3, "moved round the hue circle: {g}");
+    d.snapshot("grade-warper", None);
+    // the whole drag is one undo step
+    d.exec("edit.undo", json!({}));
+    let g = grade(&mut d, clip);
+    assert!(g["nodes"][0]["warper"].is_null(), "{g}");
+    // right-click a point: it is pinned (the Pin button below the plane does the same)
+    let p = d.element("grade.warper.point.3").expect("point 3");
+    d.ok("ui.click", json!({"x": p[0] + p[2] / 2.0, "y": p[1] + p[3] / 2.0, "button": "right"}));
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    assert_eq!(g["nodes"][0]["warper"]["hueSat"]["points"][0]["pinned"], json!(true), "{g}");
+    // the chroma-luma mesh
+    d.click("grade.warper.mode.chromaLuma");
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    assert_eq!(g["nodes"][0]["warper"]["mode"], json!("chromaLuma"), "{g}");
+    assert!(d.element("grade.warper.point.24").is_some(), "5 × 5 chroma-luma mesh");
+}
+
+/// Fork G4.4: the Windows tab's **Planar** button starts a planar track of that window (both
+/// ways, in the background; clicking it again stops it), and a planar-tracked window gets
+/// **✕ planar**, which clears the track. (The tracker's accuracy is the engine's tests.)
+#[test]
+fn planar_button_tracks_a_window_and_clear_removes_it() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(3);
+    d.click("grade.addFirst");
+    d.click("grade.tab.windows");
+    d.click("grade.window.add.rectangle");
+    assert!(d.element("grade.window.0.track.planar").is_some(), "{:?}", d.ids("grade.window."));
+    assert!(d.element("grade.window.0.track.clearPlanar").is_none(), "nothing to clear yet");
+    d.click("grade.window.0.track.planar");
+    assert!(d.harness.state().session.jobs.iter().any(|j| j.label.starts_with("Planar track")), "a planar job started");
+    // while it runs the button stops it
+    if !d.harness.state().session.planar_jobs.is_empty() {
+        d.click("grade.window.0.track.planar");
+    }
+    for _ in 0..3000 {
+        if d.harness.state().session.planar_jobs.is_empty() {
+            break;
+        }
+        d.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(d.harness.state().session.planar_jobs.is_empty(), "the job ended");
+    // a window that follows a plane (set directly when the demo picture gave none)
+    let node = grade(&mut d, clip)["nodes"][0]["id"].as_u64().unwrap();
+    {
+        let s = &mut d.harness.state_mut().session;
+        let seq = s.state.active_sequence.unwrap();
+        let p = std::sync::Arc::make_mut(&mut s.project);
+        let q = p.sequence_mut(seq).unwrap();
+        let it = q.video_tracks.iter_mut().flat_map(|t| t.items.iter_mut()).find(|i| i.id.0 == clip).unwrap();
+        let w = &mut it.grade.as_mut().unwrap().node_mut(node).unwrap().windows[0];
+        if w.planar.is_none() {
+            let h = [1.0, 0.0, 12.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+            w.planar = Some(filmcraft_project::PlanarTrack {
+                reference: filmcraft_time::Tick(0),
+                keys: vec![filmcraft_project::PlanarKey { time: filmcraft_time::Tick(0), h }],
+            });
+        }
+    }
+    d.frames(3);
+    assert!(d.element("grade.window.0.track.clearPlanar").is_some(), "{:?}", d.ids("grade.window."));
+    d.snapshot("grade-window-planar", Some("grade.window."));
+    d.click("grade.window.0.track.clearPlanar");
+    let s = &d.harness.state().session;
+    let it = s.active_sequence().unwrap().find_item(filmcraft_project::ClipId(clip)).unwrap().1;
+    assert!(it.grade.as_ref().unwrap().node(node).unwrap().windows[0].planar.is_none(), "cleared");
+    assert!(d.element("grade.window.0.track.clearPlanar").is_none());
+}
+
+/// Fork G4.2: the HDR tab shows the zone graph and the seven wheels with their fields; a click on
+/// a wheel sets that zone's balance, a dragged exposure is one undo step, the zone reset and
+/// Reset All clear the `hdr.*` keys.
+#[test]
+fn hdr_tab_edits_the_zone_wheels() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(2);
+    d.click("grade.addFirst");
+    let node = grade(&mut d, clip)["nodes"][0]["id"].as_u64().unwrap();
+    d.click("grade.tab.hdr");
+    d.frames(2);
+    let ids = d.ids("grade.hdr.");
+    for id in
+        ["grade.hdr.reset", "grade.hdr.graph", "grade.hdr.wheel.global", "grade.hdr.wheel.specular.reset", "grade.hdr.shadow.falloff", "grade.hdr.global.sat"]
+    {
+        assert!(ids.iter().any(|i| i == id), "{id} missing from {ids:?}");
+    }
+    assert!(!ids.iter().any(|i| i == "grade.hdr.global.range"), "Global has no range: {ids:?}");
+    d.snapshot("grade-hdr", Some("grade.hdr."));
+    // a click on the Shadow wheel's rim: a balance on that zone
+    d.ok("ui.click", json!({"id": "grade.hdr.wheel.shadow", "fx": 0.85, "fy": 0.5}));
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    assert!(g["nodes"][0]["params"]["hdr.shadow.balance"].is_object(), "{g}");
+    // drag the Highlight exposure: one parameter, one undo step
+    let [x, top, w, h] = d.element("grade.hdr.highlight.exposure").expect("exposure box");
+    let cy = top + h / 2.0;
+    d.ok("ui.drag", json!({"from": {"x": x + w * 0.5, "y": cy}, "to": {"x": x + w * 0.5 + 60.0, "y": cy}, "steps": 8}));
+    d.frames(3);
+    let g = grade(&mut d, clip);
+    let e = float_param(&g, node, "hdr.highlight.exposure").unwrap_or_else(|| panic!("exposure set: {g}"));
+    assert!(e > 0.0, "{e}");
+    d.exec("edit.undo", json!({}));
+    let g = grade(&mut d, clip);
+    assert_eq!(float_param(&g, node, "hdr.highlight.exposure"), None, "one undo removes the drag: {g}");
+    assert!(g["nodes"][0]["params"]["hdr.shadow.balance"].is_object(), "{g}");
+    // the zone's reset, then Reset All
+    d.exec("grade.setParam", json!({"clip": clip, "node": node, "param": "hdr.light.sat", "value": 1.4}));
+    d.click("grade.hdr.wheel.shadow.reset");
+    let g = grade(&mut d, clip);
+    assert!(g["nodes"][0]["params"]["hdr.shadow.balance"].is_null() && float_param(&g, node, "hdr.light.sat").is_some(), "{g}");
+    d.click("grade.hdr.reset");
+    let g = grade(&mut d, clip);
+    let params = g["nodes"][0]["params"].as_object().cloned().unwrap_or_default();
+    assert!(params.keys().all(|k| !k.starts_with("hdr.")), "{g}");
+}
+
+/// The 3D qualifier (fork G4.3): switch the Qualifier tab to 3D, paint an Include stroke on the
+/// Program picture (one undo step), click an Exclude spot, then clear the excluded colours.
+#[test]
+fn qualifier_3d_strokes_on_the_program_picture() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(3);
+    d.click("grade.addFirst");
+    d.click("grade.tab.qualifier");
+    d.frames(2);
+    // an armed HSL picker is put down by the 3D key (it is hidden: a click must not set ranges)
+    d.click("grade.qual.pick");
+    assert!(d.harness.state().ui.grade_picker.is_some());
+    d.click("grade.qual3d.mode.3d");
+    d.frames(2);
+    assert!(d.harness.state().ui.grade_picker.is_none(), "the hidden HSL picker is disarmed");
+    let g = grade(&mut d, clip);
+    assert_eq!(g["nodes"][0]["qual3d"]["mode"], json!("3d"), "{g}");
+    assert!(d.element("grade.param.qual.hueWidth").is_none(), "the HSL ranges hide with the 3D key");
+    d.click("grade.qual3d.include");
+    d.frames(2);
+    let pic = d.element("program.picture").unwrap_or_else(|| panic!("no picture: {:?}", d.ids("program.")));
+    let (y, x0, x1) = (pic[1] + pic[3] * 0.5, pic[0] + pic[2] * 0.4, pic[0] + pic[2] * 0.6);
+    d.ok("ui.drag", json!({"from": {"x": x0, "y": y}, "to": {"x": x1, "y": y}, "steps": 10}));
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    let inc = g["nodes"][0]["qual3d"]["include"].as_array().map(Vec::len).unwrap_or(0);
+    assert!(inc >= 1, "the stroke picked colours: {g}");
+    assert!(float_param(&g, g["nodes"][0]["id"].as_u64().unwrap(), "qual.on").is_some_and(|v| v >= 0.5), "{g}");
+    d.snapshot("grade-qualifier-3d", None);
+    // one undo step for the stroke
+    d.exec("edit.undo", json!({}));
+    let g = grade(&mut d, clip);
+    assert!(g["nodes"][0]["qual3d"]["include"].is_null(), "{g}");
+    // an exclude click (the tool stays armed after a stroke)
+    d.click("grade.qual3d.exclude");
+    d.frames(2);
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.2, "y": pic[1] + pic[3] * 0.2}));
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    assert_eq!(g["nodes"][0]["qual3d"]["exclude"].as_array().map(Vec::len), Some(1), "{g}");
+    d.click("grade.qual3d.clear.exclude");
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    assert!(g["nodes"][0]["qual3d"]["exclude"].is_null(), "{g}");
+    // back to the HSL ranges
+    d.click("grade.qual3d.mode.hsl");
+    d.frames(2);
+    assert!(d.element("grade.qual3d.include").is_none(), "the stroke tools hide with the HSL key");
+    assert!(d.element("grade.param.qual.hueWidth").is_some());
+}

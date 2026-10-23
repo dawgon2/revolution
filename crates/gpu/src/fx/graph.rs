@@ -139,7 +139,7 @@ pub(crate) fn build(_device: &wgpu::Device, _format: wgpu::TextureFormat) -> Opt
 pub(crate) fn has_graph(ops: &[FxOp]) -> bool {
     ops.iter().any(|o| match o {
         FxOp::GradeGraph(_) => true,
-        FxOp::Masked { ops, .. } => has_graph(ops),
+        FxOp::Masked { ops, .. } | FxOp::MaskedBy { ops, .. } => has_graph(ops),
         _ => false,
     })
 }
@@ -317,7 +317,7 @@ impl FxStage {
                         sl.release(k);
                     }
                 }
-                GradePass::Matte { src, dst, key, blur, invert, masks } => {
+                GradePass::Matte { src, dst, key, blur, invert, masks, bitmap } => {
                     let Some(s) = sl.get(*src) else { continue };
                     let prog = mask_program(masks);
                     let windows = prog.len() > 1;
@@ -362,6 +362,21 @@ impl FxStage {
                                 sl.release(a);
                                 b
                             }
+                        }
+                    };
+                    // times the Magic Mask matte (fork G3): the matte mix of the key over black,
+                    // `0 + (key − 0) × coverage` (alpha stays 1)
+                    let out = match bitmap.as_deref() {
+                        None => out,
+                        Some(m) => {
+                            let zero = sl.take()?;
+                            let g = GPass { p: [0.0, 0.0, 0.0, 1.0], ..GPass::new(G_FILL) };
+                            work.push(self.graph_dispatch(cx, gp, &g, view(zero)?));
+                            let t = sl.take()?;
+                            work.push(Work::Compute(self.matte_dispatch(cx, m, view(out)?, view(t)?, view(zero)?)?));
+                            sl.release(zero);
+                            sl.release(out);
+                            t
                         }
                     };
                     sl.set(*dst, out);

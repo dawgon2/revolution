@@ -294,6 +294,49 @@ fn compositor_round_trip(workflow: Workflow) {
     }
 }
 
+/// Fork C4.5: the "=" toggle beside a parameter opens its expression field; Enter commits it
+/// through comp.setExpression, the row shows the value after the expression, and an expression
+/// that doesn't parse shows its error under the field and stores nothing.
+#[test]
+fn inspector_expression_field() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().expect("the panel's comp");
+    let merge = d.exec("comp.addNode", json!({"comp": comp, "kind": "merge", "pos": [-200, 0]}))["node"].as_u64().unwrap();
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [merge]}}}}));
+    d.frames(3);
+    assert!(d.has("comp.inspector.opacity.expr.toggle") && !d.has("comp.inspector.opacity.expr"));
+    d.ok("ui.click", json!({"id": "comp.inspector.opacity.expr.toggle"}));
+    d.frames(3);
+    assert!(d.has("comp.inspector.opacity.expr"), "the toggle opens the field");
+    let expression = |d: &mut Driver| {
+        let g = d.exec("comp.get", json!({"comp": comp}));
+        g["nodes"].as_array().unwrap().iter().find(|n| n["id"] == json!(merge)).unwrap()["params"]["opacity"]["expression"].clone()
+    };
+    d.ok("ui.click", json!({"id": "comp.inspector.opacity.expr"}));
+    d.ok("ui.type", json!({"text": "50 + 5"}));
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(4);
+    assert_eq!(expression(&mut d), json!("50 + 5"));
+    let row = d.ok("ui.elements", json!({"prefix": "comp.param.opacity"}));
+    assert!(
+        row.as_array().unwrap().iter().any(|e| e["id"] == json!("comp.param.opacity") && e["label"].as_str().is_some_and(|l| l.starts_with("55"))),
+        "{row}"
+    );
+    // an expression that doesn't parse: its error under the field, nothing stored
+    d.ok("ui.click", json!({"id": "comp.inspector.opacity.expr"}));
+    d.ok("ui.key", json!({"key": "Cmd+A"}));
+    d.ok("ui.type", json!({"text": "sin("}));
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(4);
+    let err = d.ok("ui.elements", json!({"prefix": "comp.inspector.opacity.expr.error"}));
+    assert!(err.as_array().unwrap().iter().any(|e| e["label"].as_str().is_some_and(|l| l.contains("ends too early"))), "{err}");
+    assert_eq!(expression(&mut d), json!("50 + 5"), "a refused expression stores nothing");
+}
+
 #[test]
 fn compositor_panel_premiere() {
     compositor_round_trip(Workflow::Premiere);
@@ -302,6 +345,125 @@ fn compositor_panel_premiere() {
 #[test]
 fn compositor_panel_resolve() {
     compositor_round_trip(Workflow::Resolve);
+}
+
+/// C4.6: select two nodes ▸ Group, open the group, expose an inner setting, breadcrumb back out.
+#[test]
+fn group_open_expose_and_back() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().unwrap();
+    let grad = d.exec("comp.addNode", json!({"comp": comp, "kind": "gradient", "pos": [-400, 0]}))["node"].as_u64().unwrap();
+    let blur = d.exec("comp.addNode", json!({"comp": comp, "kind": "blur", "pos": [-200, 0]}))["node"].as_u64().unwrap();
+    d.exec("comp.connect", json!({"comp": comp, "from": grad, "to": blur}));
+    d.exec("comp.connect", json!({"comp": comp, "from": blur, "to": 1}));
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [grad, blur]}}}}));
+    d.frames(3);
+    assert!(d.has("comp.canvas.group") && d.has("comp.canvas.ungroup") && d.has("comp.canvas.enterGroup"));
+    d.ok("ui.click", json!({"id": "comp.canvas.group"}));
+    d.frames(3);
+    let got = d.exec("comp.get", json!({"comp": comp}));
+    let g = got["nodes"].as_array().unwrap().iter().find(|n| n["kind"]["type"] == json!("group")).expect("a group node")["id"].as_u64().unwrap();
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["canvas"]["selection"], json!([g]));
+    // open it: the inside on the canvas, a breadcrumb back
+    d.ok("ui.click", json!({"id": "comp.canvas.enterGroup"}));
+    d.frames(3);
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["path"], json!([g]));
+    assert!(d.has("comp.canvas.breadcrumb.0") && d.has(&format!("comp.node.{blur}")));
+    // expose the inner Blur's blurriness
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [blur]}}}}));
+    d.frames(3);
+    assert!(d.has("comp.expose.blurriness"));
+    d.ok("ui.click", json!({"id": "comp.expose.blurriness"}));
+    d.frames(3);
+    let got = d.exec("comp.get", json!({"comp": comp}));
+    assert_eq!(got["groupParams"][g.to_string()][0]["exposed"]["param"], json!("blurriness"));
+    // back out: the comp again, and the group's inspector shows the exposed setting
+    d.ok("ui.click", json!({"id": "comp.canvas.breadcrumb.0"}));
+    d.frames(3);
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["path"], json!([]));
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [g]}}}}));
+    d.frames(3);
+    assert!(d.has("comp.param.blurriness"));
+    // Ungroup puts the nodes back
+    d.ok("ui.click", json!({"id": "comp.canvas.ungroup"}));
+    d.frames(3);
+    let got = d.exec("comp.get", json!({"comp": comp}));
+    assert!(got["nodes"].as_array().unwrap().iter().all(|n| n["kind"]["type"] != json!("group")));
+}
+
+/// The comp's picture at its first frame, rendered on the CPU.
+fn comp_picture(d: &mut Driver, comp: u64) -> Vec<f32> {
+    let s = &d.harness.state().session;
+    let Some(filmcraft_project::ItemKind::Comp(c)) = s.project.item(filmcraft_project::ItemId(comp)).map(|i| &i.kind) else { panic!("not a comp") };
+    let cx = filmcraft_render::comp::CompCtx { t: filmcraft_time::Tick(0), size: (64, 36), project: Some(&s.project), high_quality: false };
+    filmcraft_render::comp::render_cpu(c, cx, &filmcraft_render::comp::NoSources).px
+}
+
+/// C4.8: inside an open group the canvas edits: add a node from the background menu, connect it to
+/// the group's Media Out, breadcrumb back out, and the comp's picture changed. Ungroup / Open
+/// Group are on group nodes only.
+#[test]
+fn edit_inside_a_group_and_back() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().unwrap();
+    let grad = d.exec("comp.addNode", json!({"comp": comp, "kind": "gradient", "pos": [0, 0]}))["node"].as_u64().unwrap();
+    let blur = d.exec("comp.addNode", json!({"comp": comp, "kind": "blur", "pos": [200, 0]}))["node"].as_u64().unwrap();
+    d.exec("comp.connect", json!({"comp": comp, "from": grad, "to": blur}));
+    d.exec("comp.connect", json!({"comp": comp, "from": blur, "to": 1}));
+    let g = d.exec("comp.group", json!({"comp": comp, "nodes": [blur]}))["node"].as_u64().unwrap();
+    d.frames(3);
+    // the node menu: Group everywhere, Ungroup / Open Group on the group only
+    d.ok("ui.click", json!({"id": format!("comp.node.{grad}"), "button": "right"}));
+    d.frames(3);
+    let menu = d.ok("ui.elements", json!({"prefix": "comp.nodeMenu"}));
+    assert!(d.has("comp.nodeMenu.group") && !d.has("comp.nodeMenu.ungroup") && !d.has("comp.nodeMenu.enterGroup"), "{menu}");
+    d.ok("ui.key", json!({"key": "Escape"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": format!("comp.node.{g}"), "button": "right"}));
+    d.frames(3);
+    assert!(d.has("comp.nodeMenu.ungroup") && d.has("comp.nodeMenu.enterGroup"));
+    d.ok("ui.click", json!({"id": "comp.nodeMenu.enterGroup"}));
+    d.frames(3);
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["path"], json!([g]));
+    let before = comp_picture(&mut d, comp);
+    // add a Solid from the background menu inside the group
+    d.ok("ui.click", json!({"id": "comp.canvas", "fx": 0.6, "fy": 0.7, "button": "right"}));
+    d.frames(3);
+    assert!(d.has("comp.add.groupInput"), "inside a group the menu adds Group Inputs");
+    d.ok("ui.click", json!({"id": "comp.add.solid"}));
+    d.frames(3);
+    let inside = d.exec("comp.get", json!({"comp": comp, "group": [g]}));
+    let nodes = inside["nodes"].as_array().unwrap();
+    let solid = nodes.iter().find(|n| n["kind"]["type"] == json!("solid")).expect("a Solid inside the group")["id"].as_u64().unwrap();
+    let out = inside["output"].as_u64().unwrap();
+    assert!(d.exec("comp.get", json!({"comp": comp}))["nodes"].as_array().unwrap().iter().all(|n| n["kind"]["type"] != json!("solid")));
+    // connect it to the group's Media Out by dragging port to port
+    d.ok("ui.drag", json!({"from": {"id": format!("comp.port.{solid}.out.0")}, "to": {"id": format!("comp.port.{out}.in.0")}, "steps": 6}));
+    d.frames(3);
+    let inside = d.exec("comp.get", json!({"comp": comp, "group": [g]}));
+    assert!(
+        inside["edges"].as_array().unwrap().iter().any(|e| e["from"]["node"] == json!(solid) && e["to"]["node"] == json!(out)),
+        "connected inside the group: {}",
+        inside["edges"]
+    );
+    // back out: the comp's own level, and its picture is the Solid's now
+    d.ok("ui.click", json!({"id": "comp.canvas.breadcrumb.0"}));
+    d.frames(3);
+    assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["path"], json!([]));
+    assert!(d.has(&format!("comp.node.{g}")));
+    assert_ne!(comp_picture(&mut d, comp), before, "the edit inside the group changed the picture");
+    // one undo takes the connection back
+    d.exec("edit.undo", json!({}));
+    let inside = d.exec("comp.get", json!({"comp": comp, "group": [g]}));
+    assert!(!inside["edges"].as_array().unwrap().iter().any(|e| e["from"]["node"] == json!(solid)));
 }
 
 /// Premiere workflow: Window ▸ Workspaces ▸ Compositing; Resolve workflow: the Fusion page between
@@ -322,4 +484,44 @@ fn compositing_workspace_and_fusion_page() {
     d.frames(3);
     assert_eq!(d.ok("ui.inspect", json!({}))["ui"]["workspace"], json!("Compositing"));
     assert!(d.has("panel.tab.Compositor"));
+}
+
+/// C4.8 review: an undo that removes the open group drops the selection of its inner nodes, so
+/// Delete can't remove the same-numbered node of the comp's own level; tracking is off inside.
+#[test]
+fn undoing_the_open_group_drops_the_inner_selection() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().unwrap();
+    let grad = d.exec("comp.addNode", json!({"comp": comp, "kind": "gradient", "pos": [0, 0]}))["node"].as_u64().unwrap();
+    let blur = d.exec("comp.addNode", json!({"comp": comp, "kind": "blur", "pos": [200, 0]}))["node"].as_u64().unwrap();
+    let tracker = d.exec("comp.addNode", json!({"comp": comp, "kind": "tracker", "pos": [200, 120]}))["node"].as_u64().unwrap();
+    d.exec("comp.connect", json!({"comp": comp, "from": grad, "to": blur}));
+    d.exec("comp.connect", json!({"comp": comp, "from": blur, "to": tracker}));
+    d.exec("comp.connect", json!({"comp": comp, "from": tracker, "to": 1}));
+    let g = d.exec("comp.group", json!({"comp": comp, "nodes": [blur, tracker]}))["node"].as_u64().unwrap();
+    d.ok("ui.set", json!({"panels": {"comp": {"path": [g], "canvas": {"selection": [tracker]}}}}));
+    d.frames(3);
+    // the tracker inside the group: Analyse is there but off
+    let el = d.ok("ui.elements", json!({"prefix": "comp.track.analyse.forward"}));
+    assert!(el[0]["label"].as_str().unwrap().contains("own nodes only"), "{el}");
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [blur]}}}}));
+    d.frames(3);
+    let before = d.exec("comp.get", json!({"comp": comp}));
+    d.exec("edit.undo", json!({}));
+    d.frames(3);
+    let ui = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"].clone();
+    assert_eq!(ui["path"], json!([]));
+    assert_eq!(ui["canvas"]["selection"], json!([]));
+    let flat = d.exec("comp.get", json!({"comp": comp}));
+    assert_ne!(flat, before);
+    // Delete over the canvas now deletes nothing
+    d.ok("ui.move", json!({"id": "comp.canvas", "fx": 0.9, "fy": 0.9}));
+    d.ok("ui.key", json!({"key": "Delete"}));
+    d.frames(3);
+    assert_eq!(d.exec("comp.get", json!({"comp": comp})), flat, "the comp's own nodes are unchanged");
+    assert!(flat["nodes"].as_array().unwrap().iter().any(|n| n["id"] == json!(blur)));
 }

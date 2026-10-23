@@ -1,0 +1,43 @@
+[package]
+name = "filmcraft-mask"
+description = "FilmCraft Magic Mask: the Segmenter trait (promptable subject segmentation), mattes and their refine operations, and (feature sam) MobileSAM on the CPU via candle (fork GRADE-PLAN G3)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# MobileSAM (TinyViT image encoder + SAM prompt encoder / mask decoder) on the CPU via candle
+# (pure Rust). Off by default and in wasm builds.
+sam = ["dep:filmcraft-ml", "filmcraft-ml/candle", "dep:candle-core", "dep:candle-nn", "dep:candle-transformers"]
+
+[dependencies]
+filmcraft-ml = { workspace = true, optional = true }
+candle-core = { version = "0.9", default-features = false, optional = true }
+candle-nn = { version = "0.9", default-features = false, optional = true }
+candle-transformers = { version = "0.9", default-features = false, optional = true }
+
+[[example]]
+name = "sam_spike"
+required-features = ["sam"]
+
+[[example]]
+name = "mask_accept"
+required-features = ["sam"]
+
+[[example]]
+name = "sam_gpu"
+required-features = ["sam"]
+
+[[example]]
+name = "sam2_parity"
+required-features = ["sam"]
+
+[dev-dependencies]
+# The GPU image encoder's parity tests and timing example (fork G3, FORK-PLAN §1a.122): the
+# encoder lives in filmcraft-gpu (L3); the CPU candle encoder here is its reference.
+filmcraft-gpu = { workspace = true }

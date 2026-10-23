@@ -3,7 +3,9 @@
 //! [`Session::edit_merged`]).
 //!
 //! Commands address the comp **project item** by `comp`; without it, the selected comp clip's item
-//! (the first selected clip whose item is a comp). Nodes are addressed by their stable `node` id.
+//! (the first selected clip whose item is a comp). Nodes are addressed by their stable `node` id;
+//! with `group` (a path of group node ids, outer first, C4.8) the node-editing commands work inside
+//! that group ([`edit_comp`], [`comp_at`]).
 //! Refusals are `BadParams` with the reason; a refused command changes nothing.
 
 use std::sync::Arc;
@@ -30,27 +32,27 @@ fn query(id: &'static str, label: &'static str, params: &'static str, run: Run) 
 pub(crate) fn commands() -> Vec<CommandSpec> {
     vec![
         spec("comp.new", "New Comp", r#"{"name":str?,"width":n?,"height":n?,"fps":n?,"duration":ticks?}"#, new),
-        query("comp.get", "Get Comp", r#"{"comp":id?}"#, get),
+        query("comp.get", "Get Comp", r#"{"comp":id?,"group":[id]?}"#, get),
         query("comp.params", "List Comp Node Parameters", r#"{"kind":str}"#, params),
         query("comp.explain", "Explain Comp", r#"{"comp":id?,"time":ticks?}"#, explain),
-        spec("comp.addNode", "Add Node", r#"{"comp":id?,"kind":str,"label":str?,"pos":[x,y]?,"after":node?,"item":id?,"track":n?,"effect":str?}"#, add_node),
-        spec("comp.removeNode", "Delete Node", r#"{"comp":id?,"nodes":[id]}"#, remove_nodes),
-        spec("comp.connect", "Connect", r#"{"comp":id?,"from":node,"fromPort":n?,"to":node,"toPort":n?}"#, connect),
-        spec("comp.disconnect", "Disconnect", r#"{"comp":id?,"to":node,"toPort":n?}"#, disconnect),
+        spec("comp.addNode", "Add Node", r#"{"comp":id?,"group":[id]?,"kind":str (or "groupInput" inside a group),"index":n? (groupInput),"label":str?,"pos":[x,y]?,"after":node?,"item":id?,"track":n?,"effect":str?}"#, add_node),
+        spec("comp.removeNode", "Delete Node", r#"{"comp":id?,"group":[id]?,"nodes":[id]}"#, remove_nodes),
+        spec("comp.connect", "Connect", r#"{"comp":id?,"group":[id]?,"from":node,"fromPort":n?,"to":node,"toPort":n?}"#, connect),
+        spec("comp.disconnect", "Disconnect", r#"{"comp":id?,"group":[id]?,"to":node,"toPort":n?}"#, disconnect),
         spec(
             "comp.setParam",
             "Set Node Parameter",
-            r#"{"comp":id?,"node":id,"param":str,"value":any?,"reset":bool?,"time":ticks?,"keyframes":[{"time":ticks,"value":any}]?}"#,
+            r#"{"comp":id?,"group":[id]?,"node":id,"param":str,"value":any?,"reset":bool?,"time":ticks?,"keyframes":[{"time":ticks,"value":any}]?}"#,
             set_param,
         ),
-        spec("comp.toggleAnimation", "Toggle Node Parameter Animation", r#"{"comp":id?,"node":id,"param":str,"time":ticks?}"#, toggle_animation),
-        spec("comp.setSource", "Set Media In Source", r#"{"comp":id?,"node":id,"item":id?,"track":n?,"offset":ticks?}"#, set_source),
-        spec("comp.bypass", "Bypass Node", r#"{"comp":id?,"node":id,"on":bool?}"#, bypass),
-        spec("comp.labelNode", "Label Node", r#"{"comp":id?,"node":id,"label":str}"#, label_node),
-        spec("comp.moveNode", "Move Node", r#"{"comp":id?,"node":id,"pos":[x,y]}"#, move_node),
-        spec("comp.setOutput", "Set Media Out", r#"{"comp":id?,"node":id}"#, set_output),
+        spec("comp.toggleAnimation", "Toggle Node Parameter Animation", r#"{"comp":id?,"group":[id]?,"node":id,"param":str,"time":ticks?}"#, toggle_animation),
+        spec("comp.setSource", "Set Media In Source", r#"{"comp":id?,"group":[id]?,"node":id,"item":id?,"track":n?,"offset":ticks?}"#, set_source),
+        spec("comp.bypass", "Bypass Node", r#"{"comp":id?,"group":[id]?,"node":id,"on":bool?}"#, bypass),
+        spec("comp.labelNode", "Label Node", r#"{"comp":id?,"group":[id]?,"node":id,"label":str}"#, label_node),
+        spec("comp.moveNode", "Move Node", r#"{"comp":id?,"group":[id]?,"node":id,"pos":[x,y]}"#, move_node),
+        spec("comp.setOutput", "Set Media Out", r#"{"comp":id?,"group":[id]?,"node":id}"#, set_output),
         spec("comp.setSize", "Comp Settings", r#"{"comp":id?,"width":n?,"height":n?,"fps":n?,"duration":ticks?}"#, set_size),
-        spec("comp.setMasks", "Set Mask Node Masks", r#"{"comp":id?,"node":id,"masks":[mask],"gesture":n?}"#, set_masks),
+        spec("comp.setMasks", "Set Mask Node Masks", r#"{"comp":id?,"group":[id]?,"node":id,"masks":[mask],"gesture":n?}"#, set_masks),
         CommandSpec {
             id: "comp.newClip",
             label: "New Comp Clip",
@@ -72,10 +74,21 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             journal: true,
         },
     ]
+    .into_iter()
+    .chain(roto_paint::commands())
+    .chain(expression::commands())
+    .collect()
 }
 
+// C3.5b: the Roto and Paint node commands (`comp.setRoto`, `comp.roto.*`, `comp.setPaint`,
+// `comp.paint.*`)
+mod roto_paint;
+
+// C4.5: parameter expressions (`comp.setExpression`, `comp.clearExpression`)
+pub(crate) mod expression;
+
 /// The comp item a command addresses: `comp`, else the first selected clip whose item is a comp.
-fn target(s: &Session, p: &Value, cmd: &str) -> Result<ItemId> {
+pub(crate) fn target(s: &Session, p: &Value, cmd: &str) -> Result<ItemId> {
     if p.get("comp").is_some() {
         let id = u64_p(p, "comp").map(ItemId).ok_or_else(|| bad(cmd, "`comp` must be a project item id"))?;
         return match s.project.item(id).map(|i| &i.kind) {
@@ -93,23 +106,79 @@ fn target(s: &Session, p: &Value, cmd: &str) -> Result<ItemId> {
         .ok_or_else(|| bad(cmd, "need `comp` (or a selected comp clip)"))
 }
 
-fn comp_of(p: &Project, id: ItemId) -> Option<&Comp> {
+pub(crate) fn comp_of(p: &Project, id: ItemId) -> Option<&Comp> {
     match &p.item(id)?.kind {
         ItemKind::Comp(c) => Some(c),
         _ => None,
     }
 }
 
-/// Runs `f` on the addressed comp as one undo step (merged with the previous step of the same
-/// `merge` key). The comp is brought within its caps afterwards.
-fn edit_comp<R>(s: &mut Session, p: &Value, cmd: &str, label: &str, merge: Option<String>, f: impl FnOnce(&mut Comp) -> Result<R>) -> Result<R> {
+/// The optional `group` param (fork C4.8): the path to a group's inside, outer group node id
+/// first, then nested group ids (at most [`comp::MAX_GROUP_DEPTH`]); empty when absent (the
+/// comp's own nodes). A single id is a one-group path.
+pub(crate) fn group_p(p: &Value, cmd: &str) -> Result<Vec<NodeId>> {
+    let wrong = || bad(cmd, "`group` must be a list of group node ids (the outer group first)");
+    match p.get("group") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(a)) => {
+            if a.is_empty() {
+                return Err(bad(cmd, "`group`: the group path is empty; leave it out to edit the comp's own nodes"));
+            }
+            if a.len() > comp::MAX_GROUP_DEPTH {
+                return Err(bad(cmd, format!("`group`: groups nest at most {} deep, so a group path has at most that many node ids", comp::MAX_GROUP_DEPTH)));
+            }
+            a.iter().map(|v| v.as_u64().ok_or_else(wrong)).collect()
+        }
+        Some(v) => v.as_u64().map(|id| vec![id]).ok_or_else(wrong),
+    }
+}
+
+/// The comp a command works on: the addressed comp item, or the inside of the group its `group`
+/// path names.
+pub(crate) fn comp_at<'a>(s: &'a Session, p: &Value, cmd: &str) -> Result<(ItemId, &'a Comp)> {
     let id = target(s, p, cmd)?;
+    let path = group_p(p, cmd)?;
+    let c = comp_of(&s.project, id).ok_or_else(|| bad(cmd, "not a comp"))?;
+    if path.is_empty() {
+        return Ok((id, c));
+    }
+    let inner = comp::group::inner(c, &path).map_err(|e| bad(cmd, format!("`group`: {e}")))?;
+    Ok((id, inner))
+}
+
+/// Refuses a command addressing a group's inside where that isn't supported yet.
+pub(crate) fn top_level_only(p: &Value, cmd: &str, what: &str) -> Result<()> {
+    if group_p(p, cmd)?.is_empty() {
+        return Ok(());
+    }
+    Err(bad(cmd, format!("{what} works on the comp's own nodes only for now; ungroup the nodes to do it")))
+}
+
+/// Runs `f` on the addressed comp (the inside of the group its `group` path names, C4.8) as one
+/// undo step (merged with the previous step of the same `merge` key). Refused when the edit takes
+/// the whole comp past its node cap or nesting depth; the comp is brought within its caps
+/// afterwards.
+pub(crate) fn edit_comp<R>(s: &mut Session, p: &Value, cmd: &str, label: &str, merge: Option<String>, f: impl FnOnce(&mut Comp) -> Result<R>) -> Result<R> {
+    let id = target(s, p, cmd)?;
+    let path = group_p(p, cmd)?;
+    let merge = merge.map(|k| if path.is_empty() { k } else { format!("{k}@{path:?}") });
     let cmd = cmd.to_string();
     let body = move |proj: &mut Project, _: &mut crate::EditorState| -> Result<R> {
         let it = proj.item_mut(id).ok_or_else(|| bad(&cmd, "the comp is gone"))?;
         let ItemKind::Comp(c) = &mut it.kind else { return Err(bad(&cmd, "not a comp")) };
         let c = Arc::make_mut(c);
-        let r = f(c)?;
+        let (count, depth) = (c.all_nodes().len(), comp::group::nesting(c));
+        let r = if path.is_empty() { f(c)? } else { f(comp::group::inner_mut(c, &path).map_err(|e| bad(&cmd, format!("`group`: {e}")))?)? };
+        comp::group::prune_group_inputs(c, &path);
+        // the whole tree's bounds (an edit inside a group sees only its level)
+        let now = c.all_nodes().len();
+        if now > dag::MAX_NODES && now > count {
+            return Err(bad(&cmd, format!("a comp holds at most {} nodes (groups' insides included)", dag::MAX_NODES)));
+        }
+        let nest = comp::group::nesting(c);
+        if nest > comp::MAX_GROUP_DEPTH && nest > depth {
+            return Err(bad(&cmd, format!("groups nest at most {} deep", comp::MAX_GROUP_DEPTH)));
+        }
         c.sanitize();
         Ok(r)
     };
@@ -176,8 +245,8 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "comp.get";
-    let id = target(s, p, CMD)?;
-    let c = comp_of(&s.project, id).ok_or_else(|| bad(CMD, "not a comp"))?;
+    // C4.8: `group` returns that group's inside
+    let (id, c) = comp_at(s, p, CMD)?;
     let (order, error) = match c.validate() {
         Ok(o) => (o.nodes().collect::<Vec<_>>(), Value::Null),
         Err(e) => (Vec::new(), Value::String(e.to_string())),
@@ -187,6 +256,19 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
         o.insert("comp".into(), json!(id.0));
         o.insert("order".into(), json!(order));
         o.insert("error".into(), error);
+        // C4.3: each group node's parameters (its exposed ones, with the inner schema and value)
+        let groups: serde_json::Map<String, Value> = c
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, CompKind::Group { .. }))
+            .map(|n| {
+                let list: Vec<Value> = comp::group::exposed_params(n).into_iter().map(|(e, d)| json!({"exposed": e, "def": d})).collect();
+                (n.id.to_string(), Value::Array(list))
+            })
+            .collect();
+        if !groups.is_empty() {
+            o.insert("groupParams".into(), Value::Object(groups));
+        }
     }
     Ok(v)
 }
@@ -199,7 +281,21 @@ fn explain(s: &mut Session, p: &Value) -> Result<Value> {
     let c = comp_of(&s.project, id).ok_or_else(|| bad(CMD, "not a comp"))?;
     let e = crate::comp_explain::explain(c, &s.project, t);
     let lines = |v: &[crate::comp_explain::Line]| v.iter().map(|l| json!({"node": l.node, "name": l.name, "text": l.text})).collect::<Vec<_>>();
-    Ok(json!({"comp": id.0, "summary": e.summary, "lines": lines(&e.lines), "unused": lines(&e.unused)}))
+    // C4.5: each parameter expression, its value now and its error (the keyframed value is used then)
+    let exprs: Vec<Value> = crate::comp_explain::expressions(c, t)
+        .iter()
+        .map(|x| {
+            json!({
+                "node": x.node,
+                "name": x.name,
+                "param": x.param,
+                "expression": x.expression,
+                "value": serde_json::to_value(&x.value).unwrap_or(Value::Null),
+                "error": x.error.as_ref().map(expression::error_json),
+            })
+        })
+        .collect();
+    Ok(json!({"comp": id.0, "summary": e.summary, "lines": lines(&e.lines), "unused": lines(&e.unused), "expressions": exprs}))
 }
 
 fn params(s: &mut Session, p: &Value) -> Result<Value> {
@@ -242,9 +338,31 @@ fn source_p(s: &Session, p: &Value, cmd: &str) -> Result<Option<MediaInSource>> 
 
 fn add_node(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "comp.addNode";
-    let key = str_p(p, "kind").ok_or_else(|| bad(CMD, format!("need `kind` (one of {:?})", comp::KINDS)))?;
-    let mut kind = CompKind::from_key(key).ok_or_else(|| bad(CMD, format!("unknown kind `{key}` (one of {:?})", comp::KINDS)))?;
+    let key = str_p(p, "kind").ok_or_else(|| bad(CMD, format!("need `kind` (one of {:?}, or groupInput inside a group)", comp::KINDS)))?;
+    let inside = !group_p(p, CMD)?.is_empty();
+    // C4.8: a Group Input (inside a group only) reads the group node's input `index`
+    let group_input = if key == "groupInput" {
+        if !inside {
+            return Err(bad(CMD, "a Group Input goes inside a group (pass `group`, the path to it)"));
+        }
+        match checked_u32_p(p, "index", CMD)? {
+            Some(i) if i >= comp::group::MAX_GROUP_INPUTS => {
+                return Err(bad(
+                    CMD,
+                    format!("`index` must be 0..{} (a group has at most {} inputs)", comp::group::MAX_GROUP_INPUTS, comp::group::MAX_GROUP_INPUTS),
+                ));
+            }
+            i => Some(i),
+        }
+    } else {
+        None
+    };
+    let mut kind = match group_input {
+        Some(_) => CompKind::MediaIn { source: MediaInSource::GroupInput { index: 0 }, offset: Tick::ZERO },
+        None => CompKind::from_key(key).ok_or_else(|| bad(CMD, format!("unknown kind `{key}` (one of {:?}, or groupInput inside a group)", comp::KINDS)))?,
+    };
     match &mut kind {
+        CompKind::MediaIn { .. } if group_input.is_some() => {}
         CompKind::MediaIn { source, .. } => {
             if let Some(src) = source_p(s, p, CMD)? {
                 *source = src;
@@ -265,13 +383,21 @@ fn add_node(s: &mut Session, p: &Value) -> Result<Value> {
     let after = u64_p(p, "after");
     // a comp item read by this one must not read it back (checked by `Session::edit`)
     let id = edit_comp(s, p, CMD, "Add Node", None, |c| {
-        if c.nodes.len() >= dag::MAX_NODES {
-            return Err(bad(CMD, format!("a comp holds at most {} nodes", dag::MAX_NODES)));
+        // (groups' inner nodes count too, C4.3)
+        if c.all_nodes().len() >= dag::MAX_NODES {
+            return Err(bad(CMD, format!("a comp holds at most {} nodes (groups' insides included)", dag::MAX_NODES)));
         }
         let id = c.next_id();
         let ins = kind.inputs();
         let mut n = CompNode::new(id, kind);
         n.label = label;
+        if let (Some(want), CompKind::MediaIn { source: MediaInSource::GroupInput { index }, .. }) = (group_input, &mut n.kind) {
+            // without `index`: the next input the group doesn't read yet
+            *index = want.unwrap_or_else(|| u32::from(comp::group::input_count(c)).min(comp::group::MAX_GROUP_INPUTS - 1));
+            if n.label.is_empty() {
+                n.label = format!("Input {}", index.saturating_add(1));
+            }
+        }
         if let CompKind::Color { node } = &mut n.kind {
             node.id = 1;
         }
@@ -394,6 +520,8 @@ fn slot(n: &CompNode, key: &str, cmd: &str) -> Result<Slot> {
             node_param(key).map(|d| Slot::Grade(d.kind)).ok_or_else(missing)
         }
         CompKind::Text { layer } => layer.def().and_then(|d| d.param(key)).map(|d| Slot::Layer(d.default.clone(), d.kind.clone())).ok_or_else(missing),
+        // C4.3: a group's parameters are its exposed ones (comp.get lists them in `groupParams`)
+        CompKind::Group { .. } => comp::group::param_def(n, key).map(|d| Slot::Own(d.default, d.kind)).ok_or_else(missing),
         kind => comp::params(kind).into_iter().find(|d| d.id == key).map(|d| Slot::Own(d.default, d.kind)).ok_or_else(missing),
     }
 }
@@ -449,8 +577,8 @@ fn set_param(s: &mut Session, p: &Value) -> Result<Value> {
     let key = str_p(p, "param").ok_or_else(|| bad(CMD, "need `param`"))?.to_string();
     let time = ticks_p(p, "time", CMD)?.unwrap_or(Tick::ZERO);
     let reset = bool_p(p, "reset").unwrap_or(false);
-    let comp_id = target(s, p, CMD)?;
-    let n = comp_of(&s.project, comp_id).and_then(|c| c.node(node)).ok_or_else(|| bad(CMD, format!("no node {node}")))?;
+    let (comp_id, c) = comp_at(s, p, CMD)?;
+    let n = c.node(node).ok_or_else(|| bad(CMD, format!("no node {node}")))?;
     let sl = slot(n, &key, CMD)?;
     let wrong = |what: &str| bad(CMD, format!("`{key}` wants {what}"));
     // the new state of the parameter: reset, a keyframe list, or a value at `time`
@@ -507,8 +635,7 @@ fn toggle_animation(s: &mut Session, p: &Value) -> Result<Value> {
     let node = node_p(p, "node", CMD)?;
     let key = str_p(p, "param").ok_or_else(|| bad(CMD, "need `param`"))?.to_string();
     let time = ticks_p(p, "time", CMD)?.unwrap_or(Tick::ZERO);
-    let comp_id = target(s, p, CMD)?;
-    let n = comp_of(&s.project, comp_id).and_then(|c| c.node(node)).ok_or_else(|| bad(CMD, format!("no node {node}")))?;
+    let n = comp_at(s, p, CMD)?.1.node(node).ok_or_else(|| bad(CMD, format!("no node {node}")))?;
     let sl = slot(n, &key, CMD)?;
     if matches!(sl, Slot::Grade(NodeParamKind::Curve) | Slot::Own(_, ParamKind::Curve { .. }) | Slot::Layer(_, ParamKind::Curve { .. })) {
         return Err(bad(CMD, "curves are not keyframed"));
@@ -593,6 +720,7 @@ fn set_output(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn set_size(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "comp.setSize";
+    top_level_only(p, CMD, "Comp Settings")?;
     let width = checked_u32_p(p, "width", CMD)?;
     let height = checked_u32_p(p, "height", CMD)?;
     for v in [width, height].into_iter().flatten() {

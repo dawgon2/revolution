@@ -20,6 +20,9 @@ const TOL: f32 = 2e-4;
 /// PQ decoding of the test picture's super-whites (signal up to 1.6, beyond PQ's 0…1): `c2 − c3·p`
 /// nearly cancels there and magnifies the last bits of `pow` (Intel UHD 750: 2.4e-4).
 const TOL_PQ_DECODE: f32 = 1e-3;
+/// HDR zone wheels at +16 stops (×65536) with saturation 1.1: `Y₂ + (rgb₂ − Y₂)·S` cancels on
+/// near-grey pixels and shows the dot product's last bits (RX 6700 XT 2.2e-4, UHD 750 4.5e-4).
+const TOL_ZONE_CLAMP: f32 = 1e-3;
 
 fn lggo() -> ColorOp {
     ColorOp::Lggo { lift: [0.05, -0.02, 0.0], gamma: [1.2, 0.9, 1.0], gain: [1.1, 0.95, 1.3], offset: [0.01, 0.0, -0.02] }
@@ -107,6 +110,28 @@ fn cases() -> Vec<(&'static str, Vec<ColorOp>)> {
     ] {
         v.push((name, vec![ColorOp::Lut { lut: Arc::new(l), intensity: 0.85, hdr }]));
     }
+    // colour warper (G4.1): hue-sat (with and without luma kept, a falloff, a pin) and chroma-luma
+    for (name, space, preserve, moved, range) in [
+        ("warp hue-sat", filmcraft_color::warp::WarpSpace::HueSat, false, vec![(9u32, [0.08f32, 0.2f32]), (20, [-0.1, -0.3]), (31, [0.3, 0.0])], 1.5f32),
+        ("warp hue-sat (luma kept)", filmcraft_color::warp::WarpSpace::HueSat, true, vec![(2, [0.05, -0.25]), (13, [-0.2, 0.15])], 0.0),
+        ("warp chroma-luma", filmcraft_color::warp::WarpSpace::ChromaLuma, false, vec![(27, [0.0, -0.25]), (14, [0.2, 0.1]), (8, [0.0, 0.2])], 2.0),
+    ] {
+        let spec = filmcraft_color::warp::MeshSpec {
+            space,
+            cols: 8,
+            rows: 4,
+            moved: &moved,
+            pinned: &[10],
+            range,
+            strength: 0.9,
+            preserve_luma: preserve,
+            weights: luma,
+        };
+        let w = filmcraft_color::warp::compile(&spec).expect("a warp");
+        v.push((name, vec![ColorOp::Warp2D(Arc::new(w))]));
+    }
+    // 3D qualifier (G4.3)
+    v.extend(key3d_cases());
     // whole Lumetri grades in every working space
     for working in [
         filmcraft_color::WorkingSpace::Rec709,
@@ -161,6 +186,65 @@ fn cases() -> Vec<(&'static str, Vec<ColorOp>)> {
     for cs in filmcraft_color::ColorSpace::ALL {
         v.push(("input transform", filmcraft_color::transform::input_ops(cs, Range::Limited, &filmcraft_color::ColorPipeline::REC709, None)));
     }
+    // HDR zone wheels (fork G4.2): every zone and the global wheel set, on linear light (DWG
+    // weights, test picture values 0…1.6 span the dark and light zones), and narrow edges
+    {
+        use filmcraft_color::ops::{Zone, ZoneAdjust, ZoneWheels};
+        let w = Gamut::DaVinciWide.luma().map(|v| v as f32);
+        let shift = |r: f32, g: f32| {
+            let b = -(w[0] * r + w[1] * g) / w[2];
+            [r, g, b]
+        };
+        let zone =
+            |edge: f32, falloff: f32, exposure: f32, sat: f32, r: f32, g: f32| Zone { edge, falloff, adjust: ZoneAdjust { exposure, sat, shift: shift(r, g) } };
+        let z = ZoneWheels {
+            weights: w,
+            pivot: 0.18,
+            global: ZoneAdjust { exposure: 0.3, sat: 1.1, shift: shift(0.02, -0.01) },
+            zones: [
+                zone(-4.0, 1.0, 0.5, 0.8, 0.05, 0.0),
+                zone(-2.5, 1.5, -0.4, 1.2, 0.0, 0.04),
+                zone(-1.0, 0.7, 0.8, 0.9, -0.03, 0.02),
+                zone(0.5, 1.0, -0.6, 1.3, 0.04, -0.02),
+                zone(1.5, 0.4, 1.2, 0.7, -0.02, 0.0),
+                zone(2.5, 0.2, -1.5, 0.5, 0.0, -0.05),
+            ],
+        };
+        v.push(("zone wheels", vec![ColorOp::ZoneWheels(Arc::new(z.clone()))]));
+        // hostile but finite: the exposure sum past both clamps (±16 stops)
+        for e in [12.0f32, -12.0] {
+            let mut h = z.clone();
+            h.global.exposure = e;
+            for zone in &mut h.zones {
+                zone.adjust.exposure = e.signum() * 4.0;
+            }
+            v.push(("zone wheels (exposure clamp)", vec![ColorOp::ZoneWheels(Arc::new(h))]));
+        }
+        v.push((
+            "zone wheels in a DI grade",
+            vec![
+                ColorOp::Encode(Tf::DaVinciIntermediate),
+                lggo(),
+                ColorOp::Decode(Tf::DaVinciIntermediate),
+                ColorOp::ZoneWheels(Arc::new(z)),
+                ColorOp::Encode(Tf::DaVinciIntermediate),
+            ],
+        ));
+    }
+    // compiled node grades with HDR wheels in every working space (PQ / HLG decode, act, encode)
+    for working in filmcraft_color::WorkingSpace::ALL {
+        let mut n = filmcraft_project::grade::GradeNode::new(1);
+        for (k, val) in [
+            ("hdr.highlight.exposure", filmcraft_project::ParamValue::Float(-1.0)),
+            ("hdr.shadow.exposure", filmcraft_project::ParamValue::Float(0.7)),
+            ("hdr.global.sat", filmcraft_project::ParamValue::Float(1.3)),
+            ("hdr.light.balance", filmcraft_project::ParamValue::Color([0.1, -0.05, -0.05, 0.0])),
+        ] {
+            n.params.insert(k.into(), filmcraft_project::Param::new(val));
+        }
+        let g = filmcraft_project::grade::Grade { nodes: vec![n], ..Default::default() };
+        v.push(("zone wheels grade", filmcraft_render::grade::compile(&g, filmcraft_time::Tick::ZERO, working)));
+    }
     // an F-Log2 clip graded in DaVinci Wide Gamut / Intermediate and shown in Rec. 709
     v.push((
         "F-Log2 → DWG/DI grade → 709",
@@ -199,12 +283,127 @@ fn gpu_color_ops_match_cpu() {
         let (_, _, gpu) = c.effect_image(&frame, &fx).expect("effect image");
         let (worst, flips) = compare(&cpu.px, &gpu);
         eprintln!("{name}: max rel diff {worst:.2e}, {:.3}% off by > 2 %", flips * 100.0);
-        let tol = if name == "PQ decode" { TOL_PQ_DECODE } else { TOL };
+        let tol = match name {
+            "PQ decode" => TOL_PQ_DECODE,
+            "zone wheels (exposure clamp)" => TOL_ZONE_CLAMP,
+            _ => TOL,
+        };
         if worst > tol || flips > 0.0 {
             failures.push(format!("{name}: {worst:.2e}, flips {flips:.4}"));
         }
     }
     assert!(failures.is_empty(), "GPU colour ops differ from the CPU:\n{}", failures.join("\n"));
+}
+
+/// The colour warper (G4.1) on hostile pixels: near black, wide-gamut negatives, HDR above 1,
+/// grey and black, in both planes, with and without luma kept. Prints the max absolute error.
+#[test]
+fn gpu_warp_matches_cpu_on_hostile_pixels() {
+    use filmcraft_color::warp::{MeshSpec, WarpSpace, compile, hsv_to_rgb};
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = full_precision(&dev, &q);
+    let mut pixels: Vec<[f32; 3]> = vec![
+        [0.02, -0.0059, 0.0],
+        [0.0011, 0.0, 0.0],
+        [1e-5, 0.0, 0.0],
+        [3e-4, 1e-4, 0.0],
+        [0.002, 0.0005, -0.0004],
+        [1.8, 0.9, 0.2],
+        [2.5, 1.2, 3.0],
+        [6.0, 0.5, 0.1],
+        [-0.1, 0.4, 0.6],
+        [0.4, -0.05, 0.1],
+        [0.5, 0.5, 0.5],
+        [0.0, 0.0, 0.0],
+    ];
+    for i in 0..48 {
+        let h = i as f32 / 48.0;
+        pixels.push(hsv_to_rgb(h, 0.3 + 0.7 * (i % 4) as f32 / 3.0, 0.2 + 0.25 * (i % 5) as f32));
+    }
+    let (w, h) = (pixels.len() as u32, 1u32);
+    let px: Vec<f32> = pixels.iter().flat_map(|p| [p[0], p[1], p[2], 1.0].map(super::fx_tests::half)).collect();
+    let frame = VideoFrame::rgba_f32(w, h, px.clone());
+    let luma = [0.2126, 0.7152, 0.0722];
+    let mut failures = Vec::new();
+    for space in [WarpSpace::HueSat, WarpSpace::ChromaLuma] {
+        for preserve in [false, true] {
+            let moved = [(24u32, [0.05f32, -0.3f32]), (9, [0.1, 0.2]), (14, [-0.15, -0.2]), (27, [0.0, -0.25]), (5, [0.0, 0.3])];
+            let spec = MeshSpec { space, cols: 8, rows: 4, moved: &moved, pinned: &[], range: 2.0, strength: 1.0, preserve_luma: preserve, weights: luma };
+            let warp = compile(&spec).expect("a warp");
+            let op = FxOp::ColorChain(Arc::from(vec![ColorOp::Warp2D(Arc::new(warp))]));
+            let mut cpu = filmcraft_render::Image { w: w as usize, h: h as usize, px: px.clone() };
+            op.apply(&mut cpu);
+            let fx = LayerFx { size: (w, h), decimation: 1, ops: vec![op] };
+            let (_, _, gpu) = c.effect_image(&frame, &fx).expect("effect image");
+            let abs = cpu.px.iter().zip(&gpu).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+            let (worst, flips) = compare(&cpu.px, &gpu);
+            eprintln!("warp {space:?} preserve {preserve}: max abs {abs:.2e}, max rel {worst:.2e}, flips {flips}");
+            if worst > TOL || flips > 0.0 {
+                failures.push(format!("{space:?} {preserve}: {worst:.2e} abs {abs:.2e}, flips {flips:.4}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "GPU warp differs from the CPU:\n{}", failures.join("\n"));
+}
+
+/// Fork G4.2: the HDR zone wheels' largest absolute GPU − CPU difference (the parity report's
+/// number; the relative check is in [`gpu_color_ops_match_cpu`]).
+#[test]
+fn gpu_zone_wheels_absolute_error() {
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = full_precision(&dev, &q);
+    let (w, h) = (67u32, 41u32);
+    let px = picture(w, h);
+    let frame = VideoFrame::rgba_f32(w, h, px.clone());
+    for (name, ops) in cases().into_iter().filter(|(n, _)| matches!(*n, "zone wheels" | "zone wheels in a DI grade")) {
+        let op = FxOp::ColorChain(Arc::from(ops));
+        let mut cpu = filmcraft_render::Image { w: w as usize, h: h as usize, px: px.clone() };
+        op.apply(&mut cpu);
+        let fx = LayerFx { size: (w, h), decimation: 1, ops: vec![op] };
+        let (_, _, gpu) = c.effect_image(&frame, &fx).expect("effect image");
+        let worst = cpu.px.iter().zip(&gpu).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        eprintln!("{name}: max abs diff {worst:.2e}");
+        assert!(worst < 1e-4, "{name}: {worst}");
+    }
+}
+
+/// Review fix (G4.2): saturation at its cap (every wheel's saturation absurd, product clamped to
+/// 65536) amplifies the last bits of `Y₂` by the cap, so this compares with a looser tolerance:
+/// finite, and within 1 % of the larger of the value and 1.
+#[test]
+fn gpu_zone_wheels_at_the_saturation_cap() {
+    use filmcraft_color::ops::{Zone, ZoneAdjust, ZoneWheels};
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let w = Gamut::DaVinciWide.luma().map(|v| v as f32);
+    let zone = |edge| Zone { edge, falloff: 1.0, adjust: ZoneAdjust { exposure: 0.0, sat: 100.0, shift: [0.0; 3] } };
+    let z = ZoneWheels {
+        weights: w,
+        pivot: 0.18,
+        global: ZoneAdjust { exposure: 0.0, sat: 100.0, shift: [0.0; 3] },
+        zones: [-4.0, -2.5, -1.0, 1.0, 2.5, 4.5].map(zone),
+    };
+    let mut c = full_precision(&dev, &q);
+    let (wd, h) = (67u32, 41u32);
+    let px = picture(wd, h);
+    let frame = VideoFrame::rgba_f32(wd, h, px.clone());
+    let op = FxOp::ColorChain(Arc::from(vec![ColorOp::ZoneWheels(Arc::new(z))]));
+    let mut cpu = filmcraft_render::Image { w: wd as usize, h: h as usize, px: px.clone() };
+    op.apply(&mut cpu);
+    let fx = LayerFx { size: (wd, h), decimation: 1, ops: vec![op] };
+    let (_, _, gpu) = c.effect_image(&frame, &fx).expect("effect image");
+    let worst = cpu.px.iter().zip(&gpu).map(|(a, b)| (a - b).abs() / a.abs().max(1.0)).fold(0.0f32, f32::max);
+    eprintln!("zone wheels at the saturation cap: max diff {worst:.2e} (relative above 1)");
+    assert!(gpu.iter().all(|v| v.is_finite()), "non-finite GPU output");
+    assert!(worst < 1e-2, "{worst}");
 }
 
 /// Lumetri HSL Secondary (key, Denoise, Blur, correction, mask views) on the GPU against the CPU.
@@ -636,7 +835,8 @@ fn specialised_source_calls_each_op_in_order() {
 fn every_specialised_op_validates() {
     use wgpu::naga;
     let src = include_str!("colorops.wgsl");
-    let all: Vec<u32> = (1..=26).collect();
+    // (29: the colour warper, G4.1; 30: the HDR zone wheels, G4.2; 31: the 3D qualifier, G4.3)
+    let all: Vec<u32> = (1..=26).chain([29, 30, 31]).collect();
     for codes in all.iter().map(|c| vec![*c]).chain([all.clone()]) {
         let s = crate::colorops::specialise(src, &codes).unwrap_or_else(|| panic!("code {codes:?} not specialised"));
         let module = naga::front::wgsl::parse_str(&s).unwrap_or_else(|e| panic!("{codes:?}: {}", e.emit_to_string(&s)));
@@ -644,4 +844,112 @@ fn every_specialised_op_validates() {
             .validate(&module)
             .unwrap_or_else(|e| panic!("{codes:?}: {e:?}"));
     }
+}
+
+/// 3D qualifier chains (fork G4.3): the key as a matte view and limiting a correction (SDR and
+/// HDR scaling, exclude spheres), and the despill.
+fn key3d_cases() -> Vec<(&'static str, Vec<ColorOp>)> {
+    use filmcraft_color::key3d::{Key3d, despill_dir, opponent};
+    let sph = |c: [f32; 3], r: f32| {
+        let o = opponent(c);
+        [o[0], o[1], o[2], r]
+    };
+    let inc = [sph([0.8, 0.3, 0.2], 0.05), sph([0.6, 0.5, 0.2], 0.02), sph([0.2, 0.4, 0.9], 0.0)];
+    let exc = [sph([0.7, 0.35, 0.25], 0.01)];
+    let mut v = Vec::new();
+    for (name, hdr, exclude) in [("3D key matte", false, false), ("3D key matte (HDR, exclude)", true, true)] {
+        let k = Key3d::new(&inc, if exclude { &exc[..] } else { &[] }, 0.08, hdr);
+        v.push((name, vec![ColorOp::Key3d(Arc::new(k)), ColorOp::HslCorrect { hue_shift: 0.0, sat: 1.0, temp: 0.0, tint: 0.0, show_mask: 3, hdr }]));
+    }
+    let o = opponent([0.8, 0.3, 0.2]);
+    let dir = despill_dir([o[1], o[2]]).expect("a chroma");
+    v.push(("despill", vec![ColorOp::Despill { dir, amount: 0.8 }]));
+    v.push((
+        "3D key limiting a correction with despill",
+        vec![
+            ColorOp::Stash,
+            ColorOp::Key3d(Arc::new(Key3d::new(&inc, &exc, 0.05, false))),
+            ColorOp::Despill { dir, amount: 1.0 },
+            lggo(),
+            ColorOp::MixStash { invert: false },
+        ],
+    ));
+    v
+}
+
+/// The 3D qualifier (G4.3) on hostile pixels: NaN, ±∞, wide-gamut negatives, HDR above 1, black;
+/// the matte view must be 0 where the CPU says 0 and the despill must pass non-finite pixels
+/// unchanged. Prints the max absolute error.
+#[test]
+fn gpu_key3d_matches_cpu_on_hostile_pixels() {
+    use filmcraft_color::key3d::{Key3d, despill_dir, opponent};
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = full_precision(&dev, &q);
+    let mut pixels: Vec<[f32; 3]> = vec![
+        [f32::NAN, 0.2, 0.2],
+        [0.2, f32::INFINITY, 0.1],
+        [f32::NEG_INFINITY, 0.0, 0.0],
+        [-0.1, 0.4, 0.6],
+        [0.4, -0.05, 0.1],
+        [1.8, 0.9, 0.2],
+        [6.0, 0.5, 0.1],
+        [0.0, 0.0, 0.0],
+        [0.5, 0.5, 0.5],
+        [0.8, 0.3, 0.2],
+    ];
+    for i in 0..48 {
+        pixels.push(filmcraft_color::warp::hsv_to_rgb(i as f32 / 48.0, 0.3 + 0.7 * (i % 4) as f32 / 3.0, 0.2 + 0.25 * (i % 5) as f32));
+    }
+    let (w, h) = (pixels.len() as u32, 1u32);
+    let px: Vec<f32> = pixels.iter().flat_map(|p| [p[0], p[1], p[2], 1.0].map(super::fx_tests::half)).collect();
+    let frame = VideoFrame::rgba_f32(w, h, px.clone());
+    let o = opponent([0.8, 0.3, 0.2]);
+    let inc = [[o[0], o[1], o[2], 0.1]];
+    let dir = despill_dir([o[1], o[2]]).expect("a chroma");
+    let mut failures = Vec::new();
+    for hdr in [false, true] {
+        for (name, ops) in [
+            (
+                "matte",
+                vec![
+                    ColorOp::Key3d(Arc::new(Key3d::new(&inc, &[], 0.2, hdr))),
+                    ColorOp::HslCorrect { hue_shift: 0.0, sat: 1.0, temp: 0.0, tint: 0.0, show_mask: 3, hdr },
+                ],
+            ),
+            ("despill", vec![ColorOp::Despill { dir, amount: 0.7 }]),
+        ] {
+            let op = FxOp::ColorChain(Arc::from(ops));
+            assert!(op.gpu_ok(), "{name}");
+            let mut cpu = filmcraft_render::Image { w: w as usize, h: h as usize, px: px.clone() };
+            op.apply(&mut cpu);
+            let fx = LayerFx { size: (w, h), decimation: 1, ops: vec![op] };
+            let (_, _, gpu) = c.effect_image(&frame, &fx).expect("effect image");
+            let mut abs = 0.0f32;
+            let mut bad = 0;
+            for ((a, b), input) in cpu.px.chunks(4).zip(gpu.chunks(4)).zip(&pixels) {
+                if input.iter().all(|v| v.is_finite()) {
+                    for (x, y) in a.iter().zip(b) {
+                        abs = abs.max((x - y).abs());
+                    }
+                } else {
+                    // a non-finite pixel: the matte view is 0, the despill passes it unchanged (the
+                    // GPU's frame upload already spreads NaN across its channels, so only that it
+                    // stays non-finite is compared)
+                    let ok = if name == "matte" { a == b && b.iter().take(3).all(|v| *v == 0.0) } else { b.iter().take(3).any(|v| !v.is_finite()) };
+                    if !ok {
+                        eprintln!("non-finite pixel {input:?}: cpu {a:?} gpu {b:?}");
+                        bad += 1;
+                    }
+                }
+            }
+            eprintln!("3D qualifier {name} hdr {hdr}: max abs {abs:.2e}, non-finite mismatches {bad}");
+            if abs > TOL || bad > 0 {
+                failures.push(format!("{name} {hdr}: abs {abs:.2e}, mismatches {bad}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "GPU 3D qualifier differs from the CPU:\n{}", failures.join("\n"));
 }

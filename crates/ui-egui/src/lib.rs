@@ -381,6 +381,11 @@ pub struct FilmcraftApp {
     pub(crate) monitor_asked: HashMap<String, std::collections::VecDeque<FrameKey>>,
     /// The frame whose picture the Program monitor drew last: the frame due, or its stand-in.
     pub(crate) program_shown: Option<FrameKey>,
+    /// The state of the session's Magic Mask mattes as of this frame (fork G3.3): 0 before any
+    /// track, else moves when a track ends or (paused, with the tracked clip under the playhead,
+    /// while one runs) finishes another frame. Mixed
+    /// into [`Self::seq_revision`] so sequence frames re-render with the new mattes.
+    pub(crate) matte_stamp: u64,
     /// Consecutive frames the timeline zoom / scroll has been at rest. `ui.elements` answers from
     /// the frame before the last one, so its timeline rects are final from 2 on.
     pub(crate) timeline_still: u32,
@@ -849,6 +854,7 @@ impl FilmcraftApp {
             monitor_inexact: false,
             monitor_asked: HashMap::new(),
             program_shown: None,
+            matte_stamp: 0,
             timeline_still: 0,
             input_waiters: Vec::new(),
             next_token: 1,
@@ -1704,6 +1710,41 @@ impl FilmcraftApp {
         self.program_shown
     }
 
+    /// Pass the session's Magic Mask token to the frame workers and note the mattes' state
+    /// ([`Self::matte_stamp`]); while a track runs, repaint now and then to show its progress.
+    fn sync_mattes(&mut self, ctx: &egui::Context) {
+        let mm = &self.session.magic_mask;
+        self.frames.set_mattes(mm.token());
+        // (evictions don't move it: a long track mustn't re-render what is on screen)
+        let epoch = mm.cache.shown_epoch();
+        let running = mm.running();
+        // A running track's progress re-renders the sequence's frames only while paused with the
+        // tracked clip under the playhead (the frame being watched); otherwise the frames move
+        // once, when the track ends (playback and other clips keep their cached frames).
+        let mut done: u64 = 0;
+        if !self.playback.playing
+            && let Some(q) = self.session.active_sequence()
+        {
+            let ph = self.session.playhead();
+            for r in &running {
+                let under = q.find_item(filmcraft_project::ClipId(r.clip)).is_some_and(|(_, it)| ph >= it.start && ph < it.end());
+                if under {
+                    done = done.wrapping_add(r.done as u64 + 1).wrapping_add(r.job.rotate_left(40));
+                }
+            }
+        }
+        self.matte_stamp = if epoch == 0 && done == 0 { 0 } else { (epoch << 32) ^ done ^ 0x6d61_7474 };
+        if !running.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+    }
+
+    /// Cache revision of the active sequence's frames: the session's revision, and the Magic Mask
+    /// mattes' state once anything was tracked (fork G3.3).
+    pub fn seq_revision(&self) -> u64 {
+        if self.matte_stamp == 0 { self.session.revision } else { self.session.revision ^ self.matte_stamp.rotate_left(29) }
+    }
+
     /// Get a thumbnail texture for an item at a media time (requested at low priority).
     /// Cache revision of a project item's own frames: media changes only when its file does
     /// (relink, Make Offline, proxies on/off), so its frames survive unrelated edits; other items
@@ -1722,7 +1763,7 @@ impl FilmcraftApp {
                 (m.proxy.is_some() && self.session.media.use_proxies()).hash(&mut h);
                 h.finish()
             }
-            _ => self.session.revision,
+            _ => self.seq_revision(),
         }
     }
 
@@ -1970,6 +2011,10 @@ impl FilmcraftApp {
         // across both scopes (the sort is stable, so the panel still wins a tie): otherwise the
         // Timeline's `Delete` (Clear) swallows the app-wide `Shift+Delete` (Ripple Delete) (#680).
         let focused = self.ui.focused.title();
+        // while a roto shape / planar region is being drawn on the viewer (shown now: a drawing
+        // left behind by hidden tools doesn't count), plain Enter, Escape and Backspace close,
+        // drop or shorten it (fork C3.9), not their menu commands
+        let drawing = crate::panels::comp_viewer::drawing(self, ctx);
         let mut fire = Vec::new();
         ctx.input_mut(|i| {
             let modifiers = i.modifiers;
@@ -2003,6 +2048,9 @@ impl FilmcraftApp {
             let mut candidates: Vec<&menus::KeyBinding> = panel.chain(app_wide).collect();
             candidates.sort_by_key(|b| std::cmp::Reverse(menus::specificity(b.0)));
             for (m, k, id, _) in candidates {
+                if drawing && m.is_none() && matches!(k, egui::Key::Enter | egui::Key::Escape | egui::Key::Backspace) {
+                    continue;
+                }
                 if i.consume_key(*m, *k) {
                     fire.push(id.clone());
                 }
@@ -2243,6 +2291,7 @@ impl FilmcraftApp {
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
         self.sync_pool();
+        self.sync_mattes(&ctx);
         self.apply_prefs(&ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.tick_media_refresh(&ctx);
@@ -2256,7 +2305,13 @@ impl FilmcraftApp {
                     if !self.ui.floating.iter().any(|group| group.panels.contains(&PanelKind::Timeline)) {
                         self.ui.dock.restore_timeline();
                     }
-                    let _ = self.apply_dock(craft_ui::docking::Action::Activate { panel: PanelKind::Timeline });
+                    // The Color page's Clips tab already shows the sequence: a layout saved with
+                    // Clips in front keeps it when a project opens (owner 2026-10-21)
+                    let clips_shown = self.ui.dock.is_visible(PanelKind::ColorClips)
+                        || self.ui.floating.iter().any(|g| g.panels.get(g.active) == Some(&PanelKind::ColorClips));
+                    if !clips_shown {
+                        let _ = self.apply_dock(craft_ui::docking::Action::Activate { panel: PanelKind::Timeline });
+                    }
                 }
                 filmcraft_engine::Event::OpenSource(_) => {
                     let _ = self.apply_dock(craft_ui::docking::Action::Activate { panel: PanelKind::Source });

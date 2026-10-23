@@ -4,7 +4,7 @@ Jobs for the cloud routine (branch `cloud-work`, only while the PC is down; FORK
 CPU-verifiable, chosen not to overlap with what the PC run is doing. Take them top to bottom; note
 each in `docs/fork/CLOUD-LOG.md` with what is UNVERIFIED ON GPU.
 
-**PC is doing now (2026-10-21 03:45, scheduled runs): AI2 (AI-PLAN; tuned explainer `smol360-v3` training on the GPU until ~06:00, then scoring sets 1–5, full ci, tag `ai-2`, publish 0.2.1), then A3 (AUDIO-PLAN mixer basics). Don't touch `crates/render/src/grade_explain/`, `crates/engine/src/comp_explain*`, `crates/llm`, `tools/explainer-train/` or `crates/ui-egui/src/ai_explain*`.**
+**PC is doing now (2026-10-22 ~14:30, scheduled run): G4 (GRADE-PLAN advanced grading), three Opus lanes: colour warper, HDR zone wheels, planar-tracked windows. Don't touch the grade model / compiler (`crates/project/src/grade.rs`, `crates/render/src/grade*`), `crates/color/src/ops.rs`, `crates/gpu/src/colorops*`, `crates/engine/src/grade*`, `crates/ui-egui/src/panels/grade*.rs`, `docs/guide/color/`.** New CPU-only jobs: **C4-I18N** (de / fr / ja / other UI languages for the new comp strings: grep the es tsv for the C4 additions, translate, `cargo test -p filmcraft-ui-egui --lib i18n`; GPU owed: none); **C4-TESTS** (engine tests only: a test of `comp.template.list` stopping at its 64 MiB budget with many 4 MiB files in a temp data dir; GPU owed: none).
 
 Jobs (refreshed 2026-10-21; C2-GUIDE dropped: C2's parallel / layer / outside sections already exist in `node-trees.md`), take these first:
 - **REF-ASK-DROP (`crates/ui-egui/src/panels/coach.rs` Ask box only):** drop or paste a picture (PNG / JPEG from the

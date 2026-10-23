@@ -437,6 +437,37 @@ pub struct GradePicker {
     pub add: bool,
 }
 
+/// The grade node an armed Magic Mask stroke tool draws on (Color page ▸ Magic Mask; fork G3.3):
+/// a click in the Program picture adds a point (`subtract`, or Alt held: a point to leave out), a
+/// drag a box (`grade.magicMask.stroke`). Esc disarms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MagicMaskTool {
+    pub clip: u64,
+    pub node: u64,
+    pub subtract: bool,
+}
+
+/// The grade node an armed 3D qualifier stroke tool paints on (Color page ▸ Qualifier ▸ 3D; fork
+/// G4.3): a drag over the Program picture adds a stroke (`exclude`, or Alt held: colours to leave
+/// out), a click one spot (`grade.qual3d.addStroke`). Esc disarms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Qual3dTool {
+    pub clip: u64,
+    pub node: u64,
+    pub exclude: bool,
+}
+
+/// The Magic Mask palette's view state (fork G3.3). Never saved.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MagicMaskUi {
+    /// The armed stroke tool.
+    pub tool: Option<MagicMaskTool>,
+    /// Show the node's tracked matte over the Program picture.
+    pub overlay: bool,
+    /// The last Track / stroke error, for the (clip, node) it was about.
+    pub error: Option<(u64, u64, String)>,
+}
+
 /// A grade node being renamed in place (`grade.labelNode` on commit) and the text typed so far.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GradeRename {
@@ -576,6 +607,13 @@ pub struct UiState {
     /// Qualifier ▸ Pick / Add; Esc disarms). Never saved.
     #[serde(skip)]
     pub grade_picker: Option<GradePicker>,
+    /// Color page ▸ Qualifier ▸ 3D: the armed stroke tool (fork G4.3). Never saved.
+    #[serde(skip)]
+    pub qual3d_tool: Option<Qual3dTool>,
+    /// Color page ▸ Magic Mask: the stroke tool, the matte overlay and the last error (fork G3.3).
+    /// Never saved.
+    #[serde(skip)]
+    pub magic_mask: MagicMaskUi,
     /// The grade node (or Lumetri) whose Temperature / Tint the next click or drag in the Program
     /// picture balances (Primaries ▸ WB picker, Lumetri ▸ WB Selector; Esc disarms). Never saved.
     #[serde(skip)]
@@ -1119,6 +1157,8 @@ impl Default for UiState {
             cards: Vec::new(),
             eyedropper: None,
             grade_picker: None,
+            qual3d_tool: None,
+            magic_mask: MagicMaskUi::default(),
             wb_picker: None,
             grade_rename: None,
             coach_ask: CoachAsk::default(),

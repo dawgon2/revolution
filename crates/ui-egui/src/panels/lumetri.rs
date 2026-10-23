@@ -259,6 +259,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             // (one armed picker at a time: a click fills one thing)
             app.ui.grade_picker = None;
             app.ui.eyedropper = None;
+            app.ui.qual3d_tool = None;
         }
     }
     if wb_auto {

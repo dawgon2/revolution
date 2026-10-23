@@ -41,6 +41,8 @@ use filmcraft_render::plan::{FramePlan, PlanLayer, PlanStep};
 pub mod adapter_pick;
 pub mod colorops;
 mod comp;
+mod comp_paint;
+mod comp_warp;
 pub mod export_renderer;
 pub mod fx;
 #[cfg(target_os = "linux")]
@@ -48,9 +50,12 @@ pub mod fx;
 pub mod interop;
 pub mod lut;
 pub mod mask;
+pub mod nn;
+pub mod sam2;
 pub mod scopes;
 #[cfg(target_os = "linux")]
 pub mod shared_picture;
+pub mod tinyvit;
 mod transition;
 #[cfg(target_os = "linux")]
 pub mod unpack422;
@@ -132,6 +137,21 @@ pub struct GpuCompositor {
     comp_backdrop: Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>,
     /// Recent comp pictures and their frames (static nodes keep their texture across frames).
     comp_images: Vec<(Arc<filmcraft_render::image::Image>, Arc<VideoFrame>)>,
+    /// The Paint / Roto kernels of comp programs (C3.6; built on first use, None: unavailable).
+    comp_kernels: std::sync::OnceLock<Option<comp_paint::CompKernels>>,
+    /// The Roto coverage texture (`R32Float`, comp-sized).
+    comp_coverage: Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>,
+    /// The projective warp kernels of comp programs (C3.8; built on first use, None: unavailable).
+    comp_warp_kernels: std::sync::OnceLock<Option<comp_warp::WarpKernels>>,
+    /// The warps' halved source levels (`Rgba32Float`, kept while their sizes repeat).
+    comp_warp_levels: Vec<Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>>,
+    /// Warp passes run by the GPU kernel (stats, tests).
+    pub(crate) comp_warp_gpu: u64,
+    /// Paint passes run by the GPU kernel / by the read-back CPU fallback (stats, tests).
+    pub(crate) comp_paint_gpu: u64,
+    pub(crate) comp_paint_cpu: u64,
+    /// [`comp_paint::MAX_TILE_ENTRIES`] (lower in tests).
+    pub(crate) comp_paint_max_entries: usize,
     pub gpu_transitions: u64,
     pub cpu_transitions: u64,
     /// Total bytes uploaded (stats).
@@ -603,6 +623,14 @@ impl GpuCompositor {
             comp_output: None,
             comp_backdrop: None,
             comp_images: Vec::new(),
+            comp_kernels: std::sync::OnceLock::new(),
+            comp_coverage: None,
+            comp_warp_kernels: std::sync::OnceLock::new(),
+            comp_warp_levels: Vec::new(),
+            comp_warp_gpu: 0,
+            comp_paint_gpu: 0,
+            comp_paint_cpu: 0,
+            comp_paint_max_entries: comp_paint::MAX_TILE_ENTRIES,
             gpu_transitions: 0,
             cpu_transitions: 0,
             uploaded_bytes: 0,

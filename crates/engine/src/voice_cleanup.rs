@@ -237,14 +237,16 @@ pub fn suggest(a: &Analysis, isolate: bool, prev: Option<&EssentialSound>, ceili
         _ => (0.0, 0.0),
     };
     st.repair.isolate = Slot { on: isolate && level > 0, amount: if iso > 0.0 { iso } else { st.repair.isolate.amount } };
-    // fork A3.6: Voice Isolation's attenuation limit by noise level, from the LibriSpeech sweep
-    // (`voice_isolation_limit_sweep`, 486 s, mean SI-SDR over five noises): the milder the noise
-    // the lower the best limit (12 dB: +0.9 dB at 10 dB SNR, +2.7 dB on clean speech), so mild
-    // noise gets 12 dB. Louder noise keeps no limit: averaged over the noises 24 / 18 dB still
-    // gained a little, but in `cleanup_gate` they let loud keyboard clicks through (−1.1 / −0.6 dB
-    // against the manual process at 0 / 5 dB SNR), and without a limit every case passes.
+    // fork A3.6 / A3.7 (FORK-PLAN §1a.125 (b)): Voice Isolation's attenuation limit follows the
+    // noise level (`filmcraft_voice::gate`, shared with the rendered models): full strength up to
+    // 25 dB SNR, then lighter as the clip gets cleaner (18 dB falling to 6 dB at 35 dB SNR; 12 dB
+    // at 30 dB, the limit the A3.6 LibriSpeech sweep found best for mild noise), and from 40 dB
+    // Voice Isolation stays off. Louder noise keeps no limit: in `cleanup_gate` 24 / 18 dB limits
+    // let loud keyboard clicks through (−1.1 / −0.6 dB against the manual process at 0 / 5 dB
+    // SNR), and without a limit every case passes.
     if level > 0 {
-        st.repair.isolate_limit_db = if level == 1 { 12.0 } else { 100.0 };
+        let limit = f64::from(filmcraft_voice::gate::limit_for_snr(snr));
+        st.repair.isolate_limit_db = if limit >= 100.0 { 100.0 } else { limit.clamp(filmcraft_voice::gate::MIN_LIMIT_DB, 100.0) };
     }
     st.repair.noise = Slot { on: !isolate && level > 0, amount: if nr > 0.0 { nr } else { st.repair.noise.amount } };
     // 3. sibilance

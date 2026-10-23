@@ -77,3 +77,30 @@ fn rebase_shifts_source_times() {
     assert_eq!(p.sequence(s).unwrap().video_tracks[0].items[0].source_in, r.tick_of(10 * r.timecode_base()));
     assert_eq!(p.item(item).unwrap().as_media().unwrap().info.start_timecode, Some(3600 * r.timecode_base()));
 }
+
+/// C4.3: a pasted comp's Media In nodes inside a group point at the pasted items too.
+#[test]
+fn merge_remaps_media_in_nodes_inside_groups() {
+    use filmcraft_project::comp::{Comp, CompKind, CompNode, MediaInSource};
+    use filmcraft_project::dag::{Edge, Port};
+    use filmcraft_time::Tick;
+    let r = FrameRate::FPS_25;
+    let mut src = Project::new("src");
+    let a = media(&mut src, "/m/a.mov", true, false, r);
+    let mut inner = Comp::new(64, 36, r, Tick(1000));
+    inner.nodes.push(CompNode::new(2, CompKind::MediaIn { source: MediaInSource::Item { item: a }, offset: Tick::ZERO }));
+    inner.edges.push(Edge::new(Port::new(2, 0), Port::new(1, 0)));
+    let mut c = Comp::new(64, 36, r, Tick(1000));
+    c.nodes.push(CompNode::new(2, CompKind::Group { comp: Box::new(inner), exposed: Vec::new() }));
+    c.edges.push(Edge::new(Port::new(2, 0), Port::new(1, 0)));
+    let comp = src.add_item("C", filmcraft_project::Label::Iris, ItemKind::Comp(std::sync::Arc::new(c)), None);
+    let mut target = Project::new("target");
+    media(&mut target, "/other.mov", true, false, r);
+    merge_into(&mut target, filmcraft_interchange::Imported { project: src, sequences: Vec::new() }, None);
+    let pasted = target.items.values().find_map(|i| if let ItemKind::Comp(c) = &i.kind { Some(c.clone()) } else { None }).unwrap();
+    let new_a = target.items.values().find(|i| matches!(i.kind, ItemKind::Media(_)) && i.name.contains('a') && i.id != comp).map(|i| i.id);
+    let read: Vec<_> = pasted.sources().collect();
+    assert_eq!(read.len(), 1);
+    assert!(target.item(read[0]).is_some_and(|i| matches!(i.kind, ItemKind::Media(_))), "{read:?} {new_a:?}");
+    assert_ne!(read[0], a, "remapped to the pasted item");
+}

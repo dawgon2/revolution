@@ -321,6 +321,10 @@ pub struct ExportSettings {
     /// `progress.total`, `finished` and the final status; this call only adds to `done`.
     #[serde(default)]
     pub part_of_batch: bool,
+    /// Where Magic Mask mattes come from (fork G3.2, `filmcraft_render::matte::register`; set by
+    /// the engine, never saved): frames tracked by then render limited to their mattes.
+    #[serde(skip)]
+    pub mattes: filmcraft_render::matte::MatteToken,
     /// ProRes flavour: `proxy`, `lt`, `standard`, `hq`, `4444` or `4444xq` (empty = HQ).
     #[serde(default)]
     pub prores_profile: String,
@@ -566,6 +570,7 @@ impl Default for ExportSettings {
             bitrate_kbps: 20_000,
             burn_captions: false,
             part_of_batch: false,
+            mattes: filmcraft_render::matte::MatteToken::NONE,
             prores_profile: String::new(),
             dnx_profile: String::new(),
             apv_profile: String::new(),

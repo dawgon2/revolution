@@ -5,6 +5,225 @@ newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), t
 [`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (newest: **Q61** FYI, AI2 explainer choice), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
 
+## Exact next step (2026-10-22 ~17:30 EDT, scheduled run): G4.1, G4.2, G4.4 merged; G4.3 lane running (FULL, Opus, §1a.127)
+
+Merged and pushed: **G4.1 colour warper** (`CO_WARP = 29`, Warper tab), **G4.2 HDR zone wheels**
+(`CO_ZONE_WHEELS = 30`, HDR tab), **G4.4 planar-tracked windows** (`masks.trackPlanar` / `clearPlanar`); details in
+FORK-PLAN §7. Node order: primaries → HDR zones → warper → curves / LUT / roll-off / grain.
+**G4.3 3D qualifier** lane (Opus, worktree `agent-aefb4f…`, target `target/agent-g4-q3d`, op code 31) started 16:30
+from the warper-only base: it must merge hevc-vaapi before its final tests. If this run died: check
+`git worktree list`, review (Opus) and merge if sound.
+Then **acceptance**: full `cargo xtask ci` (idle machine), CPU / GPU oracle parity (AMD + Intel), identity
+bit-exact, old projects load, hostile params; check the coach eval count (sits at its floor 115 / 138, gave 114 when
+run alone: order-dependent); tag `grade-4`, build per §1a.9, then **publish Revolution 0.3.0** (§1a.128), then AI2b.
+
+## Was: Exact next step (2026-10-22 ~14:20 EDT, scheduled run): C4 accepted (`comp-4`, local build); next **G4**
+
+**G4 (GRADE-PLAN §"Phase G4": advanced grading tools; ≈ 50–90 h) runs FULL with Opus, never Fable (owner,
+§1a.127).** Items: (1) colour warper (hue / saturation and chroma / luma mesh with draggable points → a 2D LUT
+`ColorOp` in the fused pass, CPU + GPU parity), (2) HDR-style zone wheels (dark / shadow / light / highlight /
+specular + global, adjustable ranges and falloff, a corrector option on a grade node), (3) 3D qualifier (strokes on
+the image pick a soft volume in colour space, despill; an alternative key to the HSL qualifier), (4) planar-tracked
+windows (grade windows follow C3's planar tracker: reuse `filmcraft_render::track_run` / the Planar Tracker's
+homography). Suggested lanes: (1) and (2) are independent grade-model + compiler + GPU work (two Opus lanes, GPU
+parity on AMD and Intel); (3) after them (shares the Color page qualifier UI); (4) engine-side (link a window to a
+planar track like C3.7's roto links). Each: guide page sections (`docs/guide/color/…`, provenance tags), Coach
+lessons where they fit (keep `ai_pool` floors), es + zh-cn strings. Accept: CPU / GPU oracle parity, identity
+bit-exact, old projects load, hostile params never crash; tag `grade-4`. **Then (owner §1a.128): publish Revolution
+0.3.0** (§1a.33, everything since 0.2.2), **then Phase AI2b** (AI-PLAN: retrain `smol360-v4` + Coach refresh), then
+R1. The LEAN floor (§1a.96) returns after G4.
+
+**Lane rule (2026-10-22 stall):** every lane prompt says never use `pgrep -f` in a wait loop (it matches itself and
+keeps `.fork-run.lock` fresh forever); run tests in the foreground or wait on a PID / notification.
+
+**C4 done (2026-10-22 09:33 → ~14:20, FORK-PLAN §7):** ADR 0009; expressions (`filmcraft_project::expr`,
+`Param.expression`, `Comp::param_at`, `comp.setExpression`, inspector "=" field), groups / macros
+(`CompKind::Group`, `comp.group*`, group path on every comp command, canvas Group / Open Group / breadcrumb /
+Expose), templates (`comp.template.*`, canvas menu). Build `~/Apps/filmcraft-builds/comp-4` (`latest` → it).
+**Owed (non-blocking):** expressions on Text / Color-node / tracker params; Analyse / Track inside groups; groups in
+the static cache; de / fr / ja … strings (cloud queue C4-I18N); 64 MiB list-budget test (C4-TESTS).
+
+## Owner note (2026-10-22 ~13:20, live): after G4, publish Revolution 0.3.0, then Phase AI2b (FORK-PLAN §1a.128)
+
+G4 → accept (`grade-4`) → **publish 0.3.0** (§1a.33; everything since 0.2.2: A3, Y2, G3 + A3.7, C3, C4, G4) →
+**AI2b** (AI-PLAN: retrain the explainer as `smol360-v4` + refresh the Coach on all new features) → R1 → R2 → D → 8.
+
+## Was: Exact next step (2026-10-22 ~11:45 EDT, scheduled run): C4 in progress (FULL, Opus, §1a.126)
+
+ADR 0009 (`docs/adr/0009-comp-expressions-macros.md`, provisional). **Merged:** C4.2 + C4.5 expressions
+(`filmcraft_project::expr`, `Param.expression`, `Comp::param_at`, render `ExprFrame`, `comp.setExpression` /
+`clearExpression`, inspector "=" field, guide) and C4.3 + C4.6 groups / macros (`CompKind::Group`, `comp.group*`,
+canvas Group / Ungroup / Open Group + breadcrumb). Both acceptance items are covered by tests (hostile expressions:
+fuzz + caps; macro save / load round-trip). **In flight:** C4.4 + C4.7 templates (`comp.template.*`, canvas
+template menu; worktree branch `worktree-agent-a7a6b46564b86ff9e`, adding group support after review) and C4.8
+editing inside groups (group path on comp commands; branch from an Opus lane, `target/agent-c4-inner`). **Then:**
+merge both (review each), full `cargo xtask ci`, accept C4 (synthetic), tag `comp-4`, local build, no publish
+(§1a.119), rewrite this file for G4. **G4 runs FULL with Opus, never Fable (owner 2026-10-22, §1a.127);** the LEAN floor (§1a.96) returns after G4, not after C4. If a lane's worktree is left from a dead run,
+review its branch and merge if green.
+
+## Was: Exact next step (2026-10-22 ~08:45 EDT, scheduled run): C3 accepted (`comp-3`, local build); next **C4**
+
+**C4 (COMPOSITOR-PLAN §"Phase C4": expressions, macros and templates; ≈ 30–60 h) runs FULL with Opus, never Fable
+(owner, §1a.126).** A small, safe expression language for parameters (time, other parameters, arithmetic, `sin` /
+`noise` …; no I/O, bounded evaluation, parse errors shown, never a crash), node groups / macros with exposed
+parameters, saved comp templates. Accept: hostile expressions (deep nesting, huge loops, NaN) never crash or hang; a
+macro round-trips through save / load. Tag `comp-4`, local build, no publish (§1a.119). After C4 the LEAN floor
+returns (§1a.96); then G4 → R1 → R2 → D → 8 (§1a.6). Suggested lanes: (1) expression language crate-local in
+`filmcraft-project` or a new small L1 crate (parser + evaluator with step / depth caps, Tick-exact `time`,
+deterministic `noise`), (2) wiring into `Param` evaluation + `comp.setExpression` commands + inspector field with
+error display, (3) groups / macros on the C1 DAG (`CompKind::Group` with an inner comp + exposed params) and templates
+(save / load / insert, `comp.template.*`). Write ADR 0008 for the expression language first (owner can veto later).
+
+**C3 done (2026-10-22 01:51 → ~08:45, FORK-PLAN §7):** `track_run` (point / multi-point / planar trackers, stabilise /
+match move / corner pin solves), `contour` (matte → Bézier), roto + paint model / rasterisers (per-point feather on
+`MaskVertex`), comp nodes Tracker / PlanarTracker / Roto / Paint with commands, GPU paint kernel + f32 roto coverage,
+GPU projective warp, track-assisted roto (tracker links + SAM 2.1 `comp.roto.trackShape`), paint clone time offset,
+viewer tools, guide retrieval fix. **Owed (non-blocking):** GPU roto rasteriser (CPU 33 ms at 6.2K), tracker
+confidence in the UI, Tracker Corner Pin uses the first four points, roto keyframes set after linking are in
+reference-frame coordinates (viewer handles it; commands document it), pool coach floor 149 (was 150).
+
+## Was: Exact next step (2026-10-22 02:32 EDT, scheduled run): C3 in progress (FULL, Opus, §1a.123)
+
+Done and merged: **C3.1** `filmcraft_render::track_run` (point / multi-point / planar trackers, stabilise / match move /
+corner pin solves; synthetic accuracy well inside the plan's bar, FORK-PLAN §7) and **C3.4** `filmcraft_render::contour`
+(matte → Bézier roto shapes with stable vertex count). In review fixes: **C3.3** roto + paint model
+(`crates/project/src/{roto,paint}.rs`) and CPU rasterisers (`crates/render/src/{roto,paint}.rs`), branch
+`worktree-agent-a2e243dd926db9133` (fixes: per-point feather as optional `MaskVertex` fields, paint bbox-limited).
+**Also merged (2026-10-22 ~05:15):** C3.5a Tracker / Planar Tracker nodes (acceptance numbers in FORK-PLAN §7), C3.5b
+Roto / Paint nodes, C3.6 GPU paint kernel + f32 roto coverage. **In flight:** C3.7 track-assisted roto (Opus lane:
+`track_link` applied at eval, `comp.roto.linkTracker`, `comp.roto.trackShape` via SAM 2.1 + `contour::matte_to_shape`).
+**Remaining for C3:** (GPU projective warp: done, C3.8)
+viewer tools (draw / edit roto shapes, paint strokes, place tracker points, draw the planar region), `clone_time_offset`
+(stored, ignored), roto GPU rasteriser if 33 ms at 6.2K matters, Coach index for the tracker page (Q67), then
+acceptance + `cargo xtask ci` + tag `comp-3` + local build (§1a.119: no publish).
+
+## Was: Exact next step (2026-10-21 23:05 EDT, scheduled run with the owner live): G3 + A3.7 accepted; next **C3**
+
+**C3 (COMPOSITOR-PLAN §"Phase C3": tracking, paint and roto; ≈ 60–120 h) runs FULL with Opus, never Fable (owner,
+§1a.123).** Read the whole C3 section first. Tracker node (reuse `crates/render/src/track.rs`: point / multi-point,
+stabilise, match move, corner pin), a **planar tracker** node (homography of a user-drawn region, corner-pin output;
+GRADE-PLAN G4 reuses it), **paint** (clone / reveal / colour strokes, per frame or held, editable stroke list) and
+**roto** (Bézier / B-spline shapes, per-point feather, keyframed, track-assisted). **New since the plan was written:**
+SAM 2.1 (Large / Base+, `filmcraft_mask::sam2`, GPU, memory across frames; models in `<data dir>/models/sam2/`) is
+available for track-assisted roto ("draw once, it follows the object", §1a.124) and the generic GPU NN ops
+(`filmcraft_gpu::nn`) for anything else learned. Accept per the plan (known synthetic paths within a set pixel error,
+corner-pinned insert stays locked, roto / paint round-trip). Builds locally, publishes nothing (§1a.119). After C3:
+C4, also FULL with Opus, no Fable (owner, §1a.126); the LEAN floor returns after C4 (§1a.96); then G4 → R1 → R2 → D → 8 (§1a.6).
+
+**A3.7 finished (2026-10-22 ~01:45, owner §1a.125):** clean-speech bar now on VoiceBank-DEMAND clean (MossFormer2 46.1 dB,
+gated 58.8; DFN3 37.8), noisy margin at 10 dB MossFormer2 4.4 (DFN3 0.8); noise-level gating (`filmcraft_voice::gate`)
+in the render and Clean Up Voice; render default = MossFormer2 ("Better"). Merged; not yet in a build (next phase build
+carries it).
+
+**G3 done (2026-10-21 12:47 → 23:05, FORK-PLAN §7):** `filmcraft-mask` (MobileSAM, refine, colour-guided follow,
+SAM 2.1 tracker, VideoSegmenter), `GradeNode.magic_mask`, `FxOp::MaskedBy` (CPU + GPU), mattes in serial + graph
+grades, engine `grade.magicMask.*` + background job + cache (epochs, export snapshot), render `MatteSource` registry,
+GPU TinyViT (31 ms) + SAM 2.1 GPU (Large ~0.9 s / frame), Color page Magic Mask tab + model selector (Auto = Better on
+a discrete GPU, Q66 resolved), guide. Acceptance (synthetic, 240 frames, Large): 5 / 6 scenes ≥ 0.98 mean, twins
+0.853 / 0.301 (known limit). Owed nits: Better / Faster choice not persisted in prefs; mode: person stores but doesn't
+change the prompt; nested-sequence clips not in the matte epoch hash; SAM 2 decoder on the CPU (~145 ms); f16 /
+better matmul for speed. **A3.7 done:** MossFormer2 rendered "Better" voice isolation, off by default (fails the
+clean bar). Tags `grade-3`, `audio-3b` on 556037fb; build `~/Apps/filmcraft-builds/grade-3` (`latest`, `audio-3b` →
+it), models hard-linked into `~/.local/share/revolution/models/`. Leftover locked worktree
+`.claude/worktrees/agent-a22b409a0facdf8be` (merged; remove with `git worktree remove -f -f` + `git branch -d` once its
+agent is gone); Dell worktree `/var/tmp/fc-a37` + branch `a37-eval` (eval done; delete after the sweep).
+
+## Was: Exact next step (2026-10-21 17:10 EDT, scheduled run with the owner live): three G3 / A3.7 lanes in flight
+
+Since 16:00 (FORK-PLAN §7): graph-grade mattes merged; colour-guided follow (`filmcraft_mask::track`) passes all three
+harness scenes (crowd 0.975 / 0.952); GPU TinyViT encoder merged (31 ms / frame on AMD, IoU 1.0 vs CPU; generic
+`filmcraft_gpu::nn` ops). Owner live: GPU encoder (§1a.122), C3 FULL no Fable (§1a.123), SAM 2.1 Large + Base+
+downloaded (`models/sam2/`, Better = Large / Faster = Base+, §1a.124), MossFormer2 downloaded (Q64 resolved).
+**Lanes running (Opus, worktrees; if this run died, check `git branch --list 'worktree-agent-*'`):**
+(a) `target/agent-g3track`: track.rs review + unit tests, engine job switched to `track::follow`, GPU encoder default,
+GPU-fast acceptance run; (b) `target/agent-g3sam2`: **G3.4** SAM 2.1 port (loader → Hiera encoder GPU parity → decoder
+→ memory → acceptance on `twins`), milestone commits; (c) `target/agent-a37`: **A3.7** MossFormer2 port + Voice
+Isolation "Better" option + measurement vs DFN3 + guide.
+For each finished branch: Opus review → fixes → merge → touched-crate tests → §7 entry. Then G3 closing: screenshot of
+the Color page Magic Mask tab (both workflows), ai_pool follow-up, full `cargo xtask ci`, tag `grade-3`, local build
+(§1a.9), no publish (§1a.119); A3.7 tags `audio-3b` when accepted. Then C3 (FULL, Opus, §1a.123).
+
+## Was: Exact next step (2026-10-21 16:00 EDT, scheduled run): G3.1–G3.3 built and merged; G3 acceptance blocked on the crowd scene
+
+Built today (FORK-PLAN §7, 13:10 → 15:5x): `filmcraft-mask` (MobileSAM on candle, refine), `GradeNode.magic_mask`,
+`FxOp::MaskedBy` (CPU + GPU parity AMD / Intel), engine `grade.magicMask.*` + propagation job + `MatteCache` (epochs,
+frozen export snapshot), render `MatteSource` token registry, Color page Magic Mask tab + UI frame token, app feature
+`magic-mask` on, guide `color.secondaries.magic-mask`. Every lane Opus-reviewed, findings fixed.
+**Acceptance harness** `crates/mask/examples/mask_accept.rs` (synthetic, 240 frames): gradient 0.980 / 0.972 PASS, busy
+0.960 / 0.925 PASS, **crowd 0.384 / 0.000 FAIL** (subject passes in front of same-shape figures; 3 prompt variants
+tried, all fail). An Opus diagnostician was started ~15:55 on it, editing only `crates/mask` (uncommitted changes there
+are its work: review, re-run all three scenes, commit if gradient / busy still pass).
+**Next:** (1) finish the crowd diagnosis: a better general `follow_prompt` scheme, or evidence that a single-frame
+model can't do it + what one fix stroke achieves (then accept with the fix stroke as the documented remedy and log an
+owner question about a video model, SAM 2-class, for later); (2) mirror any `follow_prompt` change in the engine job
+(`crates/engine/src/magic_mask.rs`); (3) a fix-stroke acceptance check ("a fix stroke updates only the affected
+frames": engine test exists, add it to the harness); (4) a visual check of the Color page tab (screenshot via the
+control channel) in both workflows; (5) `mode: person`, graph grades (C2 DAG) wiring, ai_pool follow-up; then full
+`cargo xtask ci`, tag `grade-3`, local build (§1a.9), no publish (§1a.119). A3.7: download owed (Q64).
+
+## Was: Exact next step (2026-10-21 14:20 EDT, scheduled run): G3.2 lanes 1–3 merged; finishing G3.2 (wiring + review fixes), then UI
+
+Done today (FORK-PLAN §7 13:10–14:15): `filmcraft-mask` (MobileSAM, refine ops), `GradeNode.magic_mask` (project),
+`FxOp::MaskedBy` + `BitmapMatte` (CPU + GPU, AMD / Intel parity), `GradeCtx.mattes` → `serial_steps` wraps a node,
+engine `magic_mask` (commands `grade.magicMask.*`, propagation job, `MatteCache`, feature `magic-mask`).
+**Merged 14:5x:** engine review fixes + render wiring (`MatteSource` token registry, `RenderOptions.mattes`, epochs in
+render-cache hashes, frozen export snapshot; FORK-PLAN §7). **Next:** pass `session.magic_mask.token()` into the UI
+frame jobs (`crates/ui-egui/src/frames.rs` ~1339 / 1386) and enable `filmcraft-engine/magic-mask` in `apps/filmcraft`;
+graph-grade (C2 DAG) wiring; Color
+page UI (stroke tool on the viewer, Track buttons + progress via `grade.magicMask.status`, refine sliders; automation
+ids; es + zh-cn), guide page update with real labels, synthetic person-composite IoU harness (target mean ≥ 0.90,
+min ≥ 0.80 over 10 s), `mode: person` prompt, ai_pool follow-up (a creative plan citing `color.secondaries.magic-mask`),
+then acceptance → tag `grade-3`, local build only (§1a.119). A3.7 can still run as a lane.
+
+## Was: Exact next step (2026-10-21 13:12 EDT, scheduled run): G3.1 done (MobileSAM spike, crate `filmcraft-mask`); next **G3.2**
+
+G3.1 results in FORK-PLAN §7 (13:10): encoder 2.7 s / frame on the CPU at any resolution, IoU 0.99 on the synthetic
+follow, **target mean ≥ 0.90, min ≥ 0.80 over 10 s**. Revolution 0.2.2 release run 39636236843: Linux / Flatpak jobs
+green at 13:00, Windows still running; check `gh run view 39636236843 -R dawgon2/revolution`, re-run a failed job once.
+
+**G3.2, split into lanes (FULL, Opus builders, never Fable, §1a.121; map of the code from a scout, 2026-10-21):**
+1. **Model (crate `project`, `crates/project/src/grade.rs`):** `GradeNode.magic_mask: Option<MagicMask>`
+   (`#[serde(default, skip_serializing_if)]`): strokes `Vec<MaskStroke { frame: Tick (source time), points:
+   Vec<{x, y, positive}>, rect: Option }>`, refine params (grow / shrink px, soften, invert, clean black, clean
+   white), `mode` (person / object); no mattes in the project (cache only). Old-project test like
+   `minimal_json_loads_with_defaults_and_unknown_fields_are_ignored` (`grade.rs:743`).
+2. **Bitmap matte op (crates `render` + `gpu`; GPU shader = Opus builder):** no bitmap matte exists today (`FlatMask`
+   is polygon-only, `crates/render/src/mask.rs:38`). Add an `FxOp::MaskedBy { ops, matte: Arc<Matte8> }` (or a
+   `FlatMask` bitmap variant) evaluated on CPU (`gpufx.rs:1198` pattern: run ops, mix by coverage) and GPU (texture
+   binding beside `ChainMasked`, `crates/gpu/src/fx.rs:316/1270`); refine (grow / shrink = min / max filter, soften =
+   blur, clean black / white = levels on the matte, invert) as a pure CPU function in `filmcraft-mask` first. AMD +
+   Intel parity test. `serial_steps` (`crates/render/src/grade.rs:~320`) wraps the node's steps when a cached matte
+   exists for the frame; graph grades (`render/src/grade/graph`) likewise.
+3. **Job + cache + commands (crate `engine`):** propagation as a `BackgroundJob` (`crates/engine/src/background.rs:86`,
+   template `render_cache.rs` / `proxy_jobs.rs`: `catch_unwind` per step, cancellable, yields to playback), forward and
+   back from each stroke frame, per-frame matte cache keyed (clip, node, strokes hash, frame), a new stroke
+   invalidates only frames up to the neighbouring strokes. Behind `Arc<dyn Segmenter>` (fake `Bright`-style segmenter
+   in tests; `MobileSam` when `models/mobilesam/mobile_sam.pt` is present, else "model missing" in plain words).
+   Commands `grade.magicMask.{add, stroke, clearStrokes, track, cancel, setRefine, remove}` registered like
+   `grade.pickQualifier` (`crates/engine/src/grade.rs:682`, `edit_grade`, one undo step).
+4. Then the UI (Color page: stroke tool on the viewer, track buttons, refine sliders, progress), guide page
+   `docs/guide/color/magic-mask.md` (add to `GUIDE_PAGES`), synthetic IoU harness (person-like composites over varied
+   backgrounds) for acceptance, tag `grade-3`.
+Lanes 1 + the CPU half of 2 can start at once; 3 needs 1; the GPU half of 2 can run beside 3.
+A3.7 (stronger voice model) can be a third lane (§1a.120/121).
+
+## Was: Exact next step (2026-10-21 12:40 EDT, scheduled run): LAY merged, Revolution 0.2.2 published; continue **G3.1**
+
+1. Check the public release workflow: `gh run view 39636236843 -R dawgon2/revolution` (0.2.1's took ~30 min);
+   fix and re-dispatch if it failed.
+2. **`git stash pop`** the entry "G3.1 mask crate WIP (set aside for LAY merge) 2026-10-21_1136": new crate
+   `crates/mask` (`filmcraft-mask`, L2; root `Cargo.toml` workspace dep + `xtask` layer entry are in the stash):
+   `lib.rs` (`Segmenter`, `RgbImage`, `Prompt` / `Point` / `Rect`, `Segment` low-res logits + `matte()`, `Matte::iou`
+   / `bounds`, `follow_prompt`), `sam.rs` (`MobileSam::load` from `mobile_sam.pt` via `VarBuilder::from_pth`, own
+   TinyViT + PromptEncoder + MaskDecoder so box + prior-mask prompts work), `tests.rs` (fake `Bright` segmenter
+   follows a moving square; missing / corrupt model errors). **Not compiled yet.** The `[[example]] sam_spike`
+   is declared but `examples/sam_spike.rs` isn't written: write it (time `embed` + `segment` at 1080p and 6240×4160
+   on the i5-11600K; synthetic moving figure over a varied background for 10 s, IoU per frame with
+   `follow_prompt`), then `fc-cargo.sh test -p filmcraft-mask --features sam`, record the choice + numbers + IoU
+   target in FORK-PLAN §7, commit. If the official checkpoint's key names don't match candle's `tiny_vit` names,
+   the load error will list the missing tensor.
+3. Then the G3 parts as in the G3 note below.
+
 ## G3 note (2026-10-21 ~11:30 EDT, scheduled run, LEAN, U 25 / L 18)
 
 G3.1 spike picked **MobileSAM** (Apache-2.0; candle-transformers 0.9 `segment_anything` already has TinyViT + prompt
@@ -25,7 +244,7 @@ vs DeepFilterNet3 → ship only if better; tag `audio-3b`): a lane next to G3 wh
 else right after G3, before C3.
 **Mode (owner, live ~11:35, FORK-PLAN §1a.121):** G3 and A3.7 run **FULL** regardless of the weekly line (up to 3
 builders, so A3.7 can be a lane now; reviewer on every diff) but **never Fable**: Opus in every Fable role. 5-hour
-throttle and near-limit MINIMAL still apply. Back to the usual LEAN floor from C3.
+throttle and near-limit MINIMAL still apply. C3 also runs FULL with Opus, no Fable (owner, §1a.123); the LEAN floor returns after C3.
 
 ## Exact next step (2026-10-21 11:14 EDT, scheduled run): Y2 accepted (`yt-2`, local build, not published); next **G3**
 
@@ -675,7 +894,7 @@ RX 6700 XT outside `run.sh`. Real-model evals: ~1 s per case on the GPU.
 
 **Owner, live 2026-10-16 ~13:35 (FORK-PLAN §1a.98): Q45 (a)**: search by meaning with one small openly licensed embedding model (runner downloads it; licence + revision + SHA-256 logged), kept only if creative coverage (138 / 608 today) rises without lookup loss; do it with / before the assistant tune (§1a.97) so the tune trains on the new search's prompts. **The rejected picture tune `tuned/qwen3-vl-4b-look-v1` and `text-q4k.gguf` / `text-own-q4k.gguf` were deleted** (owner's yes, disk cleanup; re-make the q4k files with the converter if a test needs them).
 
-**Dell lane FEATURE-POOL (2026-10-16 21:20 EDT; SKILL.md §9, standing):** rows S1.1–S1.5, AI5, AI4, the S1.5 trim row, search by meaning, the S1.5 newer-FilmCraft import row, UPD (`feature-updates`, 14 / 12; no coach questions: Ask the coach skips updates.md) the four XPS rows (`feature-gpu-rule` 11 + 1 coach / 10, `feature-nvenc-presets` 4 / 5, `feature-nvenc-linux` 8 / 6, `feature-nvdec-order` 4 / 3) and XPS d (`feature-battery-igpu` 8 + 1 coach / 8, 21:45 run) done: 147 held-out (+ 16 coach) / 141 pairs in `pool/feature-*` (no creative families: none were honest for status / storage / hand-over / GPU features); 9 spot checks on the Dell all as written (9: trimmed package of fixture pt.fcproj; none possible for the XPS rows: one GPU, no NVIDIA). Floors: coach 142, recall@5 969, creative coverage 559. XPS d: the guide doesn't say whether the battery step applies on Windows / macOS or how fast FilmCraft notices unplugging, so nothing asks. FYI for the guide: the XPS GPU text now outranks color.coach.assistant for `feat-pl-igpu-speed` ("only Intel graphics, how long does a picture look take"), which misses retrieval since XPS a; and "what does power saving integrated gpu do" lands on hardware.switches in Ask the coach, not linux.gpu. Queue empty after XPS c. Newer-FilmCraft import (`feature-project-package-newer`, 3 + 1 / 3): `feat-pk-newer-version` updated from "refused"; the guide doesn't say whether the package must be imported again after updating FilmCraft, so nothing asks. FYI for the guide: `file.projectManager` (Media Management…) also takes `trim`, but the guide only documents `projects.package`'s; and the trim dry-run estimate runs under the real size (447 KB vs 569 KB on a 2 s cut: keyframe lead-in). Search by meaning done from `color.coach.assistant-search` (7 held-out + 1 coach / 6 pairs; no spot check: the model isn't on the Dell). FYI for the guide: it doesn't say how the embedding model gets onto the computer, or that without it the Assistant keeps the word search (the code does), so no question asks either; the section's own `when` phrase "can the Assistant understand other wordings" finds nothing in Ask the coach (`feat-asr-c-meaning`, kept as a miss). Owner read: `pool/FEATURE-READ.md` (35 pairs), FYI Q52. FYI for the guide: `projects.importPackage` with an absolute `folder` nests it under the projects root (`~/Videos/FilmCraft Projects/home/…`): safe, but the guide could say `folder` is a projects-list folder name. Retrieval misses kept as real tests: `feat-ns3-message`, `feat-ns4-read-back`, `feat-pk-collect-files`, `feat-as-frame`, `feat-asr-resolve`. **2026-10-20 06:55:** §1a.108 row done (`feature-pm-window-icon`, 13 + 2 coach / 9; floors recall@5 982, creative 560, coach 142). FYI for the guide: both coach questions miss ("why isn't the Project Manager full screen", projects.window's own `when` phrase, lands on projects.what; "change the app icon to square" lands on pages.md); and the older AI-POOL pairs in `training-pairs.jsonl` / `linux-1.jsonl` still call the Project Manager "a full-window screen", which reads oddly now it opens windowed (the main runner's guide wording `projects.what` may want the same touch). Queue empty. **2026-10-20 15:40:** §1a.110 row done (`feature-tarball-menu-entry`, 6 / 4, small on purpose: one guide paragraph; floor recall@5 984; `feat-tme-stop` and `feat-tme-own-launcher` miss retrieval, kept). FYI for the guide: install.portable step 3 still says to make the launcher yourself, and nothing says where the entry is written or that `--control` / AppImage / Flatpak runs skip it. **2026-10-20 20:45:** RS4 Cut page row done (`feature-rs4-cut-page`, 13 + 1 coach / 10; floors recall@5 997, coach 144). **21:15:** RS4 Edit page row done (`feature-rs4-edit-toolbar`, 10 / 9; floor recall@5 1007). **21:40:** RS4.1 row done (`feature-rs4-resolve-edits`, 12 / 9; floor recall@5 1018; `feat-re-close-up-amount` misses, kept). FYI for the guide: editing.resolve-edits doesn't name the Sequence ▸ Resolve Edit menu. **21:50:** RS4.2 Inspector row → `guide wanted` (main runner): a section for the Inspector itself (each tab's controls, Transform in Resolve units vs Motion, how to open it, relation to Keyframes), and fix tracking.md / effects.md / color/noise.md, which still call Effect Controls "the Inspector in the Resolve workflow" (RS4.2 renamed it Keyframes); set the row back to `queued` after. Queue otherwise empty. FYI for the guide: pages.cut doesn't say how many tracks the Cut timeline shows, so nothing asks. **2026-10-21 02:10:** RS4.2 Inspector row done (`feature-rs4-inspector`, 14 + 2 coach / 13; floors recall@5 1029, coach 146; daily sample re-run). FYI for the guide: pages.inspector says nothing about what the Audio, Transition and Image tabs hold, so nothing asks. Queue empty. **2026-10-21 03:35:** AI2 branch-notes row done (`feature-ai2-branch-notes`, 9 + 2 coach / 9; floors recall@5 1038, coach 148; daily sample re-run). FYI for the guide: neither color.nodes.explain-branches nor color.matching.explainer says in words that a correction node limited by another node's selection gets a branch note (the queue row does; only the Outside example implies it), so the pairs only use the outside-node case. Queue empty.
+**Dell lane FEATURE-POOL (2026-10-16 21:20 EDT; SKILL.md §9, standing):** rows S1.1–S1.5, AI5, AI4, the S1.5 trim row, search by meaning, the S1.5 newer-FilmCraft import row, UPD (`feature-updates`, 14 / 12; no coach questions: Ask the coach skips updates.md) the four XPS rows (`feature-gpu-rule` 11 + 1 coach / 10, `feature-nvenc-presets` 4 / 5, `feature-nvenc-linux` 8 / 6, `feature-nvdec-order` 4 / 3) and XPS d (`feature-battery-igpu` 8 + 1 coach / 8, 21:45 run) done: 147 held-out (+ 16 coach) / 141 pairs in `pool/feature-*` (no creative families: none were honest for status / storage / hand-over / GPU features); 9 spot checks on the Dell all as written (9: trimmed package of fixture pt.fcproj; none possible for the XPS rows: one GPU, no NVIDIA). Floors: coach 142, recall@5 969, creative coverage 559. XPS d: the guide doesn't say whether the battery step applies on Windows / macOS or how fast FilmCraft notices unplugging, so nothing asks. FYI for the guide: the XPS GPU text now outranks color.coach.assistant for `feat-pl-igpu-speed` ("only Intel graphics, how long does a picture look take"), which misses retrieval since XPS a; and "what does power saving integrated gpu do" lands on hardware.switches in Ask the coach, not linux.gpu. Queue empty after XPS c. Newer-FilmCraft import (`feature-project-package-newer`, 3 + 1 / 3): `feat-pk-newer-version` updated from "refused"; the guide doesn't say whether the package must be imported again after updating FilmCraft, so nothing asks. FYI for the guide: `file.projectManager` (Media Management…) also takes `trim`, but the guide only documents `projects.package`'s; and the trim dry-run estimate runs under the real size (447 KB vs 569 KB on a 2 s cut: keyframe lead-in). Search by meaning done from `color.coach.assistant-search` (7 held-out + 1 coach / 6 pairs; no spot check: the model isn't on the Dell). FYI for the guide: it doesn't say how the embedding model gets onto the computer, or that without it the Assistant keeps the word search (the code does), so no question asks either; the section's own `when` phrase "can the Assistant understand other wordings" finds nothing in Ask the coach (`feat-asr-c-meaning`, kept as a miss). Owner read: `pool/FEATURE-READ.md` (35 pairs), FYI Q52. FYI for the guide: `projects.importPackage` with an absolute `folder` nests it under the projects root (`~/Videos/FilmCraft Projects/home/…`): safe, but the guide could say `folder` is a projects-list folder name. Retrieval misses kept as real tests: `feat-ns3-message`, `feat-ns4-read-back`, `feat-pk-collect-files`, `feat-as-frame`, `feat-asr-resolve`. **2026-10-20 06:55:** §1a.108 row done (`feature-pm-window-icon`, 13 + 2 coach / 9; floors recall@5 982, creative 560, coach 142). FYI for the guide: both coach questions miss ("why isn't the Project Manager full screen", projects.window's own `when` phrase, lands on projects.what; "change the app icon to square" lands on pages.md); and the older AI-POOL pairs in `training-pairs.jsonl` / `linux-1.jsonl` still call the Project Manager "a full-window screen", which reads oddly now it opens windowed (the main runner's guide wording `projects.what` may want the same touch). Queue empty. **2026-10-20 15:40:** §1a.110 row done (`feature-tarball-menu-entry`, 6 / 4, small on purpose: one guide paragraph; floor recall@5 984; `feat-tme-stop` and `feat-tme-own-launcher` miss retrieval, kept). FYI for the guide: install.portable step 3 still says to make the launcher yourself, and nothing says where the entry is written or that `--control` / AppImage / Flatpak runs skip it. **2026-10-20 20:45:** RS4 Cut page row done (`feature-rs4-cut-page`, 13 + 1 coach / 10; floors recall@5 997, coach 144). **21:15:** RS4 Edit page row done (`feature-rs4-edit-toolbar`, 10 / 9; floor recall@5 1007). **21:40:** RS4.1 row done (`feature-rs4-resolve-edits`, 12 / 9; floor recall@5 1018; `feat-re-close-up-amount` misses, kept). FYI for the guide: editing.resolve-edits doesn't name the Sequence ▸ Resolve Edit menu. **21:50:** RS4.2 Inspector row → `guide wanted` (main runner): a section for the Inspector itself (each tab's controls, Transform in Resolve units vs Motion, how to open it, relation to Keyframes), and fix tracking.md / effects.md / color/noise.md, which still call Effect Controls "the Inspector in the Resolve workflow" (RS4.2 renamed it Keyframes); set the row back to `queued` after. Queue otherwise empty. FYI for the guide: pages.cut doesn't say how many tracks the Cut timeline shows, so nothing asks. **2026-10-21 02:10:** RS4.2 Inspector row done (`feature-rs4-inspector`, 14 + 2 coach / 13; floors recall@5 1029, coach 146; daily sample re-run). FYI for the guide: pages.inspector says nothing about what the Audio, Transition and Image tabs hold, so nothing asks. Queue empty. **2026-10-21 03:35:** AI2 branch-notes row done (`feature-ai2-branch-notes`, 9 + 2 coach / 9; floors recall@5 1038, coach 148; daily sample re-run). FYI for the guide: neither color.nodes.explain-branches nor color.matching.explainer says in words that a correction node limited by another node's selection gets a branch note (the queue row does; only the Outside example implies it), so the pairs only use the outside-node case. Queue empty. **2026-10-21 11:42:** LAY layout row done (`feature-layout`, 17 + 2 coach / 14; floors recall@5 1055, coach 150, creative coverage 554 (measured; no creative items); daily sample re-run). The training pairs keep off the held-out facts (small-window fallback, preset over saved layout, newer-version skip). Queue empty.
 
 **Owner, live 2026-10-16 ~04:20 (FORK-PLAN §1a.96): mode floor LEAN** (where the line says MINIMAL, work LEAN; MINIMAL only near the real limits, §1a.53). **Q41 answered:** the owner has read the training pairs, so AI4 item 5 tunes may use them. **AI4 item 3 (picture-model tune), owner ~04:30 / 04:35: no X-M5 footage yet.** Train on synthetic frames + downloaded openly licensed footage by others (download approved: CC0 / CC-BY / CC-BY-SA / PD, licence + source logged per file in `coach-eval/VISION-SOURCES.md`, ≤ 20 GB under `~/.local/share/filmcraft-fork/training-footage/`, never in git). **Log footage required** (F-Log2 first, other logs too; synthetic F-Log2 from open scene-referred footage if scarce). Build `coach-eval/VISION-READ.md` (30–50 frames + labels) and tell the owner (Q44), but **do the tune regardless of the review** (not a gate; later corrections → fix labels, re-tune). Keep-if-better rule stays. `ai-4` after the tune, then AI5.
 

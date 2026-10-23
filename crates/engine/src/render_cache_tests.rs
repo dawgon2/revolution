@@ -464,6 +464,7 @@ fn commands_pause_resume_mode_and_cancel_cleans_up() {
         exporter: None,
         progress: Progress::default(),
         ended: false,
+        mattes: Default::default(),
         id: Arc::new(AtomicU64::new(0)),
     };
     assert_eq!(job.step(), Ok(JobStep::More));
@@ -494,6 +495,7 @@ fn job_for(s: &Session, seq: ItemId, format: Format) -> CacheJob {
         exporter: None,
         progress: Progress::default(),
         ended: false,
+        mattes: Default::default(),
         id: Arc::new(AtomicU64::new(0)),
     }
 }

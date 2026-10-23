@@ -67,6 +67,8 @@ impl CompSources for ProjectSources<'_> {
         let track = match *source {
             MediaInSource::Layer { track } => track,
             MediaInSource::Item { item } => return self.item_layer(item, t, w, h).map(|l| vec![l]),
+            // (C4.3: a group's inputs are read by the comp evaluator itself)
+            MediaInSource::GroupInput { .. } => return None,
         };
         if self.track.is_none_or(|own| (track as usize) >= own) {
             return None;
@@ -85,6 +87,10 @@ impl CompSources for ProjectSources<'_> {
             l.matrix = shift.then_apply(&l.matrix);
         }
         Some(layers)
+    }
+
+    fn nest_depth(&self) -> u32 {
+        self.opts.depth
     }
 
     fn media_in(&self, source: &MediaInSource, t: Tick, w: usize, h: usize) -> Option<Image> {
@@ -121,6 +127,7 @@ impl CompSources for ProjectSources<'_> {
                 };
                 Some(fit(&img, w, h))
             }
+            MediaInSource::GroupInput { .. } => None,
         }
     }
 }

@@ -639,7 +639,7 @@ fn export_frame(s: &mut Session, p: &Value) -> Result<Value> {
         filmcraft_render::render_item(&s.project, target.item, target.time, 1.0, &provider)
     } else {
         // with temporal access, so a clip's temporal NR is in the still as in the export (6.7b)
-        let opts = filmcraft_render::RenderOptions { scale: 1.0, captions: true, temporal: true, ..Default::default() };
+        let opts = filmcraft_render::RenderOptions { scale: 1.0, captions: true, temporal: true, mattes: s.magic_mask.token(), ..Default::default() };
         Some(filmcraft_render::render_sequence(&s.project, target.item, target.time, opts, &provider))
     };
     if filmcraft_media::pending::take() {

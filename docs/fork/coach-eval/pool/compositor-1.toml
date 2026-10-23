@@ -460,6 +460,9 @@ kind = "resolve-word"
 origin = "agent"
 page = "tracking.md"
 heading = "Screen replacement with Corner Pin"
-alt = [{ page = "color/secondaries.md", heading = "Tracking a window" }]
+# C3.11: the Planar Tracker node's own section (compositor-trackers.md, C3.5a, written after this
+# item) joined the keyword index; it is the exact answer. G4.4: planar-tracked grade windows
+# (their own section) answer it as well
+alt = [{ page = "color/secondaries.md", heading = "Tracking a window" }, { page = "compositor-trackers.md", heading = "Tracker and Planar Tracker nodes [Fork]" }, { page = "color/secondaries.md", heading = "Planar-tracked windows" }]
 status = "covered"
 facts = ["Corner Pin Track Surface"]

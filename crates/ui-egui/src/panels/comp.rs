@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::FilmcraftApp;
 use crate::theme::Tokens;
-use crate::widgets::node_canvas::{CanvasEvent, CanvasGraph, CanvasState, EdgeView, NodeView, node_canvas};
+use crate::widgets::node_canvas::{CanvasEvent, CanvasGraph, CanvasState, EdgeView, NodeView, node_canvas_with_menu};
 
 /// The panel's state (`ui.panels.comp`): the comp shown and the canvas view.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -23,6 +23,10 @@ pub struct CompPanelState {
     /// opened comp is shown even if a selected comp clip holds another one.
     pub opened_with: Option<Vec<u64>>,
     pub canvas: CanvasState,
+    /// C4.6: the open group, as the group node ids from the comp inwards (empty: the comp itself).
+    pub path: Vec<u64>,
+    /// The canvas menu's template dialogs (fork C4.7).
+    pub templates: super::comp_templates::TemplateMenuState,
 }
 
 /// What a node kind is called on the canvas.
@@ -39,6 +43,12 @@ pub fn kind_label(key: &str) -> &'static str {
         "text" => "Text",
         "solid" => "Solid",
         "gradient" => "Gradient",
+        "roto" => "Roto",
+        "paint" => "Paint",
+        "tracker" => "Tracker",
+        "planarTracker" => "Planar Tracker",
+        "group" => "Group",
+        "groupInput" => "Group Input",
         _ => "Node",
     }
 }
@@ -92,7 +102,7 @@ pub(crate) fn route(app: &mut FilmcraftApp, id: &str, params: &serde_json::Value
             None => return Some(Err("select a comp clip first".into())),
         },
     };
-    app.ui.panels.comp.comp = Some(comp.0);
+    set_comp(app, Some(comp.0));
     app.ui.panels.comp.opened_with = Some(app.session.state.selection.iter().map(|c| c.0).collect());
     app.show_panel(crate::dock::PanelKind::Compositor);
     Some(Ok(json!({ "comp": comp.0 })))
@@ -149,6 +159,11 @@ pub fn graph(c: &Comp) -> CanvasGraph {
             let key = n.kind.key();
             let inputs: Vec<String> = match &n.kind {
                 CompKind::Merge => vec!["Background".into(), "Foreground".into()],
+                CompKind::Paint { .. } => vec!["Input".into(), "Reveal".into()],
+                CompKind::Tracker { .. } => vec!["Input".into(), "Foreground".into()],
+                CompKind::PlanarTracker { .. } => vec!["Background".into(), "Insert".into()],
+                // C4.3: a group's inputs, one per Group Input index
+                CompKind::Group { .. } => (1..=n.kind.inputs()).map(|i| format!("Input {i}")).collect(),
                 k if k.inputs() == 1 => vec!["Input".into()],
                 _ => Vec::new(),
             };
@@ -164,12 +179,35 @@ pub fn graph(c: &Comp) -> CanvasGraph {
                 is_output,
                 key_inputs: 0,
                 key_outputs: 0,
+                actions: Vec::new(),
             }
         })
         .collect();
     let edges = c.edges.iter().map(|e| EdgeView { from: (e.from.node, e.from.index), to: (e.to.node, e.to.index) }).collect();
     let add_kinds = KINDS.iter().filter(|k| **k != "mediaOut").map(|k| ((*k).to_string(), kind_label(k).to_string())).collect();
     CanvasGraph { nodes, edges, add_kinds, node_actions: Vec::new(), canvas_actions: Vec::new(), on_screen_ids: false }
+}
+
+/// The comp the panel shows; another comp than before opens at its own level with nothing
+/// selected (node ids are per comp, C4.8 review).
+fn set_comp(app: &mut FilmcraftApp, comp: Option<u64>) {
+    let p = &mut app.ui.panels.comp;
+    if p.comp != comp {
+        p.path.clear();
+        p.canvas.selection.clear();
+        p.canvas.viewed = None;
+    }
+    p.comp = comp;
+}
+
+/// `p` with the open group's path as `group` (C4.8; unchanged at the comp's own level).
+pub(crate) fn scoped(mut p: serde_json::Value, path: &[u64]) -> serde_json::Value {
+    if !path.is_empty()
+        && let Some(o) = p.as_object_mut()
+    {
+        o.insert("group".into(), json!(path));
+    }
+    p
 }
 
 fn run(app: &mut FilmcraftApp, command: &str, params: serde_json::Value) {
@@ -201,18 +239,63 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         app.auto.add_response("comp.newClip", &b, "New Comp Clip");
         if b.clicked() && has_seq {
             match app.session.execute("comp.newClip", json!({})) {
-                Ok(r) => app.ui.panels.comp.comp = r["comp"].as_u64(),
+                Ok(r) => set_comp(app, r["comp"].as_u64()),
                 Err(e) => app.session.toast(e.to_string()),
             }
         }
         return;
     };
-    app.ui.panels.comp.comp = Some(id.0);
+    set_comp(app, Some(id.0));
     let Some(ItemKind::Comp(c)) = app.session.project.item(id).map(|i| &i.kind) else { return };
-    let g = graph(c);
+    // C4.6 / C4.8: an open group shows its inside (`path`; a stale path is cut back) under a
+    // breadcrumb, editable like the comp's own nodes: every command names it as `group`
+    let depth = crate::panels::comp_group::valid_depth(c, &app.ui.panels.comp.path);
+    if depth < app.ui.panels.comp.path.len() {
+        // the selection named nodes of the level that is gone (an undo, a delete): drop it, so
+        // a key press can't act on same-numbered nodes of the level shown now
+        let p = &mut app.ui.panels.comp;
+        p.path.truncate(depth);
+        p.canvas.selection.clear();
+        p.canvas.viewed = None;
+    }
+    let path = app.ui.panels.comp.path.clone();
+    let top = std::sync::Arc::clone(c);
+    let rect = if path.is_empty() {
+        rect
+    } else {
+        let Some(body) = crate::panels::comp_group::breadcrumb(app, ui, rect, &top) else { return };
+        body
+    };
+    let c: &Comp = if path.is_empty() {
+        &top
+    } else {
+        match comp::group::inner(&top, &path) {
+            Ok(c) => c,
+            Err(_) => return,
+        }
+    };
+    let mut g = graph(c);
+    crate::panels::comp_group::actions(&mut g, c, !path.is_empty());
+    let groups: Vec<u64> = c.nodes.iter().filter(|n| matches!(n.kind, CompKind::Group { .. })).map(|n| n.id).collect();
+    let viewed_before = app.ui.panels.comp.canvas.viewed;
     // the inspector of the one selected node, under the canvas (C1 step 10b)
     let inspected = match app.ui.panels.comp.canvas.selection.as_slice() {
-        [n] => c.node(*n).filter(|n| matches!(n.kind, CompKind::Mask { .. }) || !inspector_rows(n, filmcraft_time::Tick::ZERO).is_empty()).cloned(),
+        [n] => c
+            .node(*n)
+            .filter(|n| {
+                matches!(
+                    n.kind,
+                    CompKind::Mask { .. }
+                        | CompKind::Roto { .. }
+                        | CompKind::Paint { .. }
+                        | CompKind::Tracker { .. }
+                        | CompKind::PlanarTracker { .. }
+                        | CompKind::Group { .. }
+                ) || !inspector_rows(n, filmcraft_time::Tick::ZERO).is_empty()
+                    // (inside a group: its settings can be exposed)
+                    || !path.is_empty()
+            })
+            .cloned(),
         _ => None,
     };
     let (rect, inspector_rect) = match &inspected {
@@ -224,7 +307,19 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     };
     let size = (f64::from(c.width), f64::from(c.height));
     let mut state = app.ui.panels.comp.canvas.clone();
-    let events = ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| node_canvas(ui, &g, &mut state, &mut app.auto, "comp")).inner;
+    // the background menu's template entries (fork C4.7, `comp_templates`)
+    let template_names = app.ui.panels.comp.templates.names.as_ref().map(|(_, n)| n.clone());
+    let can_save = !state.selection.is_empty();
+    let (mut template_pick, mut template_menu_open) = (None, false);
+    let mut template_menu = |ui: &mut egui::Ui, reg: &mut crate::automation::Registry, at: [f32; 2]| {
+        super::comp_templates::menu(ui, reg, template_names.as_deref(), can_save, at, &mut template_pick, &mut template_menu_open)
+    };
+    let events =
+        ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| node_canvas_with_menu(ui, &g, &mut state, &mut app.auto, "comp", &mut template_menu)).inner;
+    if !path.is_empty() {
+        // (the Program monitor views the comp's own nodes only)
+        state.viewed = None;
+    }
     app.ui.panels.comp.canvas = state;
     // "Show": the node the Program monitor shows (`comp.view`), top right of the canvas
     let viewed = app.ui.panels.comp.canvas.viewed.filter(|v| c.node(*v).is_some() && c.output != Some(*v));
@@ -234,6 +329,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mut pick: Option<Option<u64>> = None;
     let r = Rect::from_min_size(egui::pos2((rect.max.x - 200.0).max(rect.min.x), rect.min.y + 6.0), vec2(190.0, 22.0));
     ui.scope_builder(UiBuilder::new().max_rect(r), |ui| {
+        if !path.is_empty() {
+            return;
+        }
         let shown = viewed.and_then(|v| c.node(v)).map_or_else(|| crate::i18n::t("Media Out").to_string(), name);
         let resp = egui::ComboBox::from_id_salt("comp-view").selected_text(format!("{}: {shown}", crate::i18n::t("Show"))).width(180.0).show_ui(ui, |ui| {
             if ui.selectable_label(viewed.is_none(), crate::i18n::t("Media Out")).clicked() {
@@ -251,31 +349,51 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         app.ui.panels.comp.canvas.viewed = v;
     }
     let comp = id.0;
+    let sc = |p: serde_json::Value| scoped(p, &path);
     for e in events {
         match e {
             CanvasEvent::Select(_) => {}
-            CanvasEvent::Move(node, pos) => run(app, "comp.moveNode", json!({"comp": comp, "node": node, "pos": pos})),
+            CanvasEvent::Move(node, pos) => run(app, "comp.moveNode", sc(json!({"comp": comp, "node": node, "pos": pos}))),
             CanvasEvent::MoveEnd(..) => {}
             CanvasEvent::Connect { from, to } => {
-                run(app, "comp.connect", json!({"comp": comp, "from": from.0, "fromPort": from.1, "to": to.0, "toPort": to.1}))
+                run(app, "comp.connect", sc(json!({"comp": comp, "from": from.0, "fromPort": from.1, "to": to.0, "toPort": to.1})))
             }
-            CanvasEvent::Disconnect { to } => run(app, "comp.disconnect", json!({"comp": comp, "to": to.0, "toPort": to.1})),
-            CanvasEvent::AddRequested { kind, pos } => run(app, "comp.addNode", json!({"comp": comp, "kind": kind, "pos": pos})),
+            CanvasEvent::Disconnect { to } => run(app, "comp.disconnect", sc(json!({"comp": comp, "to": to.0, "toPort": to.1}))),
+            CanvasEvent::AddRequested { kind, pos } => run(app, "comp.addNode", sc(json!({"comp": comp, "kind": kind, "pos": pos}))),
             CanvasEvent::Bypass(ids) => {
                 for node in ids {
-                    run(app, "comp.bypass", json!({"comp": comp, "node": node}));
+                    run(app, "comp.bypass", sc(json!({"comp": comp, "node": node})));
                 }
             }
-            CanvasEvent::Delete(ids) => run(app, "comp.removeNode", json!({"comp": comp, "nodes": ids})),
-            CanvasEvent::SetOutput(node) => run(app, "comp.setOutput", json!({"comp": comp, "node": node})),
+            CanvasEvent::Delete(ids) => run(app, "comp.removeNode", sc(json!({"comp": comp, "nodes": ids}))),
+            CanvasEvent::SetOutput(node) => run(app, "comp.setOutput", sc(json!({"comp": comp, "node": node}))),
+            // C4.6: a double-click on a group opens it
+            CanvasEvent::View(node) if groups.contains(&node) => {
+                app.ui.panels.comp.canvas.viewed = viewed_before;
+                crate::panels::comp_group::enter(app, node);
+            }
+            // (inside a group the monitor keeps showing the comp's result)
+            CanvasEvent::View(_) if !path.is_empty() => {}
             // the Program monitor shows this node's output (`viewer_target`)
             CanvasEvent::View(node) => app.ui.panels.comp.canvas.viewed = Some(node),
-            CanvasEvent::NodeAction { .. } | CanvasEvent::CanvasAction(_) => {}
+            CanvasEvent::NodeAction { node, action } => crate::panels::comp_group::node_action(app, id, &path, node, &action),
+            CanvasEvent::CanvasAction(_) => {}
         }
     }
+    crate::panels::comp_group::toolbar(app, ui, rect, id, &path);
     if let (Some(node), Some(r)) = (inspected, inspector_rect) {
-        inspector(app, ui, r, id, &node, size);
+        if path.is_empty() {
+            inspector(app, ui, r, id, &path, &node, size);
+        } else {
+            // inside a group: the node's settings, and Expose buttons beside them
+            let split = r.min.x + (r.width() * 0.6).max(r.width() - 320.0);
+            let (left, right) = (Rect::from_min_max(r.min, egui::pos2(split, r.max.y)), Rect::from_min_max(egui::pos2(split, r.min.y), r.max));
+            inspector(app, ui, left, id, &path, &node, size);
+            crate::panels::comp_group::expose_rows(app, ui, right, id, &path, &node);
+        }
     }
+    // the canvas menu's templates (fork C4.7)
+    super::comp_templates::after_canvas(app, &ui.ctx().clone(), comp, &path, template_pick, template_menu_open);
 }
 
 /// Comp time at the playhead: through the first clip of the comp under it, else the comp's start.
@@ -311,6 +429,8 @@ fn inspector_rows(node: &CompNode, at: filmcraft_time::Tick) -> Vec<(filmcraft_p
         // a Color node's numeric grade settings (its wheels and curves: a later step, C1 10b)
         CompKind::Color { node: g } => filmcraft_project::grade::NODE_PARAMS
             .iter()
+            // (the HDR zone wheels have their own tab on the Color page, fork G4.2)
+            .filter(|np| !np.key.starts_with("hdr."))
             .filter_map(|np| {
                 let filmcraft_project::grade::NodeParamKind::Float { identity, min, max } = np.kind else { return None };
                 let pd = filmcraft_project::ParamDef {
@@ -348,7 +468,7 @@ fn inspector_rows(node: &CompNode, at: filmcraft_time::Tick) -> Vec<(filmcraft_p
 
 /// The selected node's parameters as rows (Effect Controls style): `comp.param.<key>` widgets that
 /// run `comp.setParam` (a keyframed parameter is set at the playhead's comp time).
-fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId, node: &CompNode, size: (f64, f64)) {
+fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId, path: &[u64], node: &CompNode, size: (f64, f64)) {
     let t: Tokens = app.tokens;
     ui.painter().line_segment([rect.left_top(), rect.right_top()], egui::Stroke::new(1.0, t.separator));
     let at = comp_time(app, comp);
@@ -356,7 +476,36 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
     let mut elems: crate::panels::transition_controls::Elems = Vec::new();
     let mut changes: Vec<serde_json::Value> = Vec::new();
     let mut toggles: Vec<serde_json::Value> = Vec::new();
+    // C4.5: expression commits (comp.setExpression) and the comp now, for values after expressions
+    let mut exprs: Vec<serde_json::Value> = Vec::new();
+    // (C4.8: inside a group, that group's inside)
+    let comp_now: Option<std::sync::Arc<filmcraft_project::comp::Comp>> = match app.session.project.item(comp).map(|i| &i.kind) {
+        Some(ItemKind::Comp(c)) if path.is_empty() => Some(std::sync::Arc::clone(c)),
+        Some(ItemKind::Comp(c)) => comp::group::inner(c, path).ok().map(|i| std::sync::Arc::new(i.clone())),
+        _ => None,
+    };
     let mut mask_change: Option<serde_json::Value> = None;
+    // C3.5b: a Roto / Paint node's list edits, (command, params)
+    let mut list_change: Option<(&'static str, serde_json::Value)> = None;
+    let mut track_cmds: Vec<(&'static str, serde_json::Value)> = Vec::new();
+    // (analysis jobs run on the comp's own nodes only)
+    let running = path.is_empty() && app.session.comp_track_jobs.iter().any(|j| j.comp == comp && j.node == node.id);
+    // C3.7: the comp's trackers (for Follow tracker) and the Roto node's running shape track
+    let roto_cx = RotoCtx {
+        trackers: comp_now
+            .as_deref()
+            .map(|c| {
+                c.nodes
+                    .iter()
+                    .filter(|n| matches!(n.kind, CompKind::Tracker { .. } | CompKind::PlanarTracker { .. }))
+                    .map(|n| (n.id, filmcraft_engine::comp_explain::node_name(n)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        tracking: app.session.roto_track_jobs.iter().find(|j| path.is_empty() && j.comp == comp && j.node == node.id).map(|j| j.shape),
+        inside: !path.is_empty(),
+    };
+    let rate = comp_now.as_deref().map_or_else(filmcraft_time::FrameRate::default, |c| c.rate);
     ui.scope_builder(UiBuilder::new().max_rect(rect.shrink(8.0)), |ui| {
         ui.label(egui::RichText::new(title).strong());
         egui::ScrollArea::vertical().id_salt("comp-inspector").show(ui, |ui| {
@@ -421,8 +570,25 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
                 });
                 ui.add_space(6.0);
             }
+            // C4.5: values after expressions; an "=" toggle beside each keyframable own parameter
+            // opens a one-line expression field (`comp.inspector.<param>.expr`, committed on Enter
+            // or leaving the field with comp.setExpression), its error underneath
+            let frame = comp_now.as_deref().map(|c| c.expr_frame(at));
+            let own = !matches!(node.kind, CompKind::Text { .. } | CompKind::Color { .. });
             egui::Grid::new("comp-inspector-grid").num_columns(3).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
                 for (pd, value, animated) in inspector_rows(node, at) {
+                    let src = if own { node.expression(pd.id).map(str::to_string) } else { None };
+                    let (value, eval_error) = match (&src, &frame) {
+                        (Some(_), Some(f)) => f.param_at(node.id, pd.id),
+                        _ => (value, None),
+                    };
+                    let can_expr = own
+                        && pd.animatable
+                        && filmcraft_project::expr::kind_allowed(&pd.default)
+                        && !matches!(
+                            pd.kind,
+                            filmcraft_project::ParamKind::Text | filmcraft_project::ParamKind::Curve { .. } | filmcraft_project::ParamKind::Path
+                        );
                     // the stopwatch: keyframes on / off at the playhead's comp time
                     let (sw, resp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::click());
                     if pd.animatable {
@@ -432,7 +598,19 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
                             toggles.push(json!({"comp": comp.0, "node": node.id, "param": pd.id, "time": at.0}));
                         }
                     }
-                    ui.label(crate::i18n::t(pd.label));
+                    let open_key = egui::Id::new(("comp-expr-open", comp.0, node.id, pd.id));
+                    let mut open = can_expr && ui.data(|d| d.get_temp::<bool>(open_key)).unwrap_or(src.is_some());
+                    ui.horizontal(|ui| {
+                        ui.label(crate::i18n::t(pd.label));
+                        if can_expr {
+                            let r = ui.selectable_label(open, egui::RichText::new("=").monospace());
+                            elems.push((format!("comp.inspector.{}.expr.toggle", pd.id), r.rect, "Expression".into()));
+                            if r.on_hover_text(crate::i18n::t("Expression")).clicked() {
+                                open = !open;
+                                ui.data_mut(|d| d.insert_temp(open_key, open));
+                            }
+                        }
+                    });
                     let eid = format!("comp.param.{}", pd.id);
                     if let Some(c) = crate::panels::transition_controls::param_widget(ui, &mut elems, &eid, pd.id, &pd.kind, &value, size) {
                         let mut p = json!({"comp": comp.0, "node": node.id, "param": pd.id, "value": c["params"][pd.id].clone()});
@@ -442,6 +620,45 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
                         changes.push(p);
                     }
                     ui.end_row();
+                    if !open {
+                        continue;
+                    }
+                    // the expression field: a draft while it is being typed (or refused), else the stored one
+                    let draft_key = egui::Id::new(("comp-expr-draft", comp.0, node.id, pd.id));
+                    let error_key = egui::Id::new(("comp-expr-error", comp.0, node.id, pd.id));
+                    let stored = src.clone().unwrap_or_default();
+                    let mut text: String = ui.data(|d| d.get_temp::<String>(draft_key)).unwrap_or_else(|| stored.clone());
+                    ui.label("");
+                    ui.label("");
+                    ui.vertical(|ui| {
+                        let fid = format!("comp.inspector.{}.expr", pd.id);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut text)
+                                .id(egui::Id::new(("comp-expr-field", comp.0, node.id, pd.id)))
+                                .hint_text(crate::i18n::t("e.g. time * 10"))
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(220.0)
+                                .char_limit(filmcraft_project::expr::MAX_SOURCE),
+                        );
+                        elems.push((fid, resp.rect, if text.is_empty() { "Expression".into() } else { text.clone() }));
+                        if resp.changed() {
+                            ui.data_mut(|d| d.insert_temp(draft_key, text.clone()));
+                        }
+                        if resp.lost_focus() {
+                            if text.trim() != stored.trim() {
+                                exprs.push(json!({"comp": comp.0, "node": node.id, "param": pd.id, "expression": text, "time": at.0}));
+                            } else {
+                                ui.data_mut(|d| d.remove::<String>(draft_key));
+                            }
+                        }
+                        let refused: Option<String> = ui.data(|d| d.get_temp(error_key));
+                        let shown = refused.or_else(|| eval_error.as_ref().map(|e| e.to_string()));
+                        if let Some(msg) = shown {
+                            let r = ui.label(egui::RichText::new(msg.clone()).color(ui.visuals().warn_fg_color).small());
+                            elems.push((format!("comp.inspector.{}.expr.error", pd.id), r.rect, msg));
+                        }
+                    });
+                    ui.end_row();
                 }
             });
             if let CompKind::Mask { masks } = &node.kind
@@ -449,20 +666,513 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
             {
                 mask_change = Some(json!({"comp": comp.0, "node": node.id, "masks": list}));
             }
+            if let CompKind::Roto { roto, output } = &node.kind
+                && let Some((cmd, mut p)) = roto_rows(ui, &mut elems, roto, *output, at, &roto_cx)
+            {
+                p["comp"] = json!(comp.0);
+                p["node"] = json!(node.id);
+                list_change = Some((cmd, p));
+            }
+            if let CompKind::Paint { paint } = &node.kind
+                && let Some((cmd, mut p)) = paint_rows(ui, &mut elems, paint)
+            {
+                p["comp"] = json!(comp.0);
+                p["node"] = json!(node.id);
+                list_change = Some((cmd, p));
+            }
+            track_cmds = tracker_rows(ui, &mut elems, TrackerCtx { comp: comp.0, at, size, running, rate, inside: !path.is_empty() }, node);
+            // C4.3: a group's exposed parameters
+            group_rows(ui, &mut elems, (&mut changes, &mut toggles), comp.0, node, at, size);
         });
     });
     for (eid, r, l) in elems {
         app.auto.add(&eid, r, &l);
     }
+    // C4.8: inside a group every command names it
+    let changes: Vec<serde_json::Value> = changes.into_iter().map(|p| scoped(p, path)).collect();
+    let toggles: Vec<serde_json::Value> = toggles.into_iter().map(|p| scoped(p, path)).collect();
+    let exprs: Vec<serde_json::Value> = exprs.into_iter().map(|p| scoped(p, path)).collect();
+    let mask_change = mask_change.map(|p| scoped(p, path));
+    let list_change = list_change.map(|(c, p)| (c, scoped(p, path)));
+    let track_cmds: Vec<(&'static str, serde_json::Value)> = track_cmds.into_iter().map(|(c, p)| (c, scoped(p, path))).collect();
     for p in changes {
         run(app, "comp.setParam", p);
     }
     for p in toggles {
         run(app, "comp.toggleAnimation", p);
     }
+    // a refused expression (it doesn't parse) keeps its draft and shows why; a stored one drops both
+    for p in exprs {
+        let (node_id, key) = (p["node"].as_u64().unwrap_or(0), p["param"].as_str().unwrap_or("").to_string());
+        let draft_key = egui::Id::new(("comp-expr-draft", comp.0, node_id, key.as_str()));
+        let error_key = egui::Id::new(("comp-expr-error", comp.0, node_id, key.as_str()));
+        match app.session.execute("comp.setExpression", p) {
+            Ok(r) if r["stored"] == json!(false) => {
+                let msg = r["error"]["text"].as_str().unwrap_or("").to_string();
+                ui.ctx().data_mut(|d| d.insert_temp(error_key, msg));
+            }
+            Ok(_) => ui.ctx().data_mut(|d| {
+                d.remove::<String>(draft_key);
+                d.remove::<String>(error_key);
+            }),
+            Err(e) => app.session.toast(e.to_string()),
+        }
+    }
     if let Some(p) = mask_change {
         run(app, "comp.setMasks", p);
     }
+    if let Some((cmd, p)) = list_change {
+        run(app, cmd, p);
+    }
+    for (command, p) in track_cmds {
+        run(app, command, p);
+    }
+}
+
+/// A Roto node's rows (C3.5b): Output (Alpha / Matte), Add shape (a centred ellipse), and per
+/// shape Enabled, Inverted, Mode, Feather (set at comp time `at`) and Delete. Returns the command
+/// to run (`comp.setRoto` with the whole new roto, `comp.roto.addShape` or
+/// `comp.roto.removeShape`; one undo step). Ids `comp.roto.output`, `comp.roto.add`,
+/// `comp.roto<k>.{enabled,inverted,mode,feather,delete}`. Drawing shapes on the viewer is a later
+/// step. C3.7 adds a second row per shape: Follow tracker (`comp.roto<k>.follow`: None or one of
+/// the comp's trackers, `comp.roto.linkTracker` / `unlinkTracker` at the playhead, so the shape
+/// stays where it is on screen there; a link whose tracker is gone
+/// shows "Missing tracker") and Track backward / forward from the playhead
+/// (`comp.roto<k>.track.{backward,forward}`, `comp.roto.trackShape`), Stop while it runs
+/// (`comp.roto<k>.track.stop`).
+fn roto_rows(
+    ui: &mut egui::Ui,
+    elems: &mut crate::panels::transition_controls::Elems,
+    roto: &filmcraft_project::roto::Roto,
+    output: comp::RotoOutput,
+    at: filmcraft_time::Tick,
+    cx: &RotoCtx,
+) -> Option<(&'static str, serde_json::Value)> {
+    use filmcraft_project::roto::{MAX_FEATHER, MAX_SHAPES, RotoMode};
+    let mut out: Option<(&'static str, serde_json::Value)> = None;
+    let set = |r: filmcraft_project::roto::Roto| ("comp.setRoto", json!({ "roto": r }));
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(crate::i18n::t("Output"));
+        let r = egui::ComboBox::from_id_salt("comp-roto-output").selected_text(crate::i18n::t(output.label())).show_ui(ui, |ui| {
+            for o in comp::RotoOutput::ALL {
+                if ui.selectable_label(o == output, crate::i18n::t(o.label())).clicked() && o != output {
+                    out = Some(("comp.setRoto", json!({ "output": o.label().to_ascii_lowercase() })));
+                }
+            }
+        });
+        elems.push(("comp.roto.output".to_string(), r.response.rect, "Output".into()));
+    });
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(crate::i18n::t("Shapes")).strong());
+        let resp = ui.add_enabled(roto.shapes.len() < MAX_SHAPES, egui::Button::new(crate::i18n::t("Add shape")));
+        elems.push(("comp.roto.add".to_string(), resp.rect, "Add shape".into()));
+        if resp.clicked() {
+            out = Some(("comp.roto.addShape", json!({})));
+        }
+    });
+    for (k, sh) in roto.shapes.iter().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(&sh.name);
+            let mut on = sh.enabled;
+            let r = ui.checkbox(&mut on, crate::i18n::t("Enabled"));
+            elems.push((format!("comp.roto{k}.enabled"), r.rect, "Enabled".into()));
+            let mut inv = sh.inverted;
+            let r2 = ui.checkbox(&mut inv, crate::i18n::t("Inverted"));
+            elems.push((format!("comp.roto{k}.inverted"), r2.rect, "Inverted".into()));
+            if r.changed() || r2.changed() {
+                let mut list = roto.clone();
+                if let Some(x) = list.shapes.get_mut(k) {
+                    x.enabled = on;
+                    x.inverted = inv;
+                }
+                out = Some(set(list));
+            }
+            let mode = egui::ComboBox::from_id_salt(("comp-roto-mode", k)).selected_text(crate::i18n::t(sh.mode.label())).show_ui(ui, |ui| {
+                for m in RotoMode::ALL {
+                    if ui.selectable_label(m == sh.mode, crate::i18n::t(m.label())).clicked() && m != sh.mode {
+                        let mut list = roto.clone();
+                        if let Some(x) = list.shapes.get_mut(k) {
+                            x.mode = m;
+                        }
+                        out = Some(set(list));
+                    }
+                }
+            });
+            elems.push((format!("comp.roto{k}.mode"), mode.response.rect, "Mode".into()));
+            ui.label(crate::i18n::t("Feather"));
+            let mut f = sh.feather_at(at);
+            let r = ui.add(egui::DragValue::new(&mut f).range(0.0..=MAX_FEATHER).speed(0.5).suffix(" px"));
+            elems.push((format!("comp.roto{k}.feather"), r.rect, "Feather".into()));
+            let g = drag_gesture(ui, &r);
+            if r.changed() && f.is_finite() {
+                let mut list = roto.clone();
+                if let Some(x) = list.shapes.get_mut(k) {
+                    x.feather.set_at(at, filmcraft_project::ParamValue::Float(f.clamp(0.0, MAX_FEATHER)));
+                }
+                out = Some(with_gesture(set(list), g));
+            }
+            let resp = ui.button(crate::i18n::t("Delete"));
+            elems.push((format!("comp.roto{k}.delete"), resp.rect, "Delete".into()));
+            if resp.clicked() {
+                out = Some(("comp.roto.removeShape", json!({ "shape": k })));
+            }
+        });
+        if let Some(c) = shape_track_row(ui, elems, k, sh, at, cx) {
+            out = Some(c);
+        }
+    }
+    out
+}
+
+/// What a Roto node's shape rows need besides the roto (C3.7): the comp's Tracker / Planar
+/// Tracker nodes (id, name) and the shape being tracked with Magic Mask, if one is.
+struct RotoCtx {
+    trackers: Vec<(u64, String)>,
+    tracking: Option<usize>,
+    /// Inside a group (C4.8): shape tracking runs on the comp's own nodes only.
+    inside: bool,
+}
+
+/// Why tracking is off inside a group (the hover note on its disabled buttons).
+const TRACK_INSIDE_NOTE: &str = "Tracking works on the comp's own nodes only for now; ungroup these nodes to track.";
+
+/// Shape `k`'s Follow tracker / Track shape row (C3.7, see [`roto_rows`]).
+fn shape_track_row(
+    ui: &mut egui::Ui,
+    elems: &mut crate::panels::transition_controls::Elems,
+    k: usize,
+    sh: &filmcraft_project::roto::RotoShape,
+    at: filmcraft_time::Tick,
+    cx: &RotoCtx,
+) -> Option<(&'static str, serde_json::Value)> {
+    let mut out = None;
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        ui.label(crate::i18n::t("Follow tracker"));
+        let linked = sh.track_link.as_ref().map(|l| l.tracker.trim().parse::<u64>().ok());
+        let current = match linked {
+            None => crate::i18n::t("None").to_string(),
+            Some(id) => match cx.trackers.iter().find(|(t, _)| Some(*t) == id) {
+                Some((_, name)) => name.clone(),
+                None => crate::i18n::t("Missing tracker").to_string(),
+            },
+        };
+        let combo = egui::ComboBox::from_id_salt(("comp-roto-follow", k)).selected_text(current).show_ui(ui, |ui| {
+            if ui.selectable_label(linked.is_none(), crate::i18n::t("None")).clicked() && linked.is_some() {
+                out = Some(("comp.roto.unlinkTracker", json!({ "shape": k, "at": at.0 })));
+            }
+            for (id, name) in &cx.trackers {
+                let on = linked == Some(Some(*id));
+                if ui.selectable_label(on, name).clicked() && !on {
+                    out = Some(("comp.roto.linkTracker", json!({ "shape": k, "tracker": id, "at": at.0 })));
+                }
+            }
+        });
+        elems.push((format!("comp.roto{k}.follow"), combo.response.rect, "Follow tracker".into()));
+        if cx.tracking == Some(k) {
+            let resp = ui.button(crate::i18n::t("Stop"));
+            elems.push((format!("comp.roto{k}.track.stop"), resp.rect, "Stop".into()));
+            if resp.clicked() {
+                out = Some(("comp.roto.stopTrack", json!({})));
+            }
+        } else {
+            // (a linked shape moves with its tracker; tracking it as well would move it twice)
+            let can = !cx.inside && cx.tracking.is_none() && sh.track_link.is_none() && sh.kind == filmcraft_project::roto::RotoKind::Bezier;
+            for (key, label, dir) in [("backward", "Track backward", "backward"), ("forward", "Track forward", "forward")] {
+                let mut resp = ui.add_enabled(can, egui::Button::new(crate::i18n::t(label)));
+                if cx.inside {
+                    resp = resp.on_disabled_hover_text(crate::i18n::t(TRACK_INSIDE_NOTE));
+                }
+                let label = if cx.inside { format!("{label} (off: {TRACK_INSIDE_NOTE})") } else { label.to_string() };
+                elems.push((format!("comp.roto{k}.track.{key}"), resp.rect, label));
+                if resp.clicked() {
+                    out = Some(("comp.roto.trackShape", json!({ "shape": k, "from": at.0, "direction": dir })));
+                }
+            }
+        }
+    });
+    out
+}
+
+/// The `gesture` of a Roto / Paint inspector drag (C3.5b): one number for the whole drag, so a
+/// drag is one undo step (`comp.setRoto` / `comp.setPaint` merge the same gesture). None when
+/// the value isn't being dragged (a typed value is its own step).
+fn drag_gesture(ui: &egui::Ui, r: &egui::Response) -> Option<u64> {
+    let id = egui::Id::new("comp-roto-paint-gesture");
+    let mut g: u64 = ui.data(|d| d.get_temp(id)).unwrap_or(0);
+    if r.drag_started() {
+        g = g.wrapping_add(1);
+        ui.data_mut(|d| d.insert_temp(id, g));
+    }
+    (r.drag_started() || r.dragged()).then_some(g)
+}
+
+/// `(command, params)` with `gesture` added when there is one.
+fn with_gesture((cmd, mut p): (&'static str, serde_json::Value), g: Option<u64>) -> (&'static str, serde_json::Value) {
+    if let Some(g) = g {
+        p["gesture"] = json!(g);
+    }
+    (cmd, p)
+}
+
+/// What a paint stroke's duration shows in the list.
+fn stroke_duration(d: &filmcraft_project::paint::StrokeDuration) -> String {
+    use filmcraft_project::paint::StrokeDuration;
+    let secs = |t: filmcraft_time::Tick| t.0 as f64 / filmcraft_time::TICKS_PER_SECOND as f64;
+    match *d {
+        StrokeDuration::SingleFrame { at } => format!("{} {:.2} s", crate::i18n::t("Single frame"), secs(at)),
+        StrokeDuration::Hold { from, to: Some(to) } => format!("{} {:.2}–{:.2} s", crate::i18n::t("Hold"), secs(from), secs(to)),
+        StrokeDuration::Hold { from, to: None } => format!("{} {:.2} s –", crate::i18n::t("Hold"), secs(from)),
+    }
+}
+
+/// A Paint node's rows (C3.5b): per stroke its tool, Size and Opacity (`comp.setPaint` with the
+/// whole new list), its duration, Move up / Move down (`comp.paint.reorder`) and Delete
+/// (`comp.paint.removeStroke`). Ids `comp.paint<k>.{size,opacity,up,down,delete}`. Strokes are
+/// drawn on the viewer in a later step.
+fn paint_rows(
+    ui: &mut egui::Ui,
+    elems: &mut crate::panels::transition_controls::Elems,
+    paint: &filmcraft_project::paint::Paint,
+) -> Option<(&'static str, serde_json::Value)> {
+    use filmcraft_project::paint::{MAX_BRUSH_SIZE, PaintTool};
+    let mut out: Option<(&'static str, serde_json::Value)> = None;
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new(crate::i18n::t("Strokes")).strong());
+    let n = paint.strokes.len();
+    // (a long list shows its first strokes; agents use the commands for the rest)
+    for (k, st) in paint.strokes.iter().enumerate().take(200) {
+        ui.horizontal(|ui| {
+            let tool = match st.tool {
+                PaintTool::Color => "Color",
+                PaintTool::Clone => "Clone",
+                PaintTool::Reveal => "Reveal",
+                PaintTool::Erase => "Erase",
+            };
+            ui.label(format!("{} {}", k.saturating_add(1), crate::i18n::t(tool)));
+            ui.label(crate::i18n::t("Size"));
+            let mut size = st.brush.size;
+            let r = ui.add(egui::DragValue::new(&mut size).range(0.0..=MAX_BRUSH_SIZE).speed(0.5).suffix(" px"));
+            elems.push((format!("comp.paint{k}.size"), r.rect, "Size".into()));
+            ui.label(crate::i18n::t("Opacity"));
+            let mut op = st.brush.opacity * 100.0;
+            let r2 = ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).speed(0.5).suffix(" %"));
+            elems.push((format!("comp.paint{k}.opacity"), r2.rect, "Opacity".into()));
+            let g = drag_gesture(ui, &r).or_else(|| drag_gesture(ui, &r2));
+            if (r.changed() || r2.changed()) && size.is_finite() && op.is_finite() {
+                let mut list = paint.clone();
+                if let Some(x) = list.strokes.get_mut(k) {
+                    x.brush.size = size.clamp(0.0, MAX_BRUSH_SIZE);
+                    x.brush.opacity = (op / 100.0).clamp(0.0, 1.0);
+                }
+                out = Some(with_gesture(("comp.setPaint", json!({ "paint": list })), g));
+            }
+            ui.label(egui::RichText::new(stroke_duration(&st.duration)).weak());
+            for (key, label, to, ok) in [("up", "Move up", k.saturating_sub(1), k > 0), ("down", "Move down", k.saturating_add(1), k + 1 < n)] {
+                let resp = ui.add_enabled(ok, egui::Button::new(crate::i18n::t(label)));
+                elems.push((format!("comp.paint{k}.{key}"), resp.rect, label.into()));
+                if resp.clicked() {
+                    out = Some(("comp.paint.reorder", json!({ "from": k, "to": to })));
+                }
+            }
+            let resp = ui.button(crate::i18n::t("Delete"));
+            elems.push((format!("comp.paint{k}.delete"), resp.rect, "Delete".into()));
+            if resp.clicked() {
+                out = Some(("comp.paint.removeStroke", json!({ "stroke": k })));
+            }
+        });
+    }
+    out
+}
+
+/// Where a tracker node's controls are drawn: its comp, the playhead's comp time, the comp size,
+/// whether its analysis is running and the comp's frame rate.
+struct TrackerCtx {
+    comp: u64,
+    at: filmcraft_time::Tick,
+    size: (f64, f64),
+    running: bool,
+    rate: filmcraft_time::FrameRate,
+    /// Inside a group (C4.8): analysis runs on the comp's own nodes only.
+    inside: bool,
+}
+
+/// A Tracker / Planar Tracker node's controls (C3.5a; numeric for now, viewer tools later):
+/// Operation, Method and Smooth radius (Tracker), the reference frame (Set to playhead), Analyse
+/// backward / forward from the playhead (Stop while it runs), Clear track, then the points (add,
+/// x / y at the playhead, delete) or the plane's four corners at the reference. Returns the
+/// commands to run. Ids `comp.track.{operation,method,smoothRadius,reference,analyse.backward,
+/// analyse.forward,cancel,clear,addPoint}`, `comp.track.point<k>.{x,y,delete}`,
+/// `comp.planar.corner<k>.{x,y}`.
+fn tracker_rows(
+    ui: &mut egui::Ui,
+    elems: &mut crate::panels::transition_controls::Elems,
+    cx: TrackerCtx,
+    node: &CompNode,
+) -> Vec<(&'static str, serde_json::Value)> {
+    use filmcraft_geom::Vec2;
+    use filmcraft_project::comp::TrackOperation;
+    let t = crate::i18n::t;
+    let mut out: Vec<(&'static str, serde_json::Value)> = Vec::new();
+    let (comp, id) = (cx.comp, node.id);
+    let (operation, reference) = match &node.kind {
+        CompKind::Tracker { operation, reference, .. } | CompKind::PlanarTracker { operation, reference, .. } => (*operation, *reference),
+        _ => return out,
+    };
+    let options = |extra: serde_json::Value| {
+        let mut p = json!({"comp": comp, "node": id});
+        if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+            o.extend(e.clone());
+        }
+        p
+    };
+    ui.add_space(6.0);
+    egui::Grid::new(("comp-track-grid", id)).num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        ui.label(t("Operation"));
+        let resp = egui::ComboBox::from_id_salt(("comp-track-op", id)).selected_text(t(operation.label())).show_ui(ui, |ui| {
+            for op in TrackOperation::ALL {
+                if ui.selectable_label(op == operation, t(op.label())).clicked() && op != operation {
+                    out.push(("comp.track.setOptions", options(json!({"operation": op.key()}))));
+                }
+            }
+        });
+        elems.push(("comp.track.operation".into(), resp.response.rect, "Operation".into()));
+        ui.end_row();
+        if let CompKind::Tracker { method, smooth_radius, .. } = &node.kind {
+            ui.label(t("Method"));
+            let resp = egui::ComboBox::from_id_salt(("comp-track-method", id)).selected_text(t(method.label())).show_ui(ui, |ui| {
+                for m in filmcraft_project::TrackMethod::ALL {
+                    if ui.selectable_label(m == *method, t(m.label())).clicked() && m != *method {
+                        out.push(("comp.track.setOptions", options(json!({"method": m.label()}))));
+                    }
+                }
+            });
+            elems.push(("comp.track.method".into(), resp.response.rect, "Method".into()));
+            ui.end_row();
+            ui.label(t("Smooth radius"));
+            let mut r = *smooth_radius;
+            let resp = ui.add(egui::DragValue::new(&mut r).range(0..=filmcraft_project::comp::MAX_SMOOTH_RADIUS).suffix(" f"));
+            elems.push(("comp.track.smoothRadius".into(), resp.rect, "Smooth radius".into()));
+            if resp.changed() && r != *smooth_radius {
+                out.push(("comp.track.setOptions", options(json!({"smoothRadius": r, "gesture": resp.id.value()}))));
+            }
+            ui.end_row();
+        }
+        ui.label(t("Reference"));
+        ui.horizontal(|ui| {
+            ui.label(format!("{}", cx.rate.frame_at(reference)));
+            let resp = ui.button(t("Set to playhead"));
+            elems.push(("comp.track.reference".into(), resp.rect, "Set to playhead".into()));
+            if resp.clicked() {
+                out.push(("comp.track.setOptions", options(json!({"reference": cx.at.0}))));
+            }
+        });
+        ui.end_row();
+    });
+    ui.horizontal(|ui| {
+        if cx.running {
+            let resp = ui.button(t("Stop"));
+            elems.push(("comp.track.cancel".into(), resp.rect, "Stop".into()));
+            if resp.clicked() {
+                out.push(("comp.track.cancel", options(json!({}))));
+            }
+        } else {
+            for (key, label, dir) in [("backward", "Analyse backward", "backward"), ("forward", "Analyse forward", "forward")] {
+                let mut resp = ui.add_enabled(!cx.inside, egui::Button::new(t(label)));
+                if cx.inside {
+                    resp = resp.on_disabled_hover_text(t(TRACK_INSIDE_NOTE));
+                }
+                // (the automation label carries the note while it is off)
+                let label = if cx.inside { format!("{label} (off: {TRACK_INSIDE_NOTE})") } else { label.to_string() };
+                elems.push((format!("comp.track.analyse.{key}"), resp.rect, label));
+                if resp.clicked() {
+                    out.push(("comp.track.analyse", options(json!({"from": cx.at.0, "direction": dir}))));
+                }
+            }
+        }
+        let resp = ui.add_enabled(!cx.running, egui::Button::new(t("Clear track")));
+        elems.push(("comp.track.clear".into(), resp.rect, "Clear track".into()));
+        if resp.clicked() {
+            out.push(("comp.track.clear", options(json!({}))));
+        }
+    });
+    let drag = |ui: &mut egui::Ui, elems: &mut crate::panels::transition_controls::Elems, eid: String, v: f64| -> Option<f64> {
+        let mut x = v;
+        let resp = ui.add(egui::DragValue::new(&mut x).speed(0.5).max_decimals(2));
+        elems.push((eid.clone(), resp.rect, eid));
+        (resp.changed() && x.is_finite() && x != v).then_some(x)
+    };
+    match &node.kind {
+        CompKind::Tracker { points, .. } => {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(t("Points")).strong());
+                let resp = ui.add_enabled(points.len() < filmcraft_project::comp::MAX_TRACK_POINTS, egui::Button::new(t("Add point")));
+                elems.push(("comp.track.addPoint".into(), resp.rect, "Add point".into()));
+                if resp.clicked() {
+                    let mut list = points.clone();
+                    let k = list.len().saturating_add(1);
+                    list.push(filmcraft_project::comp::TrackerPoint::at(format!("P{k}"), Vec2::new(cx.size.0 / 2.0, cx.size.1 / 2.0)));
+                    out.push(("comp.track.setPoints", options(json!({"points": list}))));
+                }
+            });
+            for (k, pt) in points.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(if pt.name.is_empty() { format!("P{}", k + 1) } else { pt.name.clone() });
+                    let at = pt.track.value_at(cx.at).as_vec2().unwrap_or(Vec2::ZERO);
+                    let x = drag(ui, elems, format!("comp.track.point{k}.x"), at.x);
+                    let y = drag(ui, elems, format!("comp.track.point{k}.y"), at.y);
+                    if x.is_some() || y.is_some() {
+                        let mut list = points.clone();
+                        if let Some(p) = list.get_mut(k) {
+                            p.track.set_at(cx.at, filmcraft_project::ParamValue::Vec2(Vec2::new(x.unwrap_or(at.x), y.unwrap_or(at.y))));
+                        }
+                        out.push(("comp.track.setPoints", options(json!({"points": list}))));
+                    }
+                    let resp = ui.button(t("Delete"));
+                    elems.push((format!("comp.track.point{k}.delete"), resp.rect, "Delete".into()));
+                    if resp.clicked() {
+                        let mut list = points.clone();
+                        if k < list.len() {
+                            list.remove(k);
+                        }
+                        out.push(("comp.track.setPoints", options(json!({"points": list}))));
+                    }
+                });
+            }
+        }
+        CompKind::PlanarTracker { region, quad, .. } => {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(t("Plane corners")).strong());
+            let poly: Vec<Vec2> = region.vertices.iter().map(|v| v.p).collect();
+            let q = filmcraft_render::comp::track::reference_quad(quad, &poly, cx.size);
+            let mut changed = None;
+            for (k, (label, c)) in ["Upper Left", "Upper Right", "Lower Right", "Lower Left"].iter().zip(q).enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(t(label));
+                    let x = drag(ui, elems, format!("comp.planar.corner{k}.x"), c.x);
+                    let y = drag(ui, elems, format!("comp.planar.corner{k}.y"), c.y);
+                    if x.is_some() || y.is_some() {
+                        let mut nq = q;
+                        if let Some(p) = nq.get_mut(k) {
+                            *p = Vec2::new(x.unwrap_or(c.x), y.unwrap_or(c.y));
+                        }
+                        changed = Some(nq);
+                    }
+                });
+            }
+            if let Some(nq) = changed {
+                // a region that is the quad (or none yet) moves with it
+                let follows = poly.len() < 3 || (poly.len() == 4 && poly.iter().zip(q.iter()).all(|(a, b)| (*a - *b).length() < 1e-6));
+                let pts = |v: &[Vec2]| v.iter().map(|p| json!([p.x, p.y])).collect::<Vec<_>>();
+                let region = if follows { pts(&nq) } else { pts(&poly) };
+                out.push(("comp.planar.setRegion", options(json!({"region": region, "quad": pts(&nq)}))));
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 /// A Mask node's mask list: add an ellipse or a rectangle (centred, a fifth of the comp's short
@@ -561,6 +1271,10 @@ pub fn mask_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, frame:
         return;
     }
     let p = &app.ui.panels.comp;
+    // (C4.8: inside a group the monitor shows the comp's own result; no overlay there yet)
+    if !p.path.is_empty() {
+        return;
+    }
     let (Some(comp), [node_id]) = (p.comp.map(ItemId), p.canvas.selection.as_slice()) else { return };
     let node_id = *node_id;
     let Some(ItemKind::Comp(c)) = app.session.project.item(comp).map(|i| &i.kind) else { return };
@@ -758,7 +1472,7 @@ fn seg_dist(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
 }
 
 /// Whether `p` is inside the closed polygon `pts` (nonzero winding).
-fn contains(pts: &[filmcraft_geom::Vec2], p: filmcraft_geom::Vec2) -> bool {
+pub(crate) fn contains(pts: &[filmcraft_geom::Vec2], p: filmcraft_geom::Vec2) -> bool {
     let n = pts.len();
     let mut w = 0i32;
     for i in 0..n {
@@ -768,4 +1482,53 @@ fn contains(pts: &[filmcraft_geom::Vec2], p: filmcraft_geom::Vec2) -> bool {
         }
     }
     w != 0
+}
+
+/// A Group node's rows (C4.3): its exposed parameters (`comp.param.<id>` and its stopwatch, like
+/// any other row, through `comp.setParam` / `comp.toggleAnimation` on the exposed id), or a note
+/// when it has none.
+fn group_rows(
+    ui: &mut egui::Ui,
+    elems: &mut crate::panels::transition_controls::Elems,
+    (changes, toggles): (&mut Vec<serde_json::Value>, &mut Vec<serde_json::Value>),
+    comp: u64,
+    node: &CompNode,
+    at: filmcraft_time::Tick,
+    size: (f64, f64),
+) {
+    if !matches!(node.kind, CompKind::Group { .. }) {
+        return;
+    }
+    let rows = comp::group::exposed_params(node);
+    if rows.is_empty() {
+        ui.label(egui::RichText::new(crate::i18n::t("No settings on this group yet: open it and expose an inner node's setting.")).weak());
+        return;
+    }
+    egui::Grid::new("comp-group-grid").num_columns(3).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        for (e, pd) in rows {
+            let (value, animated) = match node.params.get(&e.id) {
+                Some(p) => (p.value_at(at), p.is_animated()),
+                None => (pd.default.clone(), false),
+            };
+            let (sw, resp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::click());
+            if pd.animatable {
+                let col = if animated { ui.visuals().selection.stroke.color } else { ui.visuals().weak_text_color() };
+                crate::icons::paint(ui.painter(), sw, crate::icons::Icon::Stopwatch, col);
+                elems.push((format!("comp.param.{}.stopwatch", e.id), sw, "Toggle animation".into()));
+                if resp.on_hover_text(crate::i18n::t("Toggle animation")).clicked() {
+                    toggles.push(json!({"comp": comp, "node": node.id, "param": e.id, "time": at.0}));
+                }
+            }
+            ui.label(if e.label.is_empty() { crate::i18n::t(pd.label).to_string() } else { e.label.clone() });
+            let eid = format!("comp.param.{}", e.id);
+            if let Some(c) = crate::panels::transition_controls::param_widget(ui, elems, &eid, &e.id, &pd.kind, &value, size) {
+                let mut p = json!({"comp": comp, "node": node.id, "param": e.id, "value": c["params"][e.id.as_str()].clone()});
+                if animated {
+                    p["time"] = json!(at.0);
+                }
+                changes.push(p);
+            }
+            ui.end_row();
+        }
+    });
 }

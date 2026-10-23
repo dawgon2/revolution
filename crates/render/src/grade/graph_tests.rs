@@ -439,7 +439,7 @@ fn key_out_reads_the_denoised_input() {
     let nr = super::denoise(&n1, Tick(0), 1.0).unwrap();
     nr.apply(&mut den);
     let den = chain(&den, gs().encode_ops());
-    let key = vec![key_op(&n1.qualifier_at(Tick(0)).unwrap(), gs().is_hdr())];
+    let key = vec![key_op(&n1, &n1.qualifier_at(Tick(0)).unwrap(), gs().is_hdr())];
     let k = |src: &Image| -> Vec<f32> {
         src.px
             .chunks(4)
@@ -535,4 +535,218 @@ fn partial_splitters_and_disabled_nodes() {
     let g = Grade { output: Some(2), ..graph(vec![split, GradeNode::new(2)], vec![e(SOURCE, 0, 1, 0), e(1, 1, 2, 0)]) };
     let out = run(&g, &img);
     assert!(out.px.chunks(4).all(|p| (p[0] - p[1]).abs() < 1e-6 && (p[2] - p[1]).abs() < 1e-6));
+}
+
+/// A 32×16 Magic Mask matte: the top half inside (one matte texel per pixel, so exact).
+fn top_half() -> Arc<crate::matte::BitmapMatte> {
+    let alpha = (0..32 * 16).map(|i| if i / 32 < 8 { 255 } else { 0 }).collect();
+    Arc::new(crate::matte::BitmapMatte::new(32, 16, alpha).expect("matte"))
+}
+
+fn compile_with(g: &Grade, mattes: &NodeMattes) -> Vec<FxOp> {
+    compile_fx(g, Tick(0), WS, GradeCtx { mattes: Some(mattes), ..GradeCtx::default() }, 32, 16)
+}
+
+fn run_with(g: &Grade, img: &Image, mattes: &NodeMattes) -> Image {
+    let mut out = img.clone();
+    for op in compile_with(g, mattes) {
+        op.apply(&mut out);
+    }
+    out
+}
+
+fn program_with(g: &Grade, mattes: &NodeMattes) -> Arc<GradeProgram> {
+    match compile_with(g, mattes).as_slice() {
+        [FxOp::GradeGraph(p)] => Arc::clone(p),
+        other => panic!("not a graph program: {other:?}"),
+    }
+}
+
+/// `top`'s rows 0…7 and `bottom`'s rows 8…15.
+fn splice(top: &Image, bottom: &Image) -> Image {
+    let mut out = top.clone();
+    let half = 32 * 8 * 4;
+    out.px[half..].copy_from_slice(&bottom.px[half..]);
+    out
+}
+
+/// Fork G3: a branch node with a Magic Mask matte changes only inside it, for that branch; the
+/// other branch is untouched by it. A node with a Magic Mask but no matte this frame (an empty
+/// one) changes nothing; a matte for a node that isn't in the graph changes nothing; the node's
+/// windows and its matte intersect.
+#[test]
+fn a_magic_mask_matte_limits_its_node_in_a_parallel_grade() {
+    let img = picture();
+    let edges = vec![e(SOURCE, 0, 1, 0), e(SOURCE, 0, 2, 0), e(1, 0, 3, 0), e(2, 0, 3, 1)];
+    let bg = node(2, &[("saturation", f(0.2))]);
+    let g = graph(vec![gain(1, 0.3), bg.clone(), kind(3, NodeKind::ParallelMixer, &[])], edges.clone());
+    let neutral = graph(vec![GradeNode::new(1), bg, kind(3, NodeKind::ParallelMixer, &[])], edges);
+    let mattes = NodeMattes([(1, top_half())].into_iter().collect());
+    let (whole, without) = (run(&g, &img), run(&neutral, &img));
+    assert!((whole.px[0] - without.px[0]).abs() > 1e-3, "the branch node changes the picture");
+    close(&run_with(&g, &img, &mattes), &splice(&whole, &without), 1e-5);
+    // the matte reaches the node's own steps (inside its `Fx` pass)
+    let p = program_with(&g, &mattes);
+    assert!(p.passes.iter().any(|q| matches!(q, GradePass::Fx { ops, .. } if matches!(ops.as_slice(), [FxOp::MaskedBy { .. }]))));
+    // an empty matte (a Magic Mask with nothing tracked this frame): no change from the node
+    let empty = NodeMattes([(1, Arc::new(crate::matte::BitmapMatte::new(1, 1, vec![0]).expect("matte")))].into_iter().collect());
+    close(&run_with(&g, &img, &empty), &without, 1e-6);
+    // a matte for another node: the graph as without mattes
+    let other = NodeMattes([(99, top_half())].into_iter().collect());
+    assert_eq!(program_with(&g, &other), program(&g));
+    assert_eq!(run_with(&g, &img, &other).px, whole.px);
+    // windows and the matte intersect: a window on the left half and the top-half matte
+    let mut win = gain(1, 0.3);
+    let mut m = Mask::new("w", MaskPath::rect(0.0, 0.0, 16.0, 16.0));
+    m.feather = Param::new(f(0.0));
+    win.windows.push(m);
+    let mut gw = g.clone();
+    gw.nodes[0] = win;
+    let both = run_with(&gw, &img, &mattes);
+    let at = |im: &Image, x: usize, y: usize| im.px[(y * 32 + x) * 4];
+    assert!((at(&both, 4, 2) - at(&whole, 4, 2)).abs() < 1e-5, "inside both: graded");
+    for (x, y) in [(28, 2), (4, 12), (28, 12)] {
+        assert!((at(&both, x, y) - at(&without, x, y)).abs() < 1e-5, "({x}, {y}) outside one: untouched");
+    }
+}
+
+/// Fork G3: the outside node with Magic Mask mattes. A matte on the inside node limits its key
+/// output too, so the outside node corrects the complement of qualifier × matte; a matte on the
+/// outside node itself limits the outside node (once, not twice).
+#[test]
+fn outside_node_with_magic_mask_mattes() {
+    let outside = node(2, &[("saturation", f(0.0)), ("gain", ParamValue::Color([0.0, 0.0, 0.0, -0.3])), ("key.invert", f(1.0))]);
+    let mut g = graph(vec![skin(1), outside.clone()], vec![]);
+    g.make_explicit();
+    g.edges.push(e(1, 1, 2, 1));
+    let img = picture();
+    let skin_only = run(&graph(vec![skin(1)], vec![]), &img);
+    let mut plain_outside = outside;
+    plain_outside.params.remove("key.invert");
+    let outside_only = run(&graph(vec![plain_outside], vec![]), &img);
+    let px = |im: &Image, x: usize, y: usize| im.px.get((y * 32 + x) * 4..(y * 32 + x) * 4 + 3).map(<[f32]>::to_vec).unwrap_or_default();
+    let same = |a: &Image, b: &Image, x: usize, y: usize, what: &str| {
+        let (p, q) = (px(a, x, y), px(b, x, y));
+        assert!(p.iter().zip(&q).all(|(u, v)| (u - v).abs() < 1e-4), "{what} at ({x}, {y}): {p:?} vs {q:?}");
+    };
+    // the inside (skin) node limited to the top half: its key output is too
+    let inside_matte = NodeMattes([(1, top_half())].into_iter().collect());
+    assert!(program_with(&g, &inside_matte).passes.iter().any(|q| matches!(q, GradePass::Matte { bitmap: Some(_), .. })));
+    let got = run_with(&g, &img, &inside_matte);
+    same(&got, &skin_only, 4, 2, "red, inside the matte: skin");
+    same(&got, &outside_only, 4, 12, "red, outside the matte: the outside node");
+    same(&got, &outside_only, 28, 2, "blue: the outside node");
+    same(&got, &outside_only, 28, 12, "blue: the outside node");
+    // the outside node limited to the top half
+    let outside_matte = NodeMattes([(2, top_half())].into_iter().collect());
+    // (its correction runs everywhere and is limited once, by its key: no `MaskedBy` inside)
+    let p = program_with(&g, &outside_matte);
+    assert!(!p.passes.iter().any(|q| matches!(q, GradePass::Fx { ops, .. } if ops.iter().any(|o| matches!(o, FxOp::MaskedBy { .. })))));
+    let got = run_with(&g, &img, &outside_matte);
+    same(&got, &skin_only, 4, 2, "red: skin");
+    same(&got, &skin_only, 4, 12, "red: skin");
+    same(&got, &outside_only, 28, 2, "blue, inside the matte: the outside node");
+    same(&got, &img, 28, 12, "blue, outside the matte: untouched");
+    // a half-covering matte mixes the correction in once (on the grading signal), not squared
+    let half = NodeMattes([(2, Arc::new(crate::matte::BitmapMatte::new(1, 1, vec![128]).expect("matte")))].into_iter().collect());
+    let got = chain(&run_with(&g, &img, &half), gs().encode_ops());
+    let c = 128.0 / 255.0;
+    let (o, s) = (chain(&outside_only, gs().encode_ops()), chain(&img, gs().encode_ops()));
+    let want: Vec<f32> = px(&s, 28, 2).iter().zip(px(&o, 28, 2)).map(|(a, b)| a + (b - a) * c).collect();
+    assert!(px(&got, 28, 2).iter().zip(&want).all(|(u, v)| (u - v).abs() < 1e-4), "{:?} vs {want:?}", px(&got, 28, 2));
+    // an empty matte on the inside node: its key is empty, so the outside node corrects it all
+    let empty = NodeMattes([(1, Arc::new(crate::matte::BitmapMatte::new(1, 1, vec![0]).expect("matte")))].into_iter().collect());
+    close(&run_with(&g, &img, &empty), &outside_only, 1e-4);
+}
+
+/// Fork G3: a layer mixer whose upper input node has a matte: that layer's correction only
+/// inside it (outside, the layer is the ungraded picture over the lower one).
+#[test]
+fn a_magic_mask_matte_limits_a_layer_mixer_input() {
+    let img = picture();
+    let edges = vec![e(SOURCE, 0, 1, 0), e(SOURCE, 0, 2, 0), e(1, 0, 3, 0), e(2, 0, 3, 1)];
+    let lower = node(1, &[("lift", ParamValue::Color([0.05, 0.0, 0.1, 0.0]))]);
+    let mixer = kind(3, NodeKind::LayerMixer, &[("layer.mode.1", f(2.0)), ("layer.opacity.1", f(0.7))]);
+    let g = graph(vec![lower.clone(), node(2, &[("gain", ParamValue::Color([0.3, -0.2, 0.0, 0.1]))]), mixer.clone()], edges.clone());
+    let neutral = graph(vec![lower, GradeNode::new(2), mixer], edges);
+    let (whole, without) = (run(&g, &img), run(&neutral, &img));
+    assert!((whole.px[0] - without.px[0]).abs() > 1e-3, "the upper node changes the picture");
+    let mattes = NodeMattes([(2, top_half())].into_iter().collect());
+    close(&run_with(&g, &img, &mattes), &splice(&whole, &without), 1e-5);
+}
+
+/// Fork G3: a node with noise reduction and a key input, limited by a matte: its correction
+/// (noise reduction included) is mixed in by the matte once, not squared.
+#[test]
+fn a_denoised_keyed_node_applies_its_matte_once() {
+    let img = noisy();
+    let params = [("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.4])), ("nr.luma", f(0.6)), ("nr.chroma", f(0.4))];
+    let mut g = graph(vec![GradeNode::new(1), node(2, &params)], vec![]);
+    g.make_explicit();
+    g.edges.push(e(1, 1, 2, 1));
+    let half = NodeMattes([(2, Arc::new(crate::matte::BitmapMatte::new(1, 1, vec![128]).expect("matte")))].into_iter().collect());
+    let p = program_with(&g, &half);
+    assert!(p.passes.iter().any(|q| matches!(q, GradePass::KeyIn { .. })));
+    assert!(p.passes.iter().any(|q| matches!(q, GradePass::Matte { bitmap: Some(_), .. })));
+    let got = chain(&run_with(&g, &img, &half), gs().encode_ops());
+    // (the first node keys everything: the full correction is the node on its own)
+    let full = chain(&run(&graph(vec![node(2, &params)], vec![]), &img), gs().encode_ops());
+    let src = chain(&img, gs().encode_ops());
+    assert!((full.px[0] - src.px[0]).abs() > 1e-3, "the node changes the picture");
+    let c = 128.0 / 255.0;
+    let mut want = src.clone();
+    want.px.iter_mut().zip(&full.px).for_each(|(s, f)| *s += (f - *s) * c);
+    close(&got, &want, 1e-4);
+}
+
+/// Fork G3: mattes keyed to nodes that aren't correction nodes (a mixer, a splitter, a
+/// combiner) are ignored: the program is the one without mattes.
+#[test]
+fn mattes_on_mixers_and_splitters_are_ignored() {
+    let parallel = graph(
+        vec![gain(1, 0.3), node(2, &[("saturation", f(0.2))]), kind(3, NodeKind::ParallelMixer, &[])],
+        vec![e(SOURCE, 0, 1, 0), e(SOURCE, 0, 2, 0), e(1, 0, 3, 0), e(2, 0, 3, 1)],
+    );
+    let split = graph(
+        vec![kind(1, NodeKind::Splitter, &[]), kind(2, NodeKind::Combiner, &[]), gain(3, 0.5)],
+        vec![e(SOURCE, 0, 1, 0), e(1, 0, 2, 0), e(1, 1, 3, 0), e(3, 0, 2, 1), e(1, 2, 2, 2)],
+    );
+    for (g, ids) in [(parallel, vec![3]), (split, vec![1, 2])] {
+        let mattes = NodeMattes(ids.into_iter().map(|id| (id, top_half())).collect());
+        assert_eq!(program_with(&g, &mattes), program(&g));
+    }
+}
+
+/// Fork G4.3: a node keyed by a 3D qualifier picked on the red.
+fn skin3d(id: u64) -> GradeNode {
+    let mut n = node(id, &[("gain", ParamValue::Color([0.0, 0.0, 0.0, 0.5])), ("qual.on", f(1.0))]);
+    let mut q = filmcraft_project::qual3d::Qual3d::default();
+    q.add_samples(&[super::qual3d_point(WS, RED).unwrap_or_default()], false);
+    n.qual3d = Some(q);
+    n
+}
+
+/// Fork G4.3: the 3D qualifier's key feeds the same key path as the HSL one: an outside node
+/// corrects exactly its complement.
+#[test]
+fn outside_node_of_a_3d_qualifier_corrects_the_complement() {
+    let outside = node(2, &[("saturation", f(0.0)), ("gain", ParamValue::Color([0.0, 0.0, 0.0, -0.3])), ("key.invert", f(1.0))]);
+    let mut g = graph(vec![skin3d(1), outside.clone()], vec![]);
+    g.make_explicit();
+    g.edges.push(e(1, 1, 2, 1));
+    let p = program(&g);
+    assert!(p.passes.iter().any(|q| matches!(q, GradePass::Matte { key: Some(k), .. } if matches!(k.first(), Some(ColorOp::Key3d(_))))));
+    let img = picture();
+    let got = run(&g, &img);
+    let skin_only = run(&graph(vec![skin3d(1)], vec![]), &img);
+    let mut plain_outside = outside;
+    plain_outside.params.remove("key.invert");
+    let outside_only = run(&graph(vec![plain_outside], vec![]), &img);
+    let at = |img: &Image, x: usize| img.px.get(x * 4..x * 4 + 3).map(<[f32]>::to_vec).unwrap_or_default();
+    assert!(at(&skin_only, 4).iter().zip(at(&img, 4)).any(|(a, b)| (a - b).abs() > 1e-3), "the red is corrected");
+    assert!(at(&skin_only, 28).iter().zip(at(&img, 28)).all(|(a, b)| (a - b).abs() < 1e-5), "the blue is not");
+    for x in [4, 28] {
+        let want = if x == 4 { at(&skin_only, x) } else { at(&outside_only, x) };
+        assert!(at(&got, x).iter().zip(&want).all(|(a, b)| (a - b).abs() < 1e-4), "{x}: {:?} vs {want:?}", at(&got, x));
+    }
 }

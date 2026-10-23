@@ -111,14 +111,15 @@ pub(crate) fn combine_echoes(layers: &[(Image, f32)], op: u32) -> Image {
 
 // ------------------------------------------------------------------ analysis helpers
 
-fn gray_of(img: &Image) -> Gray {
+/// None when the image's pixel buffer doesn't match its size.
+fn gray_of(img: &Image) -> Option<Gray> {
     let px = img.px.par_chunks(4).map(|p| filmcraft_color::linear_to_srgb(luma([p[0], p[1], p[2]]).clamp(0.0, 1.0))).collect();
     Gray::new(img.w, img.h, px)
 }
 
 /// Saliency centroid (0..1 of the frame): gradient energy weighted, mildly centre-biased.
 pub(crate) fn saliency_centroid(img: &Image) -> (f32, f32) {
-    let g = gray_of(img);
+    let Some(g) = gray_of(img) else { return (0.5, 0.5) };
     let (w, h) = (g.w, g.h);
     let (mut sx, mut sy, mut sw) = (0.0f64, 0.0f64, 0.0f64);
     for y in 1..h.saturating_sub(1) {
@@ -258,7 +259,7 @@ pub fn stabilizer_path(env: &dyn FxEnv, now: f64, method: TrackMethod, detailed:
             if filmcraft_media::cancel::cancelled() {
                 return None;
             }
-            env.source_frame(k as f64 / fps - now, scale).map(|f| Prepared::new(gray_of(&f)))
+            env.source_frame(k as f64 / fps - now, scale).and_then(|f| gray_of(&f)).map(Prepared::new)
         })
         .collect();
     if filmcraft_media::cancel::cancelled() {

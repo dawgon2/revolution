@@ -439,6 +439,12 @@ fn voice_isolation_limit_follows_the_noise_level() {
     assert_eq!(limit(&at(8.0, None)), 100.0, "heavy noise: no limit");
     assert_eq!(limit(&at(20.0, None)), 100.0, "medium noise: no limit");
     assert_eq!(limit(&at(30.0, None)), 12.0, "mild noise");
+    // fork A3.7 (FORK-PLAN §1a.125 (b)): the limit follows the level smoothly (shared with the
+    // rendered models in `filmcraft_voice::gate`), lightest just before Voice Isolation turns off
+    let l26 = limit(&at(26.0, None));
+    assert!(l26 > 12.0 && l26 < 18.0, "{l26}");
+    assert_eq!(limit(&at(38.0, None)), 6.0, "nearly clean: lightest");
+    assert!(!suggest(&at(40.0, None), true, None, -1.0).repair.isolate.on, "clean from 40 dB");
     // clean: Voice Isolation stays off and the limit at its default
     let clean = suggest(&at(50.0, None), true, None, -1.0);
     assert!(!clean.repair.isolate.on);

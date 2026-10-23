@@ -17,6 +17,9 @@ pub struct PanelsState {
     pub clips: ClipsState,
     /// The Compositor panel (fork C1).
     pub comp: super::comp::CompPanelState,
+    /// The Program monitor's tools for the Compositor's Roto / Paint / Tracker / Planar Tracker
+    /// nodes (fork C3.9).
+    pub comp_viewer: super::comp_viewer::CompViewerState,
     /// The Color page's node canvas view (fork C2).
     pub grade_nodes: crate::widgets::node_canvas::CanvasState,
 }

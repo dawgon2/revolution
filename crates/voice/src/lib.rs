@@ -13,6 +13,10 @@ pub mod dsp;
 #[cfg(feature = "dfn")]
 pub mod effect;
 pub mod fft;
+pub mod gate;
+pub mod kaldi;
+#[cfg(feature = "dfn")]
+pub mod mossformer;
 #[cfg(feature = "dfn")]
 pub mod net;
 #[cfg(feature = "dfn")]

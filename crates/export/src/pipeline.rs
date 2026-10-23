@@ -175,6 +175,7 @@ impl Pipeline {
             // temporal noise reduction (fork 6.7) renders here: every export, and so every
             // render-cache part (they are exports of a segment)
             temporal: true,
+            mattes: settings.mattes,
             ..Default::default()
         };
         let effects = settings.effects.clone();

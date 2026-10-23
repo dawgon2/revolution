@@ -2,8 +2,9 @@
 //! [`GradeProgram`], mirroring C1's [`crate::comp::Program`]. Slots are handed out by liveness
 //! ([`Order::last_use`]) and capped at [`MAX_LIVE_TEXTURES`] (a graph needing more is refused and
 //! renders ungraded). Every pass is existing maths: a correction node's own steps are the serial
-//! grade's ([`super::compile_fx`] for that node), its matte is its qualifier's key times its
-//! windows' coverage, the layer mixer is the Merge blend ([`crate::blend`]).
+//! grade's ([`super::compile_fx`] for that node, limited by its Magic Mask matte as there), its
+//! matte is its qualifier's key times its windows' coverage times its Magic Mask matte (fork G3),
+//! the layer mixer is the Merge blend ([`crate::blend`]).
 //!
 //! The program encodes the grade's input to the grading signal once at its start and decodes its
 //! result once at its end, as the serial chain does, so branches mix on the signal a colourist
@@ -26,6 +27,7 @@ use crate::comp::{MAX_LIVE_TEXTURES, Tex};
 use crate::gpufx::{self, FxOp};
 use crate::image::Image;
 use crate::mask::FlatMask;
+use crate::matte::BitmapMatte;
 
 /// How a key mixer input combines with the inputs before it (`kmix.mode.<i>`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,8 +66,9 @@ pub enum GradePass {
     Fx { tex: Tex, ops: Vec<FxOp> },
     /// `dst` = the key of `src`: `key` (an HSL key; None: everything) with its matte blurred by box
     /// passes of radii `blur` (rows, then columns), inverted, times the coverage of `masks` (the
-    /// node's windows; empty: everywhere). A node's key output.
-    Matte { src: Tex, dst: Tex, key: Option<Arc<[ColorOp]>>, blur: Vec<u32>, invert: bool, masks: Arc<[FlatMask]> },
+    /// node's windows; empty: everywhere), times `bitmap` (the node's Magic Mask matte, fork G3;
+    /// None: everywhere). A node's key output.
+    Matte { src: Tex, dst: Tex, key: Option<Arc<[ColorOp]>>, blur: Vec<u32>, invert: bool, masks: Arc<[FlatMask]>, bitmap: Option<Arc<BitmapMatte>> },
     /// The key `dst` times an incoming key, inverted (when `invert`), × `gain` + `offset`,
     /// clamped to 0…1: a correction node's key input (Resolve's outside node inverts it).
     KeyIn { key: Tex, dst: Tex, invert: bool, gain: f32, offset: f32 },
@@ -457,7 +460,8 @@ fn correction(
     let matte = |b: &mut Builder| -> Result<Tex, GradeProgramError> {
         let dst = b.slots.take()?;
         let (key, blur, invert, masks) = matte_of(node, cx);
-        b.passes.push(GradePass::Matte { src: key_src.unwrap_or(src), dst, key, blur, invert, masks });
+        let bitmap = bitmap_of(node, cx);
+        b.passes.push(GradePass::Matte { src: key_src.unwrap_or(src), dst, key, blur, invert, masks, bitmap });
         if let Some(key) = key_in {
             let (invert, gain, offset) = (node.float_at("key.invert", t) >= 0.5, node.float_at("key.gain", t), node.float_at("key.offset", t));
             b.passes.push(GradePass::KeyIn { key, dst, invert, gain, offset });
@@ -477,13 +481,15 @@ fn correction(
                 tex
             }
             Some(_) => {
-                // the node's correction everywhere, then mixed in by its own key times the key in
+                // the node's correction everywhere, then mixed in by its own key (qualifier ×
+                // windows × Magic Mask matte) times the key in
                 let tex = b.slots.take()?;
                 b.passes.push(GradePass::Copy { src, dst: tex });
                 let mut free = node.clone();
                 free.windows.clear();
                 free.params.remove("qual.on");
-                let ops = serial_steps(parts(vec![&free], t, cx.gs, cx.ctx), t, cx.gs, cx.ctx, cx.w, cx.h, true);
+                let ctx = GradeCtx { mattes: None, ..cx.ctx };
+                let ops = serial_steps(parts(vec![&free], t, cx.gs, ctx), t, cx.gs, ctx, cx.w, cx.h, true);
                 if !ops.is_empty() {
                     b.passes.push(GradePass::Fx { tex, ops });
                 }
@@ -521,7 +527,13 @@ fn matte_of(n: &GradeNode, cx: &NodeCx) -> (Option<Arc<[ColorOp]>>, Vec<u32>, bo
     let Some(q) = n.qualifier_at(cx.t) else { return (None, Vec::new(), false, masks) };
     let sigma = q.blur * QUAL_MAX_BLUR * px_scale;
     let blur = if sigma >= 0.3 { crate::effects::gaussian_boxes(cx.w, cx.h, sigma, sigma).0 } else { Vec::new() };
-    (Some(Arc::from(vec![key_op(&q, cx.gs.is_hdr())])), blur, q.invert, masks)
+    (Some(Arc::from(vec![key_op(n, &q, cx.gs.is_hdr())])), blur, q.invert, masks)
+}
+
+/// A node's Magic Mask matte for this frame (fork G3; None: none, or an invalid one, which the
+/// serial grade ignores too).
+fn bitmap_of(n: &GradeNode, cx: &NodeCx) -> Option<Arc<BitmapMatte>> {
+    cx.ctx.mattes.and_then(|m| m.0.get(&n.id)).filter(|m| m.is_valid()).cloned()
 }
 
 /// Runs a grade program on `input` (working linear light) on the CPU: the oracle of the GPU passes
@@ -547,7 +559,7 @@ pub fn execute_graph_cpu(p: &GradeProgram, input: &Image) -> Image {
                     gpufx::apply_ops(ops, img);
                 }
             }
-            GradePass::Matte { src, dst, key, blur, invert, masks } => {
+            GradePass::Matte { src, dst, key, blur, invert, masks, bitmap } => {
                 let Some(s) = get(&tex, *src) else { continue };
                 let mut m: Vec<f32> =
                     s.px.par_chunks(4)
@@ -570,6 +582,9 @@ pub fn execute_graph_cpu(p: &GradeProgram, input: &Image) -> Image {
                     m.iter_mut().for_each(|v| *v = 1.0 - *v);
                 }
                 if let Some(cov) = crate::mask::coverage(masks, w, h) {
+                    m.iter_mut().zip(cov).for_each(|(v, c)| *v *= c);
+                }
+                if let Some(cov) = bitmap.as_deref().and_then(|b| crate::matte::coverage(b, w, h)) {
                     m.iter_mut().zip(cov).for_each(|(v, c)| *v *= c);
                 }
                 put(&mut tex, *dst, grey(w, h, &m));

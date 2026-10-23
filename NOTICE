@@ -22,3 +22,7 @@ Public-domain film and NASA frames and CC0 music shown in README screenshots (do
 DeepFilterNet / libDF (https://github.com/Rikorose/DeepFilterNet), Copyright (c) Hendrik Schröter —
 MIT OR Apache-2.0. crates/voice (dsp.rs, net.rs, denoise.rs) ports its DeepFilterNet3 signal path
 and network to Rust; the model weights are downloaded at run time, never bundled.
+SAM 2 / SAM 2.1 (https://github.com/facebookresearch/sam2), Copyright (c) Meta Platforms, Inc. and
+affiliates — Apache-2.0. crates/mask (src/sam2/) and crates/gpu (src/sam2.rs) port its Hiera image
+encoder, memory attention, memory encoder, prompt encoder / mask decoder and video predictor to
+Rust (CPU via candle, GPU via WGSL); the checkpoints are installed separately, never bundled.

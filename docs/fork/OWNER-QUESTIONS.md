@@ -1117,3 +1117,74 @@ sha256 go in §7 once the file is there. Alternative if you prefer: a different 
 `models/mobilesam/mobile_sam.pt` from https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt,
 40 728 226 bytes, sha256 `6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f` (zip-format torch
 checkpoint). `/models/` added to `.git/info/exclude`; never committed.
+
+## Q64 (2026-10-21, A3.7): download of the stronger voice model is owed by the owner (FYI, never blocks)
+
+The A3.7 spike (FORK-PLAN §7, 2026-10-21) picked **MossFormer2_SE_48K** (Alibaba ClearerVoice-Studio; Apache-2.0
+code on GitHub and Apache-2.0 weights on the official Hugging Face card; 48 kHz; 221.6 MB; published VoiceBank+DEMAND
+48 kHz PESQ 3.15 vs DeepFilterNet 3.03, SI-SDR 19.36 vs 15.71). It fits §1a.120 (one model, permissive, ≤ 1.5 GB,
+official release). The scheduled run did **not** download it: a download needs your yes in a live chat (the same
+check that stopped Q63), and the approval in §1a.120 lives in a plan file, which an unattended run can't count as
+your yes. To unblock, either say "you can download it" in a live session, or run:
+
+    mkdir -p ~/Projects/filmcraft-main/models/mossformer2-se-48k && curl -L -o ~/Projects/filmcraft-main/models/mossformer2-se-48k/last_best_checkpoint.pt https://huggingface.co/alibabasglab/MossFormer2_SE_48K/resolve/main/last_best_checkpoint.pt
+
+Expected 221 552 019 bytes, sha256 `03692b9f773bbd6bb43b9c5a41f96b1e28affd66e13796b7bec66ad3d8b227c6`.
+**Meanwhile:** A3.7's port work that needs no weights (the Kaldi fbank + deltas front end, the MossFormer2 block
+structure from the published code, our own A/B harness) can proceed; the weight-dependent steps wait. Backup if
+the port fails: DPDFNet8_48khz_hr (Apache-2.0, 15 MB, a small change to our DFN code, better DNSMOS but worse PESQ
+than DFN3).
+
+**Resolved 2026-10-21 ~16:20 EDT:** owner, live: "yes". Downloaded
+`models/mossformer2-se-48k/last_best_checkpoint.pt` from
+https://huggingface.co/alibabasglab/MossFormer2_SE_48K/resolve/main/last_best_checkpoint.pt, 221 552 019 bytes, sha256
+`03692b9f773bbd6bb43b9c5a41f96b1e28affd66e13796b7bec66ad3d8b227c6` (matches the published LFS id); git-excluded,
+never committed. A3.7 steps 2–4 can proceed.
+
+## Q65 (2026-10-21, G3.4): how SAM 2.1 picks among its candidate masks while tracking (FYI, choice made, never blocks)
+
+SAM 2 proposes up to three masks per frame (e.g. whole person / torso / shirt) with a predicted quality score.
+**Official rule:** take the highest predicted score. On our harness that makes tracking flip from the whole figure to
+one of its parts and stay there (Base+ gradient 0.627 mean IoU, Large twins 0.668). **Chosen for now:** predicted
+score plus overlap with the previous frame's mask, which keeps the subject the user picked (Large: gradient 0.991,
+busy 0.988, crowd 0.989, twins 0.855 mean). **Reverse:** `Selection::Reference` in `filmcraft_mask::sam2` restores
+the official rule (one setting). Known limit either way: when the subject fully overlaps an identical-looking person,
+SAM 2 returns both as one object (twins worst frame 0.33); a fix stroke helps the frames after it.
+
+## Q66 (2026-10-21, G3.4): which tracker Magic Mask uses by default (FYI, provisional choice, never blocks)
+
+Synthetic harness, 240 frames, mean IoU (worst frame): MobileSAM + colour-guided follow: crowd 0.976 (0.953), shadow
+0.909 (0.816), twins 0.685; SAM 2.1 Large: crowd 0.989 (0.979), twins 0.855 (0.33), but **shadow 0.494 (0.000)**: when
+the subject walks into a shadow band the SAM 2 mask shrinks to the still-bright part and is lost. **Chosen for now:**
+`Auto` = MobileSAM + follow (passes every scene); SAM 2.1 Better (Large) / Faster (Base+) selectable explicitly.
+Diagnosis of the shadow failure is under way; once SAM 2 passes shadow, `Auto` switches to Better on a discrete GPU
+(the owner's aim, §1a.124). **Reverse:** the `Auto` mapping in `crates/engine/src/magic_mask_sam2.rs` (marked
+"provisional (owner question Q66)").
+
+**Resolved 2026-10-21 (same run):** SAM 2.1 Large now passes shadow (0.982 / 0.845) after re-anchoring (re-decode
+on the frame alone with the prompted frame's box when the tracked mask shrinks below 85 % of it), and beats MobileSAM
++ follow on every harness scene, so `Auto` = Better (Large) on a discrete GPU, MobileSAM otherwise / as the fallback.
+
+## Q67 (2026-10-22, C3.5a): the tracker guide page isn't in Ask the Coach's keyword index yet (FYI, provisional choice, never blocks)
+
+**What happened.** C3 added `docs/guide/compositor-trackers.md` (Tracker and Planar Tracker nodes). The AI assistant
+(AI3 retrieval) reads it. Adding it to the keyword Grading Coach's index (`GUIDE_PAGES` in
+`crates/engine/src/coach_ask.rs`) makes three of the thirty beginner questions ("undo a node", "more contrast",
+"doesn't match") land on the wrong section, although the broader coach eval improves (114 → 115).
+
+**Options.** (a) Leave it out of the keyword index for now: the AI assistant answers tracker questions, the keyword
+Coach doesn't. (b) Index it and change the keyword ranking (e.g. weight the page's own topic words) so the beginner
+questions stay right: a ranking change that touches every answer, so it needs its own eval run. (c) Index it and accept
+three worse beginner answers (not allowed by the coach floors).
+
+**Choice for now: (a)**, with the reason in the code comment next to the list. No guide text was reworded to get around
+the eval (standing rule). **To reverse:** add the page to `GUIDE_PAGES` and fix the ranking (b) in a later coach step;
+planned for C3's guide pass if the ranking work is small.
+
+**Resolved 2026-10-22 by C3.11 (option b).** Root cause: BM25 with weak length normalisation (b = 0.5) let long
+sections (the compositor pages' 300–600-word sections) pile up everyday words ("node", "undo", "match") and flip
+near-ties among the short colour sections; the merged C3.9 + C3.10 corpus already broke one beginner question even
+without the tracker page. b is now 0.6 (both indexes), `compositor-trackers.md` is in the keyword index, and the
+assistant's retrieval also follows the guide's `see:` links past its first five sections. Beginner questions 29 / 30
+(was 28, 27 on the merged corpus), coach eval 115, AI-POOL coach 149, recall@5 1055, creative coverage 581. No guide
+text was reworded; one pool label (`pool-k1k-planar`) gained the Planar Tracker node's own section as an `alt`.

@@ -24,11 +24,14 @@
 //! premultiplied working image: a masked effect is `lerp(original, effected, coverage)` per
 //! channel, an opacity mask scales the layer's premultiplied pixels.
 
-use filmcraft_project::{EffectInstance, Mask, MaskMode, MaskShape};
+use filmcraft_geom::Vec2;
+use filmcraft_project::{EffectInstance, Mask, MaskMode, MaskPath, MaskShape};
 use filmcraft_time::Tick;
 use rayon::prelude::*;
 
+use crate::comp::track::{TrackWarp, jacobian, path_through};
 use crate::image::Image;
+use crate::track::Homography;
 
 /// Flattening tolerance in working pixels.
 pub const FLATTEN_TOLERANCE: f64 = 0.05;
@@ -53,15 +56,24 @@ pub fn prepare(masks: &[Mask], t: Tick, px_scale: f32) -> Vec<FlatMask> {
         .iter()
         .filter(|m| m.mode != MaskMode::None)
         .map(|m| {
+            // a planar-tracked mask (fork G4.4) is drawn through its plane's motion at `t`; its
+            // feather and expansion follow the plane's local scale at the shape's centre
+            let path = m.path_at(t);
+            let warp = planar_warp(m, t);
+            let k = warp.as_ref().map_or(1.0, |h| local_scale(h, centroid(&path)));
             // hostile values (damaged project, absurd px_scale) never reach the coverage math:
             // feather / expansion are finite and capped, non-finite points are dropped
-            let feather = finite_or_zero(m.feather.f64_at(t) * s).clamp(0.0, MAX_FEATHER);
-            let expansion = finite_or_zero(m.expansion.f64_at(t) * s).clamp(-MAX_EXPANSION, MAX_EXPANSION) as f32;
+            let feather = finite_or_zero(m.feather.f64_at(t) * s * k).clamp(0.0, MAX_FEATHER);
+            let expansion = finite_or_zero(m.expansion.f64_at(t) * s * k).clamp(-MAX_EXPANSION, MAX_EXPANSION) as f32;
             let (pts, feather) = if m.shape == MaskShape::Linear {
                 let (a, b) = m.linear_points_at(t).unwrap_or_default();
+                let (a, b) = match warp.as_ref().map(|h| (ahead(h, a), ahead(h, b))) {
+                    Some((Some(a), Some(b))) => (a, b),
+                    _ => (a, b),
+                };
                 linear_polygon([a.x * s, a.y * s], [b.x * s, b.y * s], feather, expansion)
             } else {
-                (flatten_path(&m.path_at(t), s), feather as f32)
+                (flatten_path(&path, s, warp.as_ref().map(|h| (h, k))), feather as f32)
             };
             let pts: Vec<[f32; 2]> = pts.into_iter().filter(|p| p[0].is_finite() && p[1].is_finite()).collect();
             let opacity = finite_or_zero(m.opacity.f64_at(t) / 100.0).clamp(0.0, 1.0) as f32;
@@ -86,11 +98,13 @@ fn finite_or_zero(v: f64) -> f64 {
 /// A path flattened to working pixels, at most [`MAX_MASK_POINTS`] points (coarser chords when a
 /// huge path would exceed that, truncated as a last resort). Paths with more than
 /// [`MAX_PATH_VERTICES`] vertices are treated as empty.
-fn flatten_path(path: &filmcraft_project::MaskPath, s: f64) -> Vec<[f32; 2]> {
+fn flatten_path(path: &filmcraft_project::MaskPath, s: f64, warp: Option<(&Homography, f64)>) -> Vec<[f32; 2]> {
     if path.len() > MAX_PATH_VERTICES || !s.is_finite() {
         return Vec::new();
     }
-    let mut tol = finite_or_zero(FLATTEN_TOLERANCE / s.max(1e-6)).max(1e-4);
+    // (a warp that magnifies by k needs k times finer chords before it)
+    let k = warp.map_or(1.0, |w| w.1);
+    let mut tol = finite_or_zero(FLATTEN_TOLERANCE / (s * k).max(1e-6)).max(1e-4);
     let mut flat = path.flatten(tol);
     if flat.len() > MAX_MASK_POINTS {
         // chord count scales with 1/√tol
@@ -98,7 +112,60 @@ fn flatten_path(path: &filmcraft_project::MaskPath, s: f64) -> Vec<[f32; 2]> {
         tol *= r * r * 1.1;
         flat = path.flatten(tol);
     }
-    flat.into_iter().take(MAX_MASK_POINTS).map(|p| [(p.x * s) as f32, (p.y * s) as f32]).collect()
+    flat.truncate(MAX_MASK_POINTS);
+    // the flattened outline through the plane's map: exact for every curve. A point sent to
+    // infinity (the plane seen edge-on) keeps the whole outline where it was drawn.
+    if let Some((h, _)) = warp
+        && let Some(moved) = flat.iter().map(|p| ahead(h, *p)).collect::<Option<Vec<_>>>()
+    {
+        flat = moved;
+    }
+    flat.into_iter().map(|p| [(p.x * s) as f32, (p.y * s) as f32]).collect()
+}
+
+/// `p` through `h` when it stays in front of the plane's horizon (`w` > 0, as everywhere on
+/// the reference frame, where the map is the identity); None where the plane would fold over.
+pub fn ahead(h: &Homography, p: Vec2) -> Option<Vec2> {
+    let w = h.m[6] * p.x + h.m[7] * p.y + h.m[8];
+    if w > 1e-6 { h.apply(p) } else { None }
+}
+
+/// The planar track's map from the mask's reference frame to clip pixels at `t` (fork G4.4);
+/// None when the mask follows no planar track (or it has no usable key).
+pub fn planar_warp(m: &Mask, t: Tick) -> Option<Homography> {
+    m.planar.as_ref()?.homography_at(t).map(|m| Homography { m })
+}
+
+/// The mask's path at `t` where it is seen: through its planar track (Bézier control points
+/// mapped as points, [`path_through`]: for handles and outlines on the monitor; coverage maps
+/// the flattened outline instead, exactly). Where the coverage keeps the drawn outline (some of
+/// it folds past the plane's horizon, see [`flatten_path`]) so does this, so the monitor's
+/// handles and the render agree.
+pub fn shown_path(m: &Mask, t: Tick) -> MaskPath {
+    let path = m.path_at(t);
+    let Some(h) = planar_warp(m, t) else { return path };
+    if path.len() > MAX_PATH_VERTICES {
+        return path;
+    }
+    let tol = (FLATTEN_TOLERANCE * 10.0 / local_scale(&h, centroid(&path))).max(1e-3);
+    if path.flatten(tol).iter().all(|p| ahead(&h, *p).is_some()) { path_through(&path, TrackWarp::Projective(h)) } else { path }
+}
+
+/// √|det J| of `h` at `p`: how much it scales lengths there (1 where it can't be measured;
+/// within 10⁻³ ..= 10³).
+pub fn local_scale(h: &Homography, p: Vec2) -> f64 {
+    let k = jacobian(h, p).map_or(1.0, |j| j.determinant().abs().sqrt());
+    if k.is_finite() && k > 0.0 { k.clamp(1e-3, 1e3) } else { 1.0 }
+}
+
+/// Mean of a path's vertex positions (finite ones; the origin for none).
+fn centroid(path: &MaskPath) -> Vec2 {
+    let pts: Vec<Vec2> = path.vertices.iter().map(|v| v.p).filter(|p| p.x.is_finite() && p.y.is_finite()).collect();
+    if pts.is_empty() {
+        return Vec2::ZERO;
+    }
+    let sum = pts.iter().fold(Vec2::ZERO, |a, p| a + *p);
+    sum * (1.0 / pts.len() as f64)
 }
 
 /// Largest ramp width (working px) of a linear mask; hostile point distances are capped here.
@@ -589,5 +656,54 @@ mod tests {
         m.path.value = filmcraft_project::ParamValue::Path(MaskPath::default());
         m.inverted = false;
         assert!(effect_coverage(&[m], Tick(0), 1.0, 8, 8).unwrap().iter().all(|v| *v == 0.0));
+    }
+
+    /// Fork G4.4: a planar-tracked mask is flattened in its reference frame and every outline
+    /// point is mapped through the plane's homography (exact for curves); hostile tracks fall
+    /// back to the drawn outline.
+    #[test]
+    fn planar_tracked_mask_maps_its_flattened_outline() {
+        use filmcraft_project::{PlanarKey, PlanarTrack};
+        let h = [1.1, 0.05, 12.0, -0.03, 0.95, 7.0, 0.0008, -0.0005, 1.0];
+        let path = MaskPath::ellipse(Vec2::new(50.0, 40.0), Vec2::new(20.0, 12.0));
+        let mut m = mask(path.clone(), 4.0);
+        let plain = prepare(std::slice::from_ref(&m), Tick(0), 2.0);
+        m.planar = Some(PlanarTrack { reference: Tick(0), keys: vec![PlanarKey { time: Tick(0), h }] });
+        let warped = prepare(std::slice::from_ref(&m), Tick(0), 2.0);
+        let hm = Homography { m: h };
+        // every warped point lies on the true projected ellipse: un-project, check the implicit form
+        let inv = hm.inverse().unwrap();
+        let mut worst = 0.0f64;
+        for p in &warped[0].pts {
+            let o = inv.apply(Vec2::new(p[0] as f64 / 2.0, p[1] as f64 / 2.0)).unwrap();
+            let r = (((o.x - 50.0) / 20.0).powi(2) + ((o.y - 40.0) / 12.0).powi(2)).sqrt();
+            worst = worst.max((r - 1.0).abs() * 20.0);
+        }
+        assert!(worst < 0.05, "{worst} px off the projected ellipse");
+        assert!(warped[0].pts.len() >= plain[0].pts.len());
+        let k = local_scale(&hm, Vec2::new(50.0, 40.0)) as f32;
+        assert!((warped[0].feather - plain[0].feather * k).abs() < 1e-4 && (k - 1.0).abs() > 0.005, "{k}");
+        // the shown path's vertices are the vertices mapped
+        let shown = shown_path(&m, Tick(0));
+        for (a, b) in shown.vertices.iter().zip(&path.vertices) {
+            assert!((a.p - hm.apply(b.p).unwrap()).length() < 1e-9);
+        }
+        // a plane sent to infinity at the outline keeps the drawn outline; never panics
+        m.planar = Some(PlanarTrack { reference: Tick(0), keys: vec![PlanarKey { time: Tick(0), h: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, -0.02, 0.0, 1.0] }] });
+        let edge = prepare(std::slice::from_ref(&m), Tick(0), 2.0);
+        assert_eq!(edge[0].pts, plain[0].pts);
+        // …and so do its handles on the monitor (the overlay agrees with the render)
+        assert_eq!(shown_path(&m, Tick(0)), path);
+        // a linear window's two points move with the plane
+        let mut lin = Mask::linear("g", Vec2::new(10.0, 10.0), Vec2::new(10.0, 50.0));
+        // (a vertical gradient moved down by 5 rows)
+        lin.planar = Some(PlanarTrack { reference: Tick(0), keys: vec![PlanarKey { time: Tick(0), h: [1.0, 0.0, 0.0, 0.0, 1.0, 5.0, 0.0, 0.0, 1.0] }] });
+        let a = effect_coverage(std::slice::from_ref(&lin), Tick(0), 1.0, 64, 64).unwrap();
+        lin.planar = None;
+        let b = effect_coverage(std::slice::from_ref(&lin), Tick(0), 1.0, 64, 64).unwrap();
+        for y in 0..56 {
+            assert!((a[(y + 5) * 64 + 3] - b[y * 64 + 3]).abs() < 1e-4, "row {y}");
+        }
+        assert!(a.iter().zip(&b).any(|(p, q)| (p - q).abs() > 0.05));
     }
 }

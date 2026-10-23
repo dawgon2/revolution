@@ -3350,6 +3350,8 @@
 	Track Select Backward Tool	Herramienta Seleccionar pista hacia atrás
 	Track Select Forward Tool	Herramienta Seleccionar pista hacia delante
 	Track Selected Mask	Seguir la máscara seleccionada
+	Track Window (Planar)	Seguir la ventana (planar)
+	Clear Planar Track	Borrar el seguimiento planar
 	Trim Next Edit to Playhead	Recortar la siguiente edición hasta el cabezal
 	Trim Previous Edit to Playhead	Recortar la edición anterior hasta el cabezal
 	Trimming	Recorte
@@ -3661,6 +3663,11 @@
 	No windows: the node acts on the whole picture.	Sin ventanas: el nodo actúa sobre toda la imagen.
 	Track backward	Seguir hacia atrás
 	Track forward	Seguir hacia delante
+	Planar	Plano
+	Stop planar tracking (keeps what was tracked)	Detener el seguimiento planar (conserva lo seguido)
+	Track the window as a plane (a sign, a screen, a wall), both ways from the playhead	Seguir la ventana como un plano (un cartel, una pantalla, una pared), en ambos sentidos desde el cabezal
+	Clear the planar track (the window stays where it is seen)	Borrar el seguimiento planar (la ventana se queda donde se ve)
+	✕ planar	✕ planar
 	Delete window	Eliminar ventana
 	Select a window to drag its shape on the Program monitor.	Selecciona una ventana para arrastrar su forma en el monitor de Programa.
 	NR luma	RR luma
@@ -4037,7 +4044,30 @@
 	Mask Feather	Calado de máscara
 	Mask Opacity	Opacidad de máscara
 	Mask Expansion	Expansión de máscara
+	Tracker	Rastreador
+	Planar Tracker	Rastreador planar
+	Operation	Operación
+	Match Move	Igualar movimiento
+	Stabilise	Estabilizar
+	Smooth radius	Radio de suavizado
+	Set to playhead	Usar el cabezal de reproducción
+	Analyse forward	Analizar hacia delante
+	Analyse backward	Analizar hacia atrás
+	Clear track	Borrar seguimiento
+	Add point	Añadir punto
+	Plane corners	Esquinas del plano
 	View Node	Ver nodo
+	Roto	Rotoscopia
+	Paint	Pintura
+	Add shape	Añadir forma
+	Strokes	Trazos
+	Reveal	Revelar
+	Erase	Borrar
+	Move up	Subir
+	Move down	Bajar
+	Single frame	Un fotograma
+	Follow tracker	Seguir rastreador
+	Missing tracker	Rastreador ausente
 	Also ask the assistant (runs on this computer)	Preguntar también al asistente de IA (se ejecuta en este equipo)
 	The assistant is reading the guide…	El asistente de IA está leyendo la guía…
 	Assistant	Asistente de IA
@@ -4325,3 +4355,156 @@
 	Send to	Enviar a
 	New Bus	Nuevo bus
 	Attenuation Limit	Límite de atenuación
+# Color page ▸ Magic Mask (fork G3.3)
+	Magic Mask	Máscara mágica
+	Add Magic Mask	Añadir máscara mágica
+	Remove Magic Mask	Quitar máscara mágica
+	Remove the Magic Mask from this node	Quitar la máscara mágica de este nodo
+	A whole person: the strokes pick which one	Una persona entera: los trazos eligen cuál
+	Whatever the strokes cover	Lo que cubran los trazos
+	Object	Objeto
+	Person	Persona
+	Clean Black	Limpiar negro
+	Clean White	Limpiar blanco
+	Clear Frame	Borrar fotograma
+	Remove the strokes drawn on this frame	Quitar los trazos dibujados en este fotograma
+	Remove every stroke of this mask	Quitar todos los trazos de esta máscara
+	click or drag on the Program picture · Esc ends	haz clic o arrastra sobre la imagen de Programa · Esc termina
+	Click the subject in the Program picture, or drag a box round it (Alt-click: leave out)	Haz clic en el sujeto en la imagen de Programa o arrastra un recuadro a su alrededor (Alt+clic: excluir)
+	Click what the mask should leave out	Haz clic en lo que la máscara debe excluir
+	Follow the subject both ways from the strokes	Seguir al sujeto en ambos sentidos desde los trazos
+	Follow the subject from the strokes towards the end of the clip	Seguir al sujeto desde los trazos hacia el final del clip
+	Follow the subject from the strokes towards the start of the clip	Seguir al sujeto desde los trazos hacia el inicio del clip
+	Grow / Shrink	Ampliar / reducir
+	Magic Mask finds the subject you mark with a few strokes and follows it through the shot, so this node only changes that.	La máscara mágica encuentra el sujeto que marcas con unos trazos y lo sigue a lo largo del plano, para que este nodo solo cambie eso.
+	{n} strokes, {here} on this frame	{n} trazos, {here} en este fotograma
+	Show matte	Mostrar mate
+	Tint the tracked matte over the Program picture (frames not tracked yet show none)	Teñir el mate seguido sobre la imagen de Programa (los fotogramas aún no seguidos no muestran ninguno)
+	Stop tracking (the frames done so far are kept)	Detener el seguimiento (se conservan los fotogramas ya hechos)
+	Stroke +	Trazo +
+	Stroke −	Trazo −
+	The strokes changed while tracking: track again	Los trazos cambiaron durante el seguimiento: vuelve a seguir
+	Track	Seguir
+	Track Backward	Seguir hacia atrás
+	Track Forward	Seguir hacia delante
+	Tracked {frames} frames ({segmented} by the model, {reused} already done)	{frames} fotogramas seguidos ({segmented} por el modelo, {reused} ya hechos)
+	Tracking… {done} of {frames} frames	Siguiendo… {done} de {frames} fotogramas
+	Tracking failed	El seguimiento falló
+	Tracking progress	Progreso del seguimiento
+	Tracking stopped	Seguimiento detenido
+	Waiting to track…	Esperando para seguir…
+	Clear Magic Mask Strokes	Borrar los trazos de la máscara mágica
+	Magic Mask Stroke	Trazo de máscara mágica
+	Refine Magic Mask	Refinar máscara mágica
+	Track Magic Mask	Seguir máscara mágica
+	Better	Mejor
+	Faster	Más rápido
+	Auto ({model})	Automático ({model})
+	Model: {model}	Modelo: {model}
+	Better on a discrete GPU when SAM 2.1 Large is installed, else MobileSAM	Mejor en una GPU dedicada si SAM 2.1 Large está instalado; si no, MobileSAM
+	SAM 2.1 Large on the GPU: the most accurate, about 0.9 s a frame	SAM 2.1 Large en la GPU: el más preciso, unos 0,9 s por fotograma
+	SAM 2.1 Base+ on the GPU: a little less accurate, a little quicker	SAM 2.1 Base+ en la GPU: algo menos preciso y algo más rápido
+	MobileSAM, frame by frame: quickest and needs no discrete GPU, but weaker when similar objects touch	MobileSAM, fotograma a fotograma: el más rápido y no necesita GPU dedicada, pero falla más cuando se tocan objetos parecidos
+	Render Voice Isolation	Procesar aislamiento de voz
+# Compositor viewer tools (fork C3.9)
+	Bézier	Bézier
+	B-Spline	B-spline
+	Click to add control points. Click the first point (or press Enter) to close.	Haz clic para añadir puntos de control. Haz clic en el primer punto (o pulsa Intro) para cerrar.
+	Click to add points, drag to curve them. Click the first point (or press Enter) to close.	Haz clic para añadir puntos y arrastra para curvarlos. Haz clic en el primer punto (o pulsa Intro) para cerrar.
+	Click to add region points around the flat area. Click the first point (or press Enter) to close.	Haz clic para añadir puntos de la región alrededor de la zona plana. Haz clic en el primer punto (o pulsa Intro) para cerrar.
+	Drag a point, its pattern box corner or its search box corner. Ctrl-click (Cmd-click) adds a point.	Arrastra un punto, la esquina de su recuadro de patrón o la de su recuadro de búsqueda. Ctrl+clic (Cmd+clic) añade un punto.
+	Drag points, handles or a shape. Alt-drag a point moves its shape; Alt-click makes it smooth or sharp.	Arrastra puntos, tiradores o una forma. Alt+arrastrar un punto mueve su forma; Alt+clic lo hace suave o anguloso.
+	Drag the region's points, or the plane's four corners at the reference frame.	Arrastra los puntos de la región o las cuatro esquinas del plano en el fotograma de referencia.
+	Drag to paint; each drag is one stroke.	Arrastra para pintar; cada arrastre es un trazo.
+	Drag to paint; each drag is one stroke. Alt-click picks where Clone copies from.	Arrastra para pintar; cada arrastre es un trazo. Alt+clic elige de dónde copia Clonar.
+	Draw region	Dibujar región
+	Hardness	Dureza
+	This frame only	Solo este fotograma
+	The tracker this shape follows has no usable motion at this frame, so the shape can't be edited here.	El tracker que sigue esta forma no tiene un movimiento utilizable en este fotograma, así que la forma no se puede editar aquí.
+	Open Group	Abrir grupo
+	Expose	Exponer
+	Exposed	Expuesto
+	That node is not a group.	Ese nodo no es un grupo.
+	No settings on this group yet: open it and expose an inner node's setting.	Este grupo aún no tiene ajustes: ábrelo y expón un ajuste de un nodo interior.
+	Group Input	Entrada de grupo
+	Put on the group	Poner en el grupo
+	This node has no settings that can be exposed.	Este nodo no tiene ajustes que se puedan exponer.
+	Expression	Expresión
+	e.g. time * 10	p. ej., time * 10
+	Save Selection as Template…	Guardar selección como plantilla…
+	Insert Template	Insertar plantilla
+	Reading templates…	Leyendo plantillas…
+	No saved templates	No hay plantillas guardadas
+	Delete Template…	Eliminar plantilla…
+	Delete Template	Eliminar plantilla
+	Inserted template “{name}” ({count} nodes)	Plantilla «{name}» insertada ({count} nodos)
+	{count} Media In node(s) that read a clip will be left out; templates can't hold your clips.	Se omitirán {count} nodos Media In que leen un clip; las plantillas no pueden guardar tus clips.
+	Media Out is never saved in a template.	Media Out nunca se guarda en una plantilla.
+	{count} selected node(s)	{count} nodos seleccionados
+	Replace a template with this name	Reemplazar una plantilla con este nombre
+	Delete the template “{name}”? Comps that used it keep their nodes.	¿Eliminar la plantilla «{name}»? Las composiciones que la usaron conservan sus nodos.
+	Deleted template “{name}”	Plantilla «{name}» eliminada
+
+# Color page ▸ HDR zone wheels (fork G4.2); zone names in the `hdr` context
+	HDR zone wheels: exposure in stops from mid grey, per tonal zone	Ruedas HDR por zonas: exposición en pasos desde el gris medio, por zona tonal
+	Reset All	Restablecer todo
+	Reset every HDR wheel	Restablecer todas las ruedas HDR
+	Where the zone ends, in stops from mid grey	Dónde termina la zona, en pasos desde el gris medio
+	How soft the zone's edge is, in stops	Suavidad del borde de la zona, en pasos
+	Exposure in stops	Exposición en pasos
+	How much each zone acts at each brightness (stops from mid grey)	Cuánto actúa cada zona en cada brillo (pasos desde el gris medio)
+hdr	Global	Global
+hdr	Black	Negro
+hdr	Dark	Oscuro
+hdr	Shadow	Sombras
+hdr	Light	Luces
+hdr	Highlight	Altas luces
+hdr	Specular	Especular
+	Reset HDR Wheels	Restablecer ruedas HDR
+
+# Color page ▸ Warper (fork G4.1)
+	Warper	Deformador
+	Hue-Sat	Tono-Sat
+	Chroma-Luma	Croma-Luma
+	Move colours round the hue circle and in or out in saturation	Mueve los colores alrededor del círculo de tono y hacia dentro o fuera en saturación
+	Change the saturation and brightness of colours by how saturated and bright they are	Cambia la saturación y el brillo de los colores según lo saturados y brillantes que sean
+	Remove the colour warper from this node	Quitar el deformador de color de este nodo
+	Remove Colour Warper	Quitar deformador de color
+	Colour warper	Deformador de color
+	Point	Punto
+	Pin	Fijar
+	A pinned point stays put when its neighbours move	Un punto fijado no se mueve cuando se mueven sus vecinos
+	Reset Point	Restablecer punto
+	Reset Mesh	Restablecer malla
+	Sat	Sat
+	Falloff range	Alcance de la atenuación
+	Preserve luma	Conservar luma
+	Hue-Sat moves keep each colour's brightness	Los movimientos de Tono-Sat conservan el brillo de cada color
+	Hue columns	Columnas de tono
+	Saturation rings	Anillos de saturación
+	Chroma columns	Columnas de croma
+	Luma rows	Filas de luma
+	A new grid size starts this mesh afresh	Un nuevo tamaño de cuadrícula reinicia esta malla
+	Set Colour Warper	Ajustar deformador de color
+	Move Warper Point	Mover punto del deformador
+	Pin Warper Point	Fijar punto del deformador
+	Reset Colour Warper	Restablecer deformador de color
+# Color page ▸ Qualifier ▸ 3D (fork G4.3)
+	HSL	HSL
+	3D	3D
+	Select by hue, saturation and luminance ranges	Selecciona por rangos de tono, saturación y luminancia
+	Select the colours you paint strokes over in the Program picture	Selecciona los colores sobre los que pintas trazos en la imagen del Programa
+	Include	Incluir
+	Exclude	Excluir
+	Drag over colours in the Program picture to select them (Alt: exclude)	Arrastra sobre colores en la imagen del Programa para seleccionarlos (Alt: excluir)
+	Drag over colours in the Program picture to leave them out	Arrastra sobre colores en la imagen del Programa para dejarlos fuera
+	drag over the Program picture · Esc cancels	arrastra sobre la imagen del Programa · Esc cancela
+	colours picked	colores elegidos
+	left out	excluidos
+	Despill	Eliminar derrame
+	Clear Include	Borrar inclusión
+	Clear Exclude	Borrar exclusión
+	Add 3D Qualifier Stroke	Añadir trazo al cualificador 3D
+	Set 3D Qualifier	Ajustar cualificador 3D
+	Clear 3D Qualifier	Borrar cualificador 3D
+	Pulls the picked colour's tint out of what the node corrects; use with Invert for green or blue screen spill	Quita el tinte del color elegido de lo que corrige el nodo; úsalo con Invertir para el derrame de pantalla verde o azul

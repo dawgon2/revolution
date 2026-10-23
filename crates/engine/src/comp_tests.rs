@@ -436,3 +436,251 @@ fn set_masks_merges_one_gesture_into_one_undo_step() {
     s.execute("comp.setMasks", json!({"comp": id, "node": node, "masks": mask(5.0)})).unwrap();
     assert_eq!(s.history.undo.len(), depth + 3);
 }
+
+// -- C3.5b: Roto and Paint nodes ---------------------------------------------------------------
+
+fn comp_node(s: &Session, comp: u64, node: u64) -> filmcraft_project::comp::CompNode {
+    let Some(ItemKind::Comp(c)) = s.project.item(ItemId(comp)).map(|i| &i.kind) else { panic!("comp") };
+    c.node(node).unwrap().clone()
+}
+
+fn roto(s: &Session, comp: u64, node: u64) -> filmcraft_project::roto::Roto {
+    match comp_node(s, comp, node).kind {
+        CompKind::Roto { roto, .. } => roto,
+        k => panic!("not roto: {k:?}"),
+    }
+}
+
+fn paint(s: &Session, comp: u64, node: u64) -> filmcraft_project::paint::Paint {
+    match comp_node(s, comp, node).kind {
+        CompKind::Paint { paint } => paint,
+        k => panic!("not paint: {k:?}"),
+    }
+}
+
+/// Each command one undo step; per-point feather through the path JSON; hostile params refused.
+#[test]
+fn roto_commands_edit_shapes_as_undo_steps_and_refuse_hostile_params() {
+    let mut s = demo();
+    let c = s.execute("comp.new", json!({"width": 640, "height": 360})).unwrap()["comp"].as_u64().unwrap();
+    let r = add(&mut s, c, json!({"kind": "roto"}));
+    let depth = s.history.undo.len();
+    let i = s.execute("comp.roto.addShape", json!({"comp": c, "node": r})).unwrap()["shape"].as_u64().unwrap();
+    assert_eq!(i, 0);
+    assert_eq!(roto(&s, c, r).shapes[0].name, "Shape 1");
+    assert_eq!(roto(&s, c, r).shapes[0].path_at(Tick(0)).len(), 4, "the default ellipse");
+    let path = json!([
+        {"p": [10, 10], "feather_in": 2, "feather_out": 6},
+        {"p": [100, 10], "featherIn": 1},
+        {"p": [100, 100]},
+        [10, 100]
+    ]);
+    let j = s
+        .execute("comp.roto.addShape", json!({"comp": c, "node": r, "path": path, "kind": "bSpline", "mode": "subtract", "feather": 3.0, "time": 0}))
+        .unwrap()["shape"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(j, 1);
+    let sh = roto(&s, c, r).shapes[1].clone();
+    assert_eq!(sh.kind, filmcraft_project::roto::RotoKind::BSpline);
+    assert_eq!(sh.mode, filmcraft_project::roto::RotoMode::Subtract);
+    assert_eq!(sh.feather_at(Tick(0)), 3.0);
+    let v = sh.path_at(Tick(0)).vertices;
+    assert_eq!((v[0].feather_in, v[0].feather_out, v[1].feather_in), (2.0, 6.0, 1.0));
+    assert!(sh.is_animated());
+    s.execute("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 1, "time": 1000, "path": [[0, 0], [50, 0], [50, 50], [0, 50]]})).unwrap();
+    let sh = roto(&s, c, r).shapes[1].clone();
+    assert_eq!(sh.shape.keyframes.len(), 2);
+    assert_eq!(sh.path_at(Tick(1000)).vertices[1].p, filmcraft_geom::Vec2::new(50.0, 0.0));
+    // the whole roto and the output
+    let mut whole = roto(&s, c, r);
+    whole.shapes[0].inverted = true;
+    s.execute("comp.setRoto", json!({"comp": c, "node": r, "roto": whole, "output": "matte"})).unwrap();
+    assert!(matches!(comp_node(&s, c, r).kind, CompKind::Roto { output: filmcraft_project::comp::RotoOutput::Matte, ref roto } if roto.shapes[0].inverted));
+    s.execute("comp.roto.removeShape", json!({"comp": c, "node": r, "shape": 0})).unwrap();
+    assert_eq!(roto(&s, c, r).shapes.len(), 1);
+    assert_eq!(s.history.undo.len(), depth + 5, "one undo step each");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(roto(&s, c, r).shapes.len(), 2);
+
+    let solid = add(&mut s, c, json!({"kind": "solid"}));
+    for (cmd, p) in [
+        ("comp.roto.addShape", json!({"comp": c, "node": solid})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "kind": "nurbs"})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "mode": 3})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "feather": -1.0})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "at": 99})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "at": -1})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "path": "x"})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "path": vec![[0, 0]; filmcraft_project::roto::MAX_POINTS + 1]})),
+        ("comp.roto.addShape", json!({"comp": c, "node": r, "shape": {"shape": 5}})),
+        ("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 9, "time": 0, "path": [[0, 0], [1, 0], [0, 1]]})),
+        ("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 0, "time": 0.5, "path": [[0, 0], [1, 0], [0, 1]]})),
+        ("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 0, "path": [[0, 0], [1, 0], [0, 1]]})),
+        ("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 0, "time": 0})),
+        ("comp.roto.removeShape", json!({"comp": c, "node": r, "shape": 5})),
+        ("comp.roto.removeShape", json!({"comp": c, "node": r, "shape": 1.5})),
+        ("comp.setRoto", json!({"comp": c, "node": r})),
+        ("comp.setRoto", json!({"comp": c, "node": r, "output": "luma"})),
+        ("comp.setRoto", json!({"comp": c, "node": r, "roto": {"shapes": 3}})),
+        ("comp.setRoto", json!({"comp": c, "node": solid, "output": "alpha"})),
+        ("comp.setRoto", json!({"comp": c, "node": r, "roto": {"shapes": vec![json!({}); filmcraft_project::roto::MAX_SHAPES + 1]}})),
+    ] {
+        refused(&mut s, cmd, p);
+    }
+    // hostile numbers inside an accepted shape are cleaned
+    let hostile = json!({"name": "x".repeat(500), "feather": {"value": {"Float": 1e300}}, "opacity": {"value": {"Float": -5.0}}});
+    s.execute("comp.setRoto", json!({"comp": c, "node": r, "roto": {"shapes": [hostile]}})).unwrap();
+    let sh = roto(&s, c, r).shapes[0].clone();
+    assert!(sh.name.chars().count() <= filmcraft_project::roto::MAX_NAME);
+    assert!(sh.feather_at(Tick(0)) <= filmcraft_project::roto::MAX_FEATHER && sh.opacity_at(Tick(0)) == 0.0);
+}
+
+#[test]
+fn paint_commands_add_remove_reorder_strokes_and_refuse_hostile_params() {
+    use filmcraft_project::paint::{MAX_STROKE_POINTS, MAX_STROKES, PaintTool};
+    let mut s = demo();
+    let c = s.execute("comp.new", json!({})).unwrap()["comp"].as_u64().unwrap();
+    let n = add(&mut s, c, json!({"kind": "paint"}));
+    let depth = s.history.undo.len();
+    let stroke =
+        |tool: &str, x: f64| json!({"tool": tool, "points": [{"x": x, "y": 5.0}, {"x": x + 50.0, "y": 5.0, "pressure": 0.5}], "brush": {"size": 12.0}});
+    assert_eq!(s.execute("comp.paint.addStroke", json!({"comp": c, "node": n, "stroke": stroke("color", 0.0)})).unwrap()["stroke"], 0);
+    assert_eq!(s.execute("comp.paint.addStroke", json!({"comp": c, "node": n, "stroke": stroke("erase", 10.0)})).unwrap()["stroke"], 1);
+    assert_eq!(s.execute("comp.paint.addStroke", json!({"comp": c, "node": n, "stroke": stroke("clone", 20.0), "at": 0})).unwrap()["stroke"], 0);
+    let tools = |s: &Session| paint(s, c, n).strokes.iter().map(|x| x.tool).collect::<Vec<_>>();
+    assert_eq!(tools(&s), vec![PaintTool::Clone, PaintTool::Color, PaintTool::Erase]);
+    s.execute("comp.paint.reorder", json!({"comp": c, "node": n, "from": 0, "to": 2})).unwrap();
+    assert_eq!(tools(&s), vec![PaintTool::Color, PaintTool::Erase, PaintTool::Clone]);
+    s.execute("comp.paint.removeStroke", json!({"comp": c, "node": n, "stroke": 1})).unwrap();
+    assert_eq!(tools(&s), vec![PaintTool::Color, PaintTool::Clone]);
+    s.execute("comp.setPaint", json!({"comp": c, "node": n, "paint": {"strokes": [stroke("reveal", 1.0)]}})).unwrap();
+    assert_eq!(tools(&s), vec![PaintTool::Reveal]);
+    assert_eq!(s.history.undo.len(), depth + 6, "one undo step each");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(tools(&s), vec![PaintTool::Color, PaintTool::Clone]);
+
+    let solid = add(&mut s, c, json!({"kind": "solid"}));
+    let long = json!({"points": vec![json!({"x": 0.0, "y": 0.0}); MAX_STROKE_POINTS + 1]});
+    for (cmd, p) in [
+        ("comp.paint.addStroke", json!({"comp": c, "node": solid, "stroke": stroke("color", 0.0)})),
+        ("comp.paint.addStroke", json!({"comp": c, "node": n})),
+        ("comp.paint.addStroke", json!({"comp": c, "node": n, "stroke": {"tool": "smudge"}})),
+        ("comp.paint.addStroke", json!({"comp": c, "node": n, "stroke": stroke("color", 0.0), "at": 50})),
+        ("comp.paint.addStroke", json!({"comp": c, "node": n, "stroke": long})),
+        ("comp.paint.removeStroke", json!({"comp": c, "node": n, "stroke": 7})),
+        ("comp.paint.removeStroke", json!({"comp": c, "node": n})),
+        ("comp.paint.reorder", json!({"comp": c, "node": n, "from": 0, "to": 9})),
+        ("comp.paint.reorder", json!({"comp": c, "node": n, "from": -1, "to": 0})),
+        ("comp.setPaint", json!({"comp": c, "node": n})),
+        ("comp.setPaint", json!({"comp": c, "node": n, "paint": {"strokes": [{"points": 1}]}})),
+        ("comp.setPaint", json!({"comp": c, "node": n, "paint": {"strokes": vec![json!({}); MAX_STROKES + 1]}})),
+    ] {
+        refused(&mut s, cmd, p);
+    }
+    // hostile numbers inside an accepted stroke are cleaned
+    let bad = json!({"points": [{"x": 1e300, "y": 0.0}, {"x": 1.0, "y": 1.0, "pressure": -4.0}], "brush": {"size": 1e9, "spacing": 0.0}, "color": [1e9, 0.0, 0.0, 7.0], "cloneTimeOffset": i64::MAX});
+    s.execute("comp.paint.addStroke", json!({"comp": c, "node": n, "stroke": bad})).unwrap();
+    let st = paint(&s, c, n).strokes.last().unwrap().clone();
+    assert!(st.brush.size <= filmcraft_project::paint::MAX_BRUSH_SIZE && st.brush.spacing >= filmcraft_project::paint::MIN_SPACING);
+    assert!(st.color[3] <= 1.0 && st.points.iter().all(|p| p.x.abs() <= filmcraft_project::paint::MAX_COORD && (0.0..=1.0).contains(&p.pressure)));
+    assert!(st.clone_time_offset.0 < i64::MAX / 2);
+}
+
+/// C3 acceptance: roto shapes (keyframed, per-point feather) and paint strokes survive save / open
+/// through the project file, and the comp renders the same picture after the load.
+#[test]
+fn roto_and_paint_nodes_survive_save_and_open() {
+    let mut s = demo();
+    let dir = std::env::temp_dir().join(format!("fc-roto-paint-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let c = s.execute("comp.new", json!({"width": 320, "height": 180})).unwrap()["comp"].as_u64().unwrap();
+    let solid = add(&mut s, c, json!({"kind": "solid"}));
+    let r = add(&mut s, c, json!({"kind": "roto", "after": solid}));
+    let p = add(&mut s, c, json!({"kind": "paint", "after": r}));
+    connect(&mut s, c, p, 1, 0);
+    s.execute("comp.roto.addShape", json!({"comp": c, "node": r, "path": [{"p": [20, 20], "feather_out": 9}, [200, 20], [200, 150], [20, 150]], "time": 0}))
+        .unwrap();
+    s.execute("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 0, "time": 5000, "path": [[40, 20], [220, 20], [220, 150], [40, 150]]}))
+        .unwrap();
+    s.execute(
+        "comp.paint.addStroke",
+        json!({"comp": c, "node": p, "stroke": {"tool": "color", "color": [0.0, 1.0, 0.0, 1.0], "points": [{"x": 10.0, "y": 90.0}, {"x": 300.0, "y": 90.0}], "duration": {"type": "hold", "from": 0, "to": 9000}}}),
+    )
+    .unwrap();
+    let before = s.project.item(ItemId(c)).unwrap().kind.clone();
+    let ItemKind::Comp(bc) = &before else { panic!("comp") };
+    let ctx = filmcraft_render::comp::CompCtx { t: Tick(100), size: (320, 180), project: None, high_quality: false };
+    let img_before = filmcraft_render::comp::render_cpu(bc, ctx, &filmcraft_render::comp::NoSources);
+    let proj = dir.join("roto.fcproj").to_string_lossy().to_string();
+    s.execute("file.saveAs", json!({"path": proj})).unwrap();
+    s.execute("file.open", json!({"path": proj})).unwrap();
+    let ItemKind::Comp(ac) = &s.project.item(ItemId(c)).unwrap().kind else { panic!("comp after load") };
+    assert_eq!(**ac, **bc, "roto and paint nodes survive save / open");
+    assert!(
+        matches!(&ac.node(r).unwrap().kind, CompKind::Roto { roto, .. } if roto.shapes[0].shape.keyframes.len() == 2 && roto.shapes[0].path_at(Tick(0)).vertices[0].feather_out == 9.0)
+    );
+    let img_after = filmcraft_render::comp::render_cpu(ac, ctx, &filmcraft_render::comp::NoSources);
+    assert_eq!(img_before.px, img_after.px);
+    assert!(img_after.px.iter().any(|v| *v > 0.0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Explain lines for Roto / Paint nodes.
+#[test]
+fn explain_names_roto_and_paint_nodes() {
+    let mut s = demo();
+    let c = s.execute("comp.new", json!({})).unwrap()["comp"].as_u64().unwrap();
+    let solid = add(&mut s, c, json!({"kind": "solid"}));
+    let r = add(&mut s, c, json!({"kind": "roto", "after": solid}));
+    let p = add(&mut s, c, json!({"kind": "paint", "after": r}));
+    connect(&mut s, c, p, 1, 0);
+    connect(&mut s, c, solid, p, 1);
+    let e = s.execute("comp.explain", json!({"comp": c})).unwrap().to_string();
+    assert!(e.contains("passes Solid") && e.contains("no roto shape"), "{e}");
+    assert!(e.contains("paints 0 stroke(s) over Roto") && e.contains("revealing Solid"), "{e}");
+    s.execute("comp.roto.addShape", json!({"comp": c, "node": r})).unwrap();
+    s.execute("comp.setRoto", json!({"comp": c, "node": r, "output": "matte"})).unwrap();
+    let e = s.execute("comp.explain", json!({"comp": c})).unwrap().to_string();
+    assert!(e.contains("shows its 1 roto shape(s) as a white-on-black matte"), "{e}");
+    // C3.10: Clone strokes past the cap of other frames are named
+    assert!(!e.contains("other frames"), "{e}");
+    let tick = filmcraft_time::TICKS_PER_SECOND;
+    let strokes: Vec<_> = (1..=6).map(|k| json!({"tool": "clone", "points": [{"x": 1.0, "y": 1.0}], "cloneTimeOffset": tick * k})).collect();
+    s.execute("comp.setPaint", json!({"comp": c, "node": p, "paint": {"strokes": strokes}})).unwrap();
+    let e = s.execute("comp.explain", json!({"comp": c})).unwrap().to_string();
+    assert!(e.contains("2 Clone stroke(s) here would copy from more than 4 other frames"), "{e}");
+}
+
+/// Review fix guard: an inspector drag (Feather, Size, Opacity) sends one `gesture` for the whole
+/// drag, so `comp.setRoto` / `comp.setPaint` with the same gesture are one undo step; a new
+/// gesture (or none) is a new step.
+#[test]
+fn set_roto_and_set_paint_merge_one_gesture_into_one_undo_step() {
+    let mut s = demo();
+    let c = s.execute("comp.new", json!({"width": 640, "height": 360})).unwrap()["comp"].as_u64().unwrap();
+    let r = add(&mut s, c, json!({"kind": "roto"}));
+    let pn = add(&mut s, c, json!({"kind": "paint"}));
+    s.execute("comp.roto.addShape", json!({"comp": c, "node": r})).unwrap();
+    let depth = s.history.undo.len();
+    for f in [1.0, 2.0, 3.0] {
+        let mut whole = roto(&s, c, r);
+        whole.shapes[0].feather = filmcraft_project::Param::new(ParamValue::Float(f));
+        s.execute("comp.setRoto", json!({"comp": c, "node": r, "roto": whole, "gesture": 7})).unwrap();
+    }
+    assert_eq!(s.history.undo.len(), depth + 1, "one drag, one step");
+    let stroke = json!({"tool": "color", "points": [{"x": 1, "y": 1}, {"x": 9, "y": 9}]});
+    s.execute("comp.paint.addStroke", json!({"comp": c, "node": pn, "stroke": stroke})).unwrap();
+    let depth = s.history.undo.len();
+    for size in [4.0, 8.0] {
+        let mut whole = paint(&s, c, pn);
+        whole.strokes[0].brush.size = size;
+        s.execute("comp.setPaint", json!({"comp": c, "node": pn, "paint": whole, "gesture": 8})).unwrap();
+    }
+    let mut whole = paint(&s, c, pn);
+    whole.strokes[0].brush.size = 12.0;
+    s.execute("comp.setPaint", json!({"comp": c, "node": pn, "paint": whole, "gesture": 9})).unwrap();
+    assert_eq!(s.history.undo.len(), depth + 2, "two drags, two steps");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(paint(&s, c, pn).strokes[0].brush.size, 8.0);
+}

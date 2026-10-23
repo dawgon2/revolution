@@ -577,7 +577,14 @@ fn push_item(
             };
             let mut ops: Option<Vec<FxOp>> = Some(input.clone().into_iter().collect());
             // (grain sizes scale with the working image: `px_scale`)
-            let mut graded = if grades { crate::grade::item_fx(project, item, mt, t, seq.settings.color.working, px_scale, lw, lh) } else { Vec::new() };
+            let mut graded = if grades {
+                // Magic Mask mattes (fork G3.2): tracked in the sequence frame, warped into the layer
+                let to_seq = motion.then_apply(&Affine::scale(1.0 / px_scale as f64, 1.0 / px_scale as f64));
+                let mattes = crate::matte::layer_mattes(project, seq, item, mt, opts.mattes, &to_seq, lw, lh);
+                crate::grade::item_fx(project, item, mt, t, seq.settings.color.working, px_scale, lw, lh, mattes.as_ref())
+            } else {
+                Vec::new()
+            };
             // temporal noise reduction (fork 6.7): the neighbouring source frames, drawn like this
             // one (its signal for an input transform), and their flows; or the op removed
             let to_signal = input.is_some();

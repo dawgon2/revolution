@@ -127,6 +127,10 @@ const CHAIN_MASKED: u32 = 2;
 /// Mask pass codes (`colorops.wgsl` `mask_pass`): mix with the saved image, scale.
 const MASK_MIX: u32 = 3;
 const MASK_SCALE: u32 = 4;
+/// The bitmap matte mix (`fx.wgsl` `matte_mix`, [`FxOp::MaskedBy`]); its step carries the matte.
+const MATTE_MIX: u32 = 5;
+/// The matte's binding in the matte pass's group 1 (`fx.wgsl`; apart from the temporal pass's).
+const MATTE_BINDING: u32 = 13;
 
 type Target = (wgpu::Texture, wgpu::TextureView);
 
@@ -150,6 +154,9 @@ pub(crate) struct FxStage {
     /// The temporal blend (`temporal_accumulate`) and its second bind group's layout.
     temporal: wgpu::ComputePipeline,
     tbgl: wgpu::BindGroupLayout,
+    /// The bitmap matte mix (`matte_mix`) and its second bind group's layout (the matte, `R8Unorm`).
+    matte: wgpu::ComputePipeline,
+    mbgl: wgpu::BindGroupLayout,
     pool: HashMap<(u32, u32), Vec<Target>>,
     used: HashSet<(u32, u32)>,
     /// GPU memory one layer's working textures may take ([`FX_VRAM_BUDGET`]).
@@ -316,6 +323,8 @@ enum Pipe {
     ChainMasked,
     Mask,
     Temporal,
+    /// The bitmap matte mix (`matte_mix`; group 1 holds the matte).
+    Matte,
     /// A user shader effect (its pipeline is the dispatch's `special`).
     User,
     /// A grade graph pass (`fx/graph.wgsl`; its pipeline is the dispatch's `special`).
@@ -444,6 +453,8 @@ struct Step {
     user: Option<Box<filmcraft_render::gpufx::UserOp>>,
     /// A branched grade's program (fork C2): routed by [`FxStage::route_graph`].
     graph: Option<Arc<filmcraft_render::grade::GradeProgram>>,
+    /// The bitmap matte of a [`MATTE_MIX`] pass (fork G3.2).
+    matte: Option<Arc<filmcraft_render::matte::BitmapMatte>>,
 }
 
 fn step(code: u32, i1: [u32; 4], p: &[f32]) -> Step {
@@ -465,6 +476,7 @@ fn step(code: u32, i1: [u32; 4], p: &[f32]) -> Step {
         temporal: None,
         user: None,
         graph: None,
+        matte: None,
     }
 }
 
@@ -598,6 +610,18 @@ fn steps(op: &FxOp) -> Vec<Step> {
             let prog = mask_program(masks);
             let mut mix = step(MASK_MIX, [prog.len() as u32, 0, 0, 0], &[]);
             mix.program = Some(prog);
+            mix.restore = true;
+            out.push(mix);
+        }
+        // (an invalid matte covers nothing: identity, as on the CPU)
+        FxOp::MaskedBy { matte, .. } if !matte.is_valid() => {}
+        FxOp::MaskedBy { ops, matte } => {
+            let mut save = step(0, [0; 4], &[]);
+            save.save = true;
+            out.push(save);
+            out.extend(ops.iter().flat_map(steps));
+            let mut mix = step(MATTE_MIX, [0; 4], &[]);
+            mix.matte = Some(Arc::clone(matte));
             mix.restore = true;
             out.push(mix);
         }
@@ -893,6 +917,20 @@ impl FxStage {
             compilation_options: Default::default(),
             cache: None,
         });
+        let mbgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("fx-matte"), entries: &[tex(MATTE_BINDING)] });
+        let mpl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fx-matte"),
+            bind_group_layouts: &[Some(&bgl), Some(&mbgl)],
+            immediate_size: 0,
+        });
+        let matte = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("fx-matte"),
+            layout: Some(&mpl),
+            module: &shader,
+            entry_point: Some("matte_mix"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let l = device.limits();
         let box3 = (l.max_compute_workgroup_storage_size >= BOX3_SHARED_BYTES && l.max_compute_workgroup_size_x >= BOX3_TILE).then(|| compute("fx_box3"));
         Self {
@@ -908,6 +946,8 @@ impl FxStage {
             source,
             temporal,
             tbgl,
+            matte,
+            mbgl,
             pool: HashMap::new(),
             budget: fx_vram_budget_default(),
             used: HashSet::new(),
@@ -1200,9 +1240,10 @@ impl FxStage {
                     let nbr = self.temporal_neighbours(cx, spec, work)?;
                     work.push(Work::Compute(self.temporal_dispatch(cx, spec, src_v, dst_v, aux, &nbr)?));
                 }
-                None => work.push(Work::Compute(match user {
-                    Some((u, p)) => self.user_dispatch(cx, u, p, src_v, dst_v),
-                    None => self.dispatch(cx, s, src_v, dst_v, aux),
+                None => work.push(Work::Compute(match (user, &s.matte) {
+                    (Some((u, p)), _) => self.user_dispatch(cx, u, p, src_v, dst_v),
+                    (None, Some(m)) => self.matte_dispatch(cx, m, src_v, dst_v, aux)?,
+                    (None, None) => self.dispatch(cx, s, src_v, dst_v, aux),
                 })),
             }
             cur = dst;
@@ -1539,6 +1580,48 @@ impl FxStage {
         Some(Dispatch { pipe: Pipe::Temporal, bg1: Some(bg1), ..base })
     }
 
+    /// The bitmap matte mix: `aux` (the saved image) mixed with `src` (the effected one) by the
+    /// matte's bilinear coverage. None: the matte is invalid or larger than the device's textures.
+    fn matte_dispatch(
+        &self,
+        cx: &RouteCx<'_>,
+        m: &filmcraft_render::matte::BitmapMatte,
+        src: &wgpu::TextureView,
+        dst: &wgpu::TextureView,
+        aux: &wgpu::TextureView,
+    ) -> Option<Dispatch> {
+        let (device, queue) = (cx.device, cx.queue);
+        let max = device.limits().max_texture_dimension_2d;
+        if !m.is_valid() || m.width > max || m.height > max {
+            return None;
+        }
+        let base = self.dispatch(cx, &step(0, [0; 4], &[]), src, dst, aux);
+        let size = wgpu::Extent3d { width: m.width, height: m.height, depth_or_array_layers: 1 };
+        let t = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fx-matte"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            &m.alpha,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(m.width), rows_per_image: Some(m.height) },
+            size,
+        );
+        let view = t.create_view(&Default::default());
+        let bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fx-matte"),
+            layout: &self.mbgl,
+            entries: &[wgpu::BindGroupEntry { binding: MATTE_BINDING, resource: wgpu::BindingResource::TextureView(&view) }],
+        });
+        Some(Dispatch { pipe: Pipe::Matte, bg1: Some(bg1), special: None, ..base })
+    }
+
     /// Record a job (source draws and compute passes, in order) into `enc`.
     pub(crate) fn record(&self, enc: &mut wgpu::CommandEncoder, job: &FxJob) {
         let mut i = 0;
@@ -1591,6 +1674,7 @@ impl FxStage {
                                 Pipe::ChainMasked => &self.chain_masked,
                                 Pipe::Mask => &self.mask,
                                 Pipe::Temporal => &self.temporal,
+                                Pipe::Matte => &self.matte,
                                 // (always have their pipeline in `special`)
                                 Pipe::User | Pipe::Graph => &self.px,
                             },

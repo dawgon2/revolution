@@ -216,11 +216,11 @@ style = "resolve-words"
 
 [[question]]
 id = "pool-c2-qual-3d"
-kind = "gap"
+kind = "tool"
 q = "can I switch the qualifier to 3D or RGB mode?"
-sources = ["color.secondaries.qualifier"]
-must = ["no 3D / RGB / luma-only mode yet: HSL ranges only"]
-must_not = ["invents a qualifier mode switch"]
+sources = ["color.secondaries.qualifier-3d", "color.secondaries.qualifier"]
+must = ["3D yes: the Qualifier tab's 3D switch (grade.qual3d.mode.3d), then paint Include strokes", "no RGB or luma-only mode yet"]
+must_not = ["invents an RGB mode switch"]
 style = "resolve-words"
 
 [[question]]
@@ -308,11 +308,11 @@ style = "pro"
 
 [[question]]
 id = "pool-c2-track-planar"
-kind = "gap"
+kind = "tool"
 q = "is there a planar tracker for windows?"
-sources = ["color.secondaries.tracking"]
-must = ["no planar / 3D tracker yet", "the point tracker: Position, Position + Rotation, Position + Scale + Rotation"]
-must_not = ["invents a planar tracker"]
+sources = ["color.secondaries.planar"]
+must = ["yes: Planar in the window's row of the Windows tab (masks.trackPlanar)", "it follows the surface's tilt (perspective), both ways from the playhead"]
+must_not = ["says there is no planar tracker"]
 style = "resolve-words"
 
 # ---------- keyword-coach format ----------

@@ -2186,9 +2186,11 @@ dependencies = [
  "filmcraft-format",
  "filmcraft-frame",
  "filmcraft-geom",
+ "filmcraft-gpu",
  "filmcraft-interchange",
  "filmcraft-isobmff",
  "filmcraft-llm",
+ "filmcraft-mask",
  "filmcraft-media",
  "filmcraft-mxf",
  "filmcraft-project",
@@ -2395,6 +2397,17 @@ dependencies = [
  "thiserror 2.0.21",
  "tokenizers",
  "wgpu",
+]
+
+[[package]]
+name = "filmcraft-mask"
+version = "0.6.0"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "filmcraft-gpu",
+ "filmcraft-ml",
 ]
 
 [[package]]
@@ -2665,6 +2678,7 @@ dependencies = [
  "filmcraft-gpu",
  "filmcraft-interchange",
  "filmcraft-isobmff",
+ "filmcraft-mask",
  "filmcraft-media",
  "filmcraft-platform",
  "filmcraft-project",

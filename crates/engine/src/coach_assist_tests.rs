@@ -406,7 +406,13 @@ const POOL_GAP_FALSE_MAX: usize = 6;
 /// questions): 10 / 43 hit; the floor follows the gap count.
 ///
 /// 2026-10-20 (RS4): the Cut page shipped, so `pool-s1-cut-page` is a `tool` question now: 9 / 42.
-const POOL_GAP_FLOOR: usize = 9;
+///
+/// 2026-10-22 (G4.4): planar-tracked windows shipped, so `pool-c2-track-planar` is a `tool`
+/// question now: 8 / 41.
+///
+/// 2026-10-22 (G4.3): the 3D qualifier shipped, so `pool-c2-qual-3d` ("3D or RGB mode?") is a
+/// `tool` question now (3D yes, RGB not yet): 7 / 41 with G4.4; the floor follows the gap count.
+const POOL_GAP_FLOOR: usize = 7;
 
 /// Streams a first line, then holds until `open`, then finishes.
 struct Streaming {

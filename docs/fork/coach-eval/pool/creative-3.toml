@@ -65,6 +65,8 @@ kind = "creative"
 family = "phone-screen-replace"
 q = "planar tracker style screen replacement like in resolve fusion?"
 sources = ["tracking.screen", "tracking.what"]
+# G4.4: the planar-tracked windows section describes the planar tracker as well
+alt_sources = { "tracking.what" = ["color.secondaries.planar"] }
 must = ["Corner Pin's Track Surface (tracking.cornerPin) follows a flat surface's perspective change", "set the four corners on one frame, then track forward and backward"]
 must_not = []
 style = "resolve-words"
@@ -151,6 +153,8 @@ kind = "creative"
 family = "billboard-logo-replace"
 q = "a person walks in front of the sign I replaced and the new sign covers them"
 sources = ["tracking.screen", "effects.opacity", "tracking.what"]
+# G4.4: which tracker follows a flat sign is answered by the planar-tracked windows section too
+alt_sources = { "tracking.what" = ["color.secondaries.planar"] }
 must = ["the corner pin's track survives something passing in front of one corner", "the person must be cut back in front: a tracked mask (masks.track) on the insert's Opacity, Inverted around the person, or the original on a track above through a mask"]
 must_not = []
 style = "beginner"

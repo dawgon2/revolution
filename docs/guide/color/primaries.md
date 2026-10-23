@@ -117,6 +117,81 @@ correction differently, so the numbers won't match between the two applications.
 
 Dragging a control is one undo step no matter how long you drag.
 
+## HDR zone wheels
+
+> id: color.primaries.hdr | does: exposure, saturation and balance per tonal zone in stops from mid grey, with zone ranges and falloff | ui: grade.tab.hdr, grade.hdr.wheel.*, grade.hdr.graph, grade.hdr.reset | cmd: grade.setParam, grade.hdr.reset | resolve: HDR palette zone wheels | premiere: none | when: taming a bright sky or lifting deep shadows without moving the mid-tones | see: color.primaries.hdr-steps
+
+**[Resolve-style]**
+
+**Why:** Lift / Gamma / Gain cover three wide, overlapping ranges, so pulling a bright sky down
+also dims faces a little. The HDR wheels work like a camera: each zone is a band of brightness
+measured in **stops** (doublings of light) from mid grey, and each wheel's exposure is in stops
+too. A sky three stops over grey can come down a stop while a face at grey stays put. On
+wide-range camera material in a DaVinci Wide Gamut sequence this is often the more natural tool;
+for a quick SDR fix the four wheels may be faster. Both sit in the same node.
+
+Open the **HDR** tab {ui:grade.tab.hdr} next to **Primaries**. The graph at the top
+{ui:grade.hdr.graph} shows where each zone acts (shadows on the left, highlights on the right,
+the middle line is mid grey; a zone you changed is drawn in the accent colour). Then seven wheels:
+
+| Wheel | Acts on | Default edge |
+|---|---|---|
+| **Global** {ui:grade.hdr.wheel.global} | everything | none |
+| **Black** | the deepest blacks, below its edge | −4 stops |
+| **Dark** | below its edge | −2.5 stops |
+| **Shadow** | below its edge | −1 stop |
+| **Light** | above its edge | +1 stop |
+| **Highlight** | above its edge | +2.5 stops |
+| **Specular** | glints, lamps, the sun | +4.5 stops |
+
+Under each wheel: **Exposure** (stops, ±4) and **Saturation** (1 = unchanged); the six zones also
+have **Range** (where the edge sits) and **Falloff** (how soft the edge is; never 0, so no
+banding). The puck tints the zone without changing its brightness. **Reset All**
+{ui:grade.hdr.reset} clears every wheel.
+
+In an SDR (Rec. 709) sequence display white sits only about 2.5 stops above mid grey, so
+**Specular** rarely has anything to act on and **Highlight** reaches only the brightest part of
+the picture; move their **Range** down if you want them to do more there. Wide-range sequences
+(DaVinci Wide Gamut, PQ, HLG) keep many more stops above grey.
+
+## Steps: bring a bright sky down with the HDR wheels
+
+> id: color.primaries.hdr-steps | does: steps to lower a bright sky with the Highlight zone and refine its range | ui: grade.tab.hdr, grade.hdr.wheel.*, grade.hdr.reset | cmd: grade.setParam | resolve: HDR palette | when: a sky or window is too bright but faces are fine | see: color.primaries.hdr
+
+**[Resolve-style]**
+
+1. Select the node, open **HDR**.
+2. Drag **Highlight** ▸ **Exposure** left (try −0.5 to −1). The sky comes down; faces near mid
+   grey stay.
+3. If bright skin dims too, move **Highlight** ▸ **Range** right (2.5 → 3); if the transition
+   looks abrupt, raise **Falloff**.
+4. Optional: tint the highlights towards blue with the **Highlight** wheel, or lower its
+   **Saturation**.
+5. For lamps or the sun only, use **Specular**: its edge sits higher.
+
+A beginner can go far with **Global** plus one zone; a colourist may set Shadow and Light first,
+then trim Black and Specular. Neither order is wrong: try it, watch the scopes, undo.
+
+## HDR wheels compared with Resolve
+
+> id: color.primaries.hdr-resolve | does: how the HDR zone wheels combine and differ from Resolve's HDR palette; their parameter keys | cmd: grade.setParam, grade.hdr.reset | resolve: HDR palette | when: you come from Resolve or script the wheels | see: color.primaries.hdr
+
+**[Resolve-style]**
+
+Zones nest (a deep shadow is in Black and Shadow at once, and in the zone between): exposures add in stops,
+saturations multiply, balances add. Exposure is a gain on linear light, measured on the working
+gamut's luminance; the zones run after the node's primaries and saturation,
+before its colour warper and curves. The zone layout follows Resolve's HDR palette as its manual describes it; the
+maths is Revolution's own (our default edges and falloffs, mid grey fixed at 18 %), and there is
+no Black Offset, pivot or nit-based zone setting. Equal numbers won't look equal in both
+applications.
+
+Keys for `grade.setParam`: `hdr.<zone>.exposure` / `sat` / `balance` (a wheel `[r, g, b]`) /
+`range` / `falloff`, `<zone>` being `global` (no range or falloff) or a zone's name in lower case
+(`black` … `specular`). `grade.hdr.reset` with `zone` resets one wheel, without it all.
+Automation ids: `grade.hdr.wheel.<zone>` (and `.reset`), `grade.hdr.<zone>.exposure` / `.sat` /
+`.range` / `.falloff`.
+
 ## Commands
 
 > id: color.primaries.commands | does: the grade commands for scripts and agents | cmd: grade.setParam, grade.params, grade.get, grade.toggleAnimation | when: scripting a grade | see: color.primaries.panel

@@ -53,6 +53,11 @@ pub fn kind_label(key: &str) -> &'static str {
         "text" => "Text",
         "solid" => "Solid",
         "gradient" => "Gradient",
+        "roto" => "Roto",
+        "paint" => "Paint",
+        "tracker" => "Tracker",
+        "planarTracker" => "Planar Tracker",
+        "group" => "Group",
         _ => "Node",
     }
 }
@@ -77,7 +82,20 @@ pub fn explain(c: &Comp, project: &Project, t: Tick) -> Explanation {
             };
         }
     };
-    let line = |n: &CompNode| Line { node: n.id, name: node_name(n), text: node_facts(n, project, t, &input).text(0) };
+    let line = |n: &CompNode| {
+        let mut text = node_facts(c, n, project, t, &input).text(0);
+        // C3.10: Clone strokes past the per-pass cap of other frames clone from this frame
+        if let CompKind::Paint { paint } = &n.kind
+            && !n.bypass
+        {
+            let over = filmcraft_render::paint::clone_times(paint, t, c.rate.frame_duration()).1;
+            if over > 0 {
+                let cap = filmcraft_render::paint::MAX_CLONE_TIMES;
+                text.push_str(&format!(" {over} Clone stroke(s) here would copy from more than {cap} other frames, so they copy from this frame instead."));
+            }
+        }
+        Line { node: n.id, name: node_name(n), text }
+    };
     let lines: Vec<Line> = order.iter().filter_map(|id| c.node(*id)).map(line).collect();
     let unused: Vec<Line> = c
         .nodes
@@ -156,6 +174,53 @@ pub enum CompFacts {
         node: String,
         changed: Vec<String>,
     },
+    /// C3.5b. `matte`: shows the shapes' coverage instead of cutting the input.
+    /// C3.7: `following` names the trackers enabled shapes follow (once each); `dangling` counts
+    /// enabled shapes whose tracker is gone (they stay where they were drawn).
+    Roto {
+        node: String,
+        input: String,
+        shapes: usize,
+        matte: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        following: Vec<String>,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        dangling: usize,
+    },
+    /// C3.5b. `reveal`: the second input, when connected.
+    Paint {
+        node: String,
+        input: String,
+        strokes: usize,
+        reveal: Option<String>,
+    },
+    /// `operation`: matchMove, stabilise or cornerPin; `foreground`: what input 1 brings (moved
+    /// and laid over `input` by Match Move / Corner Pin); `analysed`: any point has keyframes.
+    Tracker {
+        node: String,
+        input: String,
+        foreground: Option<String>,
+        operation: String,
+        points: usize,
+        analysed: bool,
+    },
+    PlanarTracker {
+        node: String,
+        input: String,
+        insert: Option<String>,
+        operation: String,
+        analysed: bool,
+    },
+    /// C4.3: a node group / macro. `inputs`: what feeds each of its inputs; `nodes`: how many
+    /// nodes do the work inside (its Group Inputs and Media Out aside); `controls`: the labels of
+    /// its exposed parameters.
+    Group {
+        node: String,
+        inputs: Vec<String>,
+        nodes: usize,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        controls: Vec<String>,
+    },
     /// A switched-off node with an input.
     Bypassed {
         node: String,
@@ -172,22 +237,52 @@ const VARIANTS: usize = 2;
 
 /// The facts of every node of `c` at `t`: the nodes in flow order, then the unused ones. Empty
 /// for a comp that doesn't validate (its summary says why).
+/// One parameter expression of a comp at `t` (C4.5): what it gives, or why it fails (then the
+/// keyframed value is used).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExpressionLine {
+    pub node: NodeId,
+    pub name: String,
+    pub param: String,
+    pub expression: String,
+    pub value: ParamValue,
+    pub error: Option<filmcraft_project::expr::ExprError>,
+}
+
+/// Every parameter expression of `c` at `t`, by node then parameter.
+pub fn expressions(c: &Comp, t: Tick) -> Vec<ExpressionLine> {
+    let frame = c.expr_frame(t);
+    let mut out = Vec::new();
+    for n in &c.nodes {
+        for k in n.params.keys() {
+            let Some(src) = n.expression(k) else { continue };
+            let (value, error) = frame.param_at(n.id, k);
+            out.push(ExpressionLine { node: n.id, name: node_name(n), param: k.clone(), expression: src.to_string(), value, error });
+        }
+    }
+    out
+}
+
 pub fn comp_facts(c: &Comp, project: &Project, t: Tick) -> Vec<CompFacts> {
     let name_of = |id: NodeId| c.node(id).map_or_else(|| format!("node {id}"), node_name);
     let input = |id: NodeId, port: u8| c.edges.iter().find(|e| e.to.node == id && e.to.index == port).map(|e| name_of(e.from.node));
     let Ok(order) = c.validate().map(|o| o.nodes().collect::<Vec<_>>()) else { return Vec::new() };
-    let mut out: Vec<CompFacts> = order.iter().filter_map(|id| c.node(*id)).map(|n| node_facts(n, project, t, &input)).collect();
+    let mut out: Vec<CompFacts> = order.iter().filter_map(|id| c.node(*id)).map(|n| node_facts(c, n, project, t, &input)).collect();
     out.extend(c.nodes.iter().filter(|n| !order.contains(&n.id)).map(|n| CompFacts::Unused { node: node_name(n) }));
     out
 }
 
-fn node_facts(n: &CompNode, project: &Project, t: Tick, input: &dyn Fn(NodeId, u8) -> Option<String>) -> CompFacts {
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+fn node_facts(c: &Comp, n: &CompNode, project: &Project, t: Tick, input: &dyn Fn(NodeId, u8) -> Option<String>) -> CompFacts {
     let node = node_name(n);
     let a = || input(n.id, 0).unwrap_or_else(|| "nothing (no input connected)".to_string());
     if n.bypass && n.kind.inputs() > 0 {
         return CompFacts::Bypassed { node, input: a() };
     }
-    let changed = changed_params(n, t);
+    let changed = changed_params(c, n, t);
     match &n.kind {
         CompKind::MediaIn { source, offset } => {
             let from = match source {
@@ -196,6 +291,7 @@ fn node_facts(n: &CompNode, project: &Project, t: Tick, input: &dyn Fn(NodeId, u
                     None => "a clip that is no longer in the project (it shows nothing)".to_string(),
                 },
                 MediaInSource::Layer { track } => format!("track V{} under the comp clip", track.saturating_add(1)),
+                MediaInSource::GroupInput { index } => format!("input {} of the group it is in", index.saturating_add(1)),
             };
             let later = (offset.0 != 0).then(|| format!("{:.2} s", offset.0 as f64 / TICKS_PER_SECOND as f64));
             CompFacts::MediaIn { node, from, later }
@@ -215,6 +311,62 @@ fn node_facts(n: &CompNode, project: &Project, t: Tick, input: &dyn Fn(NodeId, u
         CompKind::Text { .. } => CompFacts::Text { node },
         CompKind::Solid => CompFacts::Solid { node, changed },
         CompKind::Gradient => CompFacts::Gradient { node, changed },
+        CompKind::Roto { roto, output } => {
+            let (mut following, mut dangling) = (Vec::new(), 0usize);
+            for l in roto.shapes.iter().filter(|s| s.enabled).filter_map(|s| s.track_link.as_ref()) {
+                match filmcraft_render::comp::track::link_target(&l.tracker, |id| c.node(id).map(|x| &x.kind)) {
+                    Some(_) => {
+                        let name = l.tracker.trim().parse::<NodeId>().ok().and_then(|id| c.node(id)).map_or_else(String::new, node_name);
+                        if !following.contains(&name) && following.len() < MAX_PARAMS_LISTED {
+                            following.push(name);
+                        }
+                    }
+                    None => dangling += 1,
+                }
+            }
+            CompFacts::Roto {
+                node,
+                input: a(),
+                shapes: roto.shapes.iter().filter(|s| s.enabled).count(),
+                matte: *output == filmcraft_project::comp::RotoOutput::Matte,
+                following,
+                dangling,
+            }
+        }
+        CompKind::Paint { paint } => CompFacts::Paint { node, input: a(), strokes: paint.strokes.len(), reveal: input(n.id, 1) },
+        CompKind::Tracker { points, operation, .. } => CompFacts::Tracker {
+            node,
+            input: a(),
+            foreground: input(n.id, 1),
+            operation: operation.key().to_string(),
+            points: points.len(),
+            analysed: points.iter().any(|p| !p.track.keyframes.is_empty()),
+        },
+        CompKind::Group { comp: inner, exposed } => CompFacts::Group {
+            node,
+            inputs: (0..n.kind.inputs()).map(|i| input(n.id, i).unwrap_or_else(|| "nothing".to_string())).collect(),
+            // (nested groups' insides too)
+            nodes: inner
+                .all_nodes()
+                .into_iter()
+                .filter(|x| !matches!(x.kind, CompKind::MediaOut | CompKind::MediaIn { source: MediaInSource::GroupInput { .. }, .. }))
+                .count(),
+            controls: exposed
+                .iter()
+                .take(MAX_PARAMS_LISTED)
+                .map(|e| {
+                    let l = if e.label.trim().is_empty() { &e.id } else { &e.label };
+                    l.chars().filter(|c| !c.is_control()).take(MAX_LABEL).collect()
+                })
+                .collect(),
+        },
+        CompKind::PlanarTracker { corners, operation, .. } => CompFacts::PlanarTracker {
+            node,
+            input: a(),
+            insert: input(n.id, 1),
+            operation: operation.key().to_string(),
+            analysed: corners.len() == 4 && corners.iter().all(|c| !c.keyframes.is_empty()),
+        },
     }
 }
 
@@ -233,6 +385,11 @@ impl CompFacts {
             | Self::Text { node }
             | Self::Solid { node, .. }
             | Self::Gradient { node, .. }
+            | Self::Roto { node, .. }
+            | Self::Paint { node, .. }
+            | Self::Tracker { node, .. }
+            | Self::PlanarTracker { node, .. }
+            | Self::Group { node, .. }
             | Self::Bypassed { node, .. }
             | Self::Unused { node } => node,
         }
@@ -252,6 +409,20 @@ impl CompFacts {
 
     /// Phrasing `k` without the node's name (0: the text `comp.explain` shows after the name).
     pub fn text(&self, k: usize) -> String {
+        // C3.7: shapes following trackers add a sentence to the Roto line
+        if let Self::Roto { node, input, shapes, matte, following, dangling } = self
+            && (!following.is_empty() || *dangling > 0)
+        {
+            let base = Self::Roto { node: node.clone(), input: input.clone(), shapes: *shapes, matte: *matte, following: Vec::new(), dangling: 0 }.text(k);
+            let mut out = base;
+            if !following.is_empty() {
+                out.push_str(&format!(" Its shapes follow the motion {} measured.", following.join(", ")));
+            }
+            if *dangling > 0 {
+                out.push_str(&format!(" {dangling} shape(s) follow a tracker that is gone, so they stay where they were drawn."));
+            }
+            return out;
+        }
         let with = |changed: &[String]| if changed.is_empty() { String::new() } else { format!(" ({})", changed.join(", ")) };
         match self {
             Self::MediaIn { from, later, .. } => {
@@ -316,6 +487,86 @@ impl CompFacts {
                 let w = with(changed);
                 if k == 0 { format!("is a gradient between two colours{w}.") } else { format!("blends two colours in a gradient{w}.") }
             }
+            Self::Roto { shapes: 0, matte: true, .. } => {
+                if k == 0 {
+                    "is a roto matte with no shapes, so it is black.".to_string()
+                } else {
+                    "shows an empty roto matte (black).".to_string()
+                }
+            }
+            Self::Roto { input, shapes: 0, .. } => {
+                if k == 0 {
+                    format!("passes {input} through unchanged (no roto shape is on).")
+                } else {
+                    format!("leaves {input} as it is (no roto shape is on).")
+                }
+            }
+            Self::Roto { shapes, matte: true, .. } => {
+                if k == 0 {
+                    format!("shows its {shapes} roto shape(s) as a white-on-black matte.")
+                } else {
+                    format!("draws a black and white matte of its {shapes} roto shape(s).")
+                }
+            }
+            Self::Roto { input, shapes, .. } => {
+                if k == 0 {
+                    format!("keeps only the parts of {input} inside its {shapes} roto shape(s).")
+                } else {
+                    format!("cuts {input} out along its {shapes} roto shape(s).")
+                }
+            }
+            Self::Paint { input, strokes, reveal, .. } => {
+                let r = reveal.as_ref().map_or(String::new(), |r| format!(", revealing {r} where a stroke uses Reveal"));
+                if k == 0 { format!("paints {strokes} stroke(s) over {input}{r}.") } else { format!("draws {strokes} brush stroke(s) on {input}{r}.") }
+            }
+            Self::Tracker { input, analysed: false, points, .. } => {
+                if k == 0 {
+                    format!("tracks {points} point(s) in {input} but hasn't been analysed yet, so it passes the picture through.")
+                } else {
+                    format!("has {points} point(s) to track in {input}; until they are analysed the picture passes through.")
+                }
+            }
+            Self::Tracker { input, foreground, operation, points, .. } => {
+                let target = foreground.as_deref().unwrap_or(input);
+                match (operation.as_str(), k) {
+                    ("stabilise", 0) => format!("steadies {input} with {points} tracked point(s)."),
+                    ("stabilise", _) => format!("cancels the motion of {input} using {points} tracked point(s)."),
+                    ("cornerPin", 0) => format!("pins the corners of {target} to four points tracked in {input}."),
+                    ("cornerPin", _) => format!("corner-pins {target} to four points tracked in {input}."),
+                    (_, 0) if foreground.is_some() => format!("moves {target} with {points} point(s) tracked in {input} and lays it over {input}."),
+                    (_, _) if foreground.is_some() => format!("makes {target} follow {points} point(s) tracked in {input}, over {input}."),
+                    (_, 0) => format!("moves {input} with {points} tracked point(s)."),
+                    (_, _) => format!("makes {input} follow {points} tracked point(s)."),
+                }
+            }
+            Self::PlanarTracker { input, analysed: false, .. } => {
+                if k == 0 {
+                    format!("tracks a plane in {input} but hasn't been analysed yet, so it passes the picture through.")
+                } else {
+                    format!("has a plane to track in {input}; until it is analysed the picture passes through.")
+                }
+            }
+            Self::PlanarTracker { input, insert, operation, .. } => {
+                let target = insert.as_deref().unwrap_or(input);
+                let over = if insert.is_some() { format!(" over {input}") } else { String::new() };
+                match (operation.as_str(), k) {
+                    ("stabilise", 0) => format!("steadies {input} on a tracked plane."),
+                    ("stabilise", _) => format!("cancels the motion of a plane tracked in {input}."),
+                    ("matchMove", 0) => format!("moves {target} with a plane tracked in {input}{over}."),
+                    ("matchMove", _) => format!("makes {target} follow a plane tracked in {input}{over}."),
+                    (_, 0) => format!("pins {target} onto a plane tracked in {input}{over}."),
+                    (_, _) => format!("corner-pins {target} onto a plane tracked in {input}{over}."),
+                }
+            }
+            Self::Group { inputs, nodes, controls, .. } => {
+                let reads = if inputs.is_empty() { "no input".to_string() } else { inputs.join(" and ") };
+                let ctl = if controls.is_empty() { String::new() } else { format!("; its controls: {}", controls.join(", ")) };
+                if k == 0 {
+                    format!("is a group of {nodes} node(s) working on {reads}{ctl}.")
+                } else {
+                    format!("packs {nodes} node(s) into one, reading {reads}{ctl}.")
+                }
+            }
             Self::Bypassed { input, .. } => {
                 if k == 0 {
                     format!("is bypassed: {input} passes through unchanged.")
@@ -342,15 +593,26 @@ pub fn check_comp_explanation(facts: &CompFacts, text: &str) -> Result<(), FactM
 }
 
 /// "Label value" for the parameters that differ from their defaults at `t` (at most
-/// [`MAX_PARAMS_LISTED`]; colours aren't listed).
-fn changed_params(n: &CompNode, t: Tick) -> Vec<String> {
+/// [`MAX_PARAMS_LISTED`]; colours aren't listed). Values are after expressions (C4.5): a value
+/// an expression gives says so.
+fn changed_params(c: &Comp, n: &CompNode, t: Tick) -> Vec<String> {
     let mut out = Vec::new();
+    let frame = c.expr_frame(t);
     for d in comp::params(&n.kind) {
         if out.len() >= MAX_PARAMS_LISTED {
             break;
         }
-        let Some(v) = n.value_at(d.id, t) else { continue };
-        if v == d.default {
+        let (v, from_expr) = match n.expression(d.id) {
+            Some(_) => match frame.param_at(n.id, d.id) {
+                (v, None) => (v, true),
+                (v, Some(_)) => (v, false),
+            },
+            None => match n.value_at(d.id, t) {
+                Some(v) => (v, false),
+                None => continue,
+            },
+        };
+        if v == d.default && !from_expr {
             continue;
         }
         let text = match (&v, &d.kind) {
@@ -366,7 +628,7 @@ fn changed_params(n: &CompNode, t: Tick) -> Vec<String> {
             (ParamValue::Vec2(p), _) if p.x.is_finite() && p.y.is_finite() => format!("{} {:.0}, {:.0}", d.label, p.x, p.y),
             _ => continue,
         };
-        out.push(text);
+        out.push(if from_expr { format!("{text} from an expression") } else { text });
     }
     out
 }
@@ -551,6 +813,54 @@ mod facts_tests {
         assert_eq!(e.lines.iter().map(|l| format!("{} {}", l.name, l.text)).collect::<Vec<_>>(), f.iter().map(CompFacts::sentence).collect::<Vec<_>>());
     }
 
+    /// C3.5a: Tracker and Planar Tracker lines in every state, each phrasing accepted.
+    #[test]
+    fn tracker_lines_name_what_they_move() {
+        use filmcraft_geom::Vec2;
+        use filmcraft_project::comp::{TrackOperation, TrackerPoint};
+        let mut analysed = TrackerPoint::at("A", Vec2::new(4.0, 4.0));
+        analysed.track.put_keyframe(Tick::ZERO, ParamValue::Vec2(Vec2::new(4.0, 4.0)));
+        let mut lines = Vec::new();
+        for op in TrackOperation::ALL {
+            for (points, fg) in [(vec![TrackerPoint::at("A", Vec2::ZERO)], false), (vec![analysed.clone(); 4], false), (vec![analysed.clone(); 4], true)] {
+                let mut c = empty_comp();
+                c.nodes.push(new_node(2, CompKind::Gradient, "Plate"));
+                c.nodes.push(new_node(4, CompKind::Solid, "Logo"));
+                let kind = CompKind::Tracker { points, operation: op, smooth_radius: 0, reference: Tick::ZERO, method: Default::default() };
+                c.nodes.push(new_node(3, kind, ""));
+                let corners = vec![analysed.track.clone(); 4];
+                let planar = CompKind::PlanarTracker {
+                    region: Default::default(),
+                    quad: [Vec2::ZERO; 4],
+                    reference: Tick::ZERO,
+                    corners,
+                    confidence: Vec::new(),
+                    operation: op,
+                };
+                c.nodes.push(new_node(5, planar, "Screen"));
+                link(&mut c, 2, 3, 0);
+                link(&mut c, 3, 5, 0);
+                if fg {
+                    link(&mut c, 4, 3, 1);
+                    link(&mut c, 4, 5, 1);
+                }
+                link(&mut c, 5, 1, 0);
+                for f in comp_facts(&c, &Project::default(), Tick::ZERO) {
+                    for p in f.phrasings() {
+                        assert_eq!(check_comp_explanation(&f, &p), Ok(()), "{p}");
+                    }
+                    lines.push(f.sentence());
+                }
+            }
+        }
+        let has = |s: &str| lines.iter().any(|l| l.contains(s));
+        assert!(has("Tracker 3 tracks 1 point(s) in Plate but hasn't been analysed yet"), "{lines:#?}");
+        assert!(has("Tracker 3 steadies Plate with 4 tracked point(s)."), "{lines:#?}");
+        assert!(has("Tracker 3 moves Logo with 4 point(s) tracked in Plate and lays it over Plate."), "{lines:#?}");
+        assert!(has("Screen pins Logo onto a plane tracked in Tracker 3 over Tracker 3."), "{lines:#?}");
+        assert_eq!(kind_label("planarTracker"), "Planar Tracker");
+    }
+
     /// AI2 acceptance: no crash on hostile graphs. Every facts list built here must also check
     /// against its own template line.
     #[test]
@@ -590,6 +900,10 @@ mod facts_tests {
             CompKind::Blur,
             CompKind::Solid,
             CompKind::Gradient,
+            CompKind::Roto { roto: Default::default(), output: filmcraft_project::comp::RotoOutput::Matte },
+            CompKind::Paint { paint: Default::default() },
+            CompKind::from_key("tracker").unwrap_or(CompKind::Blur),
+            CompKind::from_key("planarTracker").unwrap_or(CompKind::Blur),
         ];
         for (i, kind) in kinds.into_iter().enumerate() {
             let id = NodeId::MAX - 20 + i as NodeId;

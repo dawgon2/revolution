@@ -524,6 +524,80 @@ fn gpu_linear_mask_coverage_matches_cpu() {
     }
 }
 
+/// Planar-tracked windows (fork G4.4): an ellipse, a feathered polygon and a linear window drawn
+/// through strong perspective maps, as `filmcraft_render::mask::prepare` flattens them.
+fn planar_test_masks(scale: f32) -> Vec<Vec<filmcraft_render::mask::FlatMask>> {
+    use filmcraft_project::{Mask, MaskMode, MaskPath, ParamValue, PlanarKey, PlanarTrack};
+    let track = |h: [f64; 9]| Some(PlanarTrack { reference: filmcraft_time::Tick(0), keys: vec![PlanarKey { time: filmcraft_time::Tick(0), h }] });
+    let tilt = [1.15, 0.08, -14.0, -0.05, 0.9, 12.0, 0.0011, -0.0007, 1.0];
+    let turn = [0.8, -0.35, 70.0, 0.3, 0.85, -10.0, -0.0009, 0.0012, 1.0];
+    let mut ell = Mask::new("e", MaskPath::ellipse(Vec2::new(150.0, 90.0), Vec2::new(80.0, 50.0)));
+    ell.feather.value = ParamValue::Float(16.0);
+    ell.planar = track(tilt);
+    let mut poly = Mask::new("p", MaskPath::polygon(&[Vec2::new(60.0, 30.0), Vec2::new(250.0, 45.0), Vec2::new(230.0, 150.0), Vec2::new(80.0, 160.0)]));
+    poly.feather.value = ParamValue::Float(4.0);
+    poly.expansion.value = ParamValue::Float(-5.0);
+    poly.mode = MaskMode::Subtract;
+    poly.planar = track(turn);
+    let mut lin = Mask::linear("l", Vec2::new(160.0, 30.0), Vec2::new(160.0, 140.0));
+    lin.planar = track(turn);
+    let t = filmcraft_time::Tick(0);
+    let p = |ms: &[Mask]| filmcraft_render::mask::prepare(ms, t, scale);
+    vec![p(std::slice::from_ref(&ell)), p(&[ell.clone(), poly.clone()]), p(&[lin, poly])]
+}
+
+#[test]
+fn gpu_planar_window_coverage_matches_cpu() {
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    if let Ok(a) = pollster::block_on(wgpu::Instance::default().request_adapter(&wgpu::RequestAdapterOptions::default())) {
+        eprintln!("planar windows on {} ({:?})", a.get_info().name, a.get_info().backend);
+    }
+    let g = crate::GpuMask::new(&dev, &q);
+    for scale in [1.0f32, 0.5] {
+        let (w, h) = ((320.0 * scale) as usize, (180.0 * scale) as usize);
+        for (i, masks) in planar_test_masks(scale).into_iter().enumerate() {
+            let cpu = filmcraft_render::mask::coverage(&masks, w, h).unwrap();
+            let gpu = g.coverage(&masks, w, h).expect("gpu coverage");
+            let worst = cpu.iter().zip(&gpu).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+            eprintln!("planar window {i} @{scale}: max |cpu − gpu| = {worst:e}");
+            assert!(worst < 2e-4, "case {i} scale {scale}: {worst}");
+            assert!(cpu.iter().any(|v| *v > 0.2 && *v < 0.8), "case {i} has an edge");
+        }
+    }
+}
+
+/// A planar-tracked window through the fused effect chain (`FxOp::Masked`, as a windowed grade
+/// node compiles).
+#[test]
+fn gpu_planar_masked_effect_matches_cpu() {
+    use super::fx_tests::{compare, picture};
+    use filmcraft_render::gpufx::FxOp;
+    use filmcraft_render::plan::LayerFx;
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = GpuCompositor::new(&dev, &q);
+    let (w, h) = (160u32, 90u32);
+    let px = picture(w, h);
+    let frame = VideoFrame::rgba_f32(w, h, px.clone());
+    for (i, masks) in planar_test_masks(0.5).into_iter().enumerate() {
+        let ops = vec![FxOp::Masked { ops: vec![FxOp::BlackWhite], masks: masks.into() }];
+        let mut cpu = filmcraft_render::Image { w: w as usize, h: h as usize, px: px.clone() };
+        for op in &ops {
+            op.apply(&mut cpu);
+        }
+        let fx = LayerFx { size: (w, h), decimation: 1, ops };
+        let (_, _, gpu) = c.effect_image(&frame, &fx).expect("effect image");
+        let (worst, flips) = compare(&cpu.px, &gpu);
+        eprintln!("planar masked effect {i}: {worst:.2e}, flips {flips:.4}");
+        assert!(worst <= 1e-3 && flips == 0.0, "case {i}: {worst:.2e}, flips {flips}");
+    }
+}
+
 /// A linear mask through the fused effect chain (`FxOp::Masked` / `FxOp::OpacityMask`).
 #[test]
 fn gpu_linear_masked_effect_matches_cpu() {
@@ -551,6 +625,50 @@ fn gpu_linear_masked_effect_matches_cpu() {
         let (worst, flips) = compare(&cpu.px, &gpu);
         eprintln!("linear masked effect {i}: {worst:.2e}, flips {flips:.4}");
         assert!(worst <= 1e-3 && flips == 0.0, "case {i}: {worst:.2e}, flips {flips}");
+    }
+}
+
+/// A bitmap matte (fork G3.2, `FxOp::MaskedBy`) on the GPU against the CPU reference: full,
+/// empty, split, smaller and larger than the frame (bilinear stretch), and an invalid matte.
+#[test]
+fn gpu_bitmap_matte_effect_matches_cpu() {
+    use super::fx_tests::{compare, picture};
+    use filmcraft_render::gpufx::FxOp;
+    use filmcraft_render::matte::BitmapMatte;
+    use filmcraft_render::plan::LayerFx;
+    let Some((dev, q)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = GpuCompositor::new(&dev, &q);
+    let (w, h) = (160u32, 90u32);
+    let px = picture(w, h);
+    let frame = VideoFrame::rgba_f32(w, h, px.clone());
+    let noise = |mw: u32, mh: u32| BitmapMatte::new(mw, mh, (0..mw * mh).map(|i| ((i * 97 + i / mw * 31) % 256) as u8).collect());
+    let cases: Vec<(&str, BitmapMatte)> = vec![
+        ("full", BitmapMatte::new(4, 4, vec![255; 16]).unwrap()),
+        ("empty", BitmapMatte::new(3, 2, vec![0; 6]).unwrap()),
+        ("split", BitmapMatte::new(w, h, (0..w * h).map(|i| if i % w < w / 2 { 255 } else { 0 }).collect()).unwrap()),
+        ("smaller", noise(37, 23).unwrap()),
+        ("larger", noise(411, 250).unwrap()),
+        ("one texel", BitmapMatte::new(1, 1, vec![128]).unwrap()),
+        ("invalid", BitmapMatte { width: 8, height: 8, alpha: vec![255; 63] }),
+    ];
+    for (name, m) in cases {
+        let ops = vec![FxOp::MaskedBy { ops: vec![FxOp::BlackWhite, FxOp::BrightnessContrast { br: 0.1, co: 1.3 }], matte: Arc::new(m) }];
+        assert!(ops.iter().all(FxOp::gpu_ok) || name == "invalid", "{name}");
+        let mut cpu = filmcraft_render::Image { w: w as usize, h: h as usize, px: px.clone() };
+        for op in &ops {
+            op.apply(&mut cpu);
+        }
+        let fx = LayerFx { size: (w, h), decimation: 1, ops };
+        let (_, _, gpu) = c.effect_image(&frame, &fx).expect("effect image");
+        let (worst, flips) = compare(&cpu.px, &gpu);
+        eprintln!("bitmap matte {name}: {worst:.2e}, flips {flips:.4}");
+        assert!(worst <= 1e-3 && flips == 0.0, "{name}: {worst:.2e}, flips {flips}");
+        if name == "invalid" || name == "empty" {
+            assert!(cpu.px == px, "{name} is identity");
+        }
     }
 }
 

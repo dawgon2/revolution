@@ -151,6 +151,10 @@ pub struct QualifierFact {
     pub sat: [f32; 2],
     pub lum: [f32; 2],
     pub invert: bool,
+    /// The node keys with its 3D qualifier (fork G4.3): the numbers above are then neutral (every
+    /// hue, saturation and luminance), as the HSL ranges don't apply.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub three_d: bool,
     /// e.g. "hues around orange (±18°), saturation 30–100 %, luminance 0–100 %".
     pub words: String,
 }
@@ -162,6 +166,21 @@ pub struct LutFact {
     /// The LUT reference (`builtin:<id>`, `lib:<id>`).
     pub reference: String,
     pub mix: f32,
+}
+
+/// One HDR zone wheel that changes something (fork G4.2).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HdrFact {
+    /// `global`, `black`, `dark`, `shadow`, `light`, `highlight` or `specular`.
+    pub zone: String,
+    /// Exposure in stops.
+    pub exposure: f32,
+    pub sat: f32,
+    /// The hue the balance pushes towards, when it does.
+    pub towards: Option<String>,
+    #[serde(default)]
+    pub color_amount: f32,
 }
 
 /// The controls of a node that differ from identity.
@@ -186,6 +205,9 @@ pub struct ControlFacts {
     pub windows: usize,
     /// How many of them are inverted.
     pub windows_inverted: usize,
+    /// HDR zone wheels that change something (fork G4.2), Global first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hdr: Vec<HdrFact>,
 }
 
 /// The measured change in one tonal range, inside the changed area.
@@ -263,6 +285,7 @@ impl TryFrom<NodeFactsRaw> for NodeFacts {
             .chain(c.highlight_rolloff.iter().flatten().copied())
             .chain(c.noise_reduction.iter().flatten().copied())
             .chain(c.wheels.iter().flat_map(|w| [w.master, w.color_amount]))
+            .chain(c.hdr.iter().flat_map(|h| [h.exposure, h.sat, h.color_amount]))
             .chain(c.qualifier.iter().flat_map(|q| [q.hue, q.hue_width].into_iter().chain(q.sat).chain(q.lum)))
             .chain([r.coverage])
             .chain(r.matte_coverage);
@@ -609,16 +632,41 @@ fn read_controls(node: &GradeNode, t: Tick) -> ControlFacts {
     c.qualifier = node.qualifier_at(t).map(|q| {
         let hues =
             if q.hue_width >= 1.0 { "all hues".to_string() } else { format!("hues around {} (±{}°)", hue_name(q.hue), (q.hue_width * 180.0).round() as i64) };
-        let words = format!(
-            "{hues}, saturation {}–{} %, luminance {}–{} %{}",
-            pct(q.sat[0]),
-            pct(q.sat[1]),
-            pct(q.lum[0]),
-            pct(q.lum[1]),
-            if q.invert { ", inverted" } else { "" }
-        );
-        QualifierFact { hue: q.hue, hue_width: q.hue_width, sat: q.sat, lum: q.lum, invert: q.invert, words }
+        let words = match node.qual3d_active() {
+            // (the 3D qualifier, G4.3: picked colours, not ranges)
+            Some(k) => format!(
+                "a 3D qualifier on {} picked colour cluster(s){}{}",
+                k.include.len(),
+                if k.exclude.is_empty() { String::new() } else { format!(", {} left out", k.exclude.len()) },
+                if q.invert { ", inverted" } else { "" }
+            ),
+            None => format!(
+                "{hues}, saturation {}–{} %, luminance {}–{} %{}",
+                pct(q.sat[0]),
+                pct(q.sat[1]),
+                pct(q.lum[0]),
+                pct(q.lum[1]),
+                if q.invert { ", inverted" } else { "" }
+            ),
+        };
+        if node.qual3d_active().is_some() {
+            return QualifierFact { hue: 0.0, hue_width: 1.0, sat: [0.0, 1.0], lum: [0.0, 1.0], invert: q.invert, three_d: true, words };
+        }
+        QualifierFact { hue: q.hue, hue_width: q.hue_width, sat: q.sat, lum: q.lum, invert: q.invert, three_d: false, words }
     });
+    if let Some(h) = node.hdr_at(t) {
+        let zones = std::iter::once(("global", h.global)).chain(filmcraft_project::grade::HDR_ZONES.into_iter().zip(h.zones));
+        for (zone, z) in zones.filter(|(_, z)| !z.is_identity()) {
+            let colour = offset_hue(z.balance);
+            c.hdr.push(HdrFact {
+                zone: zone.into(),
+                exposure: z.exposure,
+                sat: z.sat,
+                towards: colour.map(|(_, n)| n.to_string()),
+                color_amount: colour.map_or(0.0, |(a, _)| a),
+            });
+        }
+    }
     let windows = active_windows(node, t);
     c.windows = windows.len();
     c.windows_inverted = windows.iter().filter(|w| w.inverted).count();
@@ -964,6 +1012,15 @@ pub fn node_state_key(node: &GradeNode, t: Tick, ctx: &GradeCtx<'_>, working: Wo
     }
     h.u64(node.lut.len() as u64);
     h.bytes(node.lut.as_bytes());
+    // the 3D qualifier (G4.3) and the colour warper (G4.1)
+    if qual_on && let Some(q) = &node.qual3d {
+        h.bytes(serde_json::to_string(q).unwrap_or_default().as_bytes());
+    }
+    h.bytes(&[0xfe]);
+    if let Some(w) = &node.warper {
+        h.bytes(serde_json::to_string(w).unwrap_or_default().as_bytes());
+    }
+    h.bytes(&[0xfe]);
     let windows = active_windows(node, t);
     h.u64(windows.len() as u64);
     for w in windows {
@@ -1216,6 +1273,23 @@ mod tests {
         assert_eq!(f.summary(), "+⅔ stop shad · sat −18 % · 97 %");
     }
 
+    /// Fork G4.3: with the 3D key the facts say so and don't report the unused HSL ranges.
+    #[test]
+    fn a_3d_qualifier_reports_its_clusters_not_the_hsl_ranges() {
+        let mut n = node(&[("qual.on", ParamValue::Float(1.0)), ("qual.hue", ParamValue::Float(0.6)), ("qual.hueWidth", ParamValue::Float(0.05))]);
+        let mut k = filmcraft_project::qual3d::Qual3d::default();
+        k.add_samples(&[[0.3, 0.2, 0.0]], false);
+        k.add_samples(&[[0.3, -0.2, 0.0]], true);
+        n.qual3d = Some(k);
+        let q = read_controls(&n, Tick(0)).qualifier.expect("a qualifier");
+        assert!(q.three_d && q.words.starts_with("a 3D qualifier on 1 picked colour") && q.words.contains("1 left out"), "{q:?}");
+        assert_eq!((q.hue, q.hue_width, q.sat, q.lum), (0.0, 1.0, [0.0, 1.0], [0.0, 1.0]));
+        // the HSL key: its ranges, no 3D flag (and none in the JSON)
+        n.qual3d.as_mut().unwrap().mode = filmcraft_project::qual3d::QualMode::Hsl;
+        let q = read_controls(&n, Tick(0)).qualifier.expect("a qualifier");
+        assert!(!q.three_d && (q.hue - 0.6).abs() < 1e-6 && !serde_json::to_string(&q).unwrap().contains("threeD"));
+    }
+
     #[test]
     fn qualified_skin_node_covers_the_skin_patch() {
         let hue = crate::grade::qualifier_hsl(R709, SKIN)[0];
@@ -1325,6 +1399,25 @@ mod tests {
         assert!(f.sentence("N").contains("adds grain and reduces noise"), "{}", f.sentence("N"));
     }
 
+    /// Fork G4.2: HDR wheels that change something are facts (zone, exposure, saturation, the
+    /// balance's hue); range / falloff alone and old nodes add none, and the JSON stays as before.
+    #[test]
+    fn hdr_wheels_are_control_facts() {
+        let plain = read_controls(&node(&[("hdr.light.range", ParamValue::Float(2.0))]), Tick(0));
+        assert!(plain.hdr.is_empty());
+        assert!(!serde_json::to_string(&plain).unwrap().contains("hdr"));
+        let n = node(&[
+            ("hdr.highlight.exposure", ParamValue::Float(-1.0)),
+            ("hdr.shadow.balance", ParamValue::Color([0.0, 0.0, 0.3, 0.0])),
+            ("hdr.global.sat", ParamValue::Float(1.2)),
+        ]);
+        let c = read_controls(&n, Tick(0));
+        let got: Vec<_> = c.hdr.iter().map(|h| (h.zone.as_str(), h.exposure, h.sat, h.towards.as_deref())).collect();
+        assert_eq!(got, vec![("global", 0.0, 1.2, None), ("shadow", 0.0, 1.0, Some("blue")), ("highlight", -1.0, 1.0, None)]);
+        let back: ControlFacts = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+    }
+
     #[test]
     fn hostile_frames_give_no_visible_change() {
         let n = gain(0.3);
@@ -1355,7 +1448,7 @@ mod tests {
         h.params.insert("saturation".into(), Param::new(ParamValue::Float(f64::NAN)));
         let c = read_controls(&h, Tick(0));
         assert!(c.wheels.iter().all(|w| w.master.is_finite() && w.color_amount.is_finite()) && c.saturation.is_none());
-        let ctx = GradeCtx { px_scale: f32::NAN, seq_time: Tick(i64::MIN), clip: u64::MAX, project: None };
+        let ctx = GradeCtx { px_scale: f32::NAN, seq_time: Tick(i64::MIN), clip: u64::MAX, project: None, mattes: None };
         let _ = node_state_key(&h, Tick(i64::MIN), &ctx, R709);
     }
 

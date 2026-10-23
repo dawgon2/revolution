@@ -197,7 +197,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         let scale = quantize_scale(res.scale().min(screen_scale.max(1.0 / 32.0)));
         let rev = match target {
             Target::Item(i) => app.item_revision(i),
-            _ => app.session.revision,
+            _ => app.seq_revision(),
         };
         let size_key = (scale * 1000.0) as u32;
         let channel = display.is_channel();
@@ -339,11 +339,22 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         grade_picker(app, ui, &pic_resp, pic);
         wb_picker(app, ui, &pic_resp, pic);
         eyedropper(app, ui, &pic_resp, pic, target, rate, time);
+        // Color page ▸ Magic Mask (fork G3.3): its matte / strokes, and the stroke tool
+        crate::panels::magic_mask::monitor_overlay(app, ui, pic);
+        crate::panels::magic_mask::monitor_tool(app, ui, &pic_resp, pic);
+        // Color page ▸ Qualifier ▸ 3D (fork G4.3): the stroke tool
+        crate::panels::grade_qual3d::monitor_tool(app, ui, &pic_resp, pic);
         // (while a picker is armed, a click on the picture belongs to it, not to a layer or mask)
-        if app.ui.wb_picker.is_none() && app.ui.grade_picker.is_none() && app.ui.eyedropper.is_none() {
+        if app.ui.wb_picker.is_none()
+            && app.ui.grade_picker.is_none()
+            && app.ui.eyedropper.is_none()
+            && app.ui.magic_mask.tool.is_none()
+            && app.ui.qual3d_tool.is_none()
+        {
             crate::panels::graphics::monitor_overlay(app, ui, pic, frame_size);
             crate::panels::masks::monitor_overlay(app, ui, pic, frame_size);
             crate::panels::comp::mask_overlay(app, ui, pic, frame_size);
+            crate::panels::comp_viewer::overlay(app, ui, pic, frame_size);
         }
     }
     if show_picture {

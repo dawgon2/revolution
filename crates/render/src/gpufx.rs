@@ -250,6 +250,13 @@ pub enum FxOp {
         ops: Vec<FxOp>,
         masks: std::sync::Arc<[crate::mask::FlatMask]>,
     },
+    /// An effect limited to a bitmap matte (fork G3.2, Magic Mask): `ops` run, then the result is
+    /// mixed with the image before them by the matte's coverage (`matte::coverage`: the matte
+    /// stretched bilinearly over the whole image). An invalid matte covers nothing (identity).
+    MaskedBy {
+        ops: Vec<FxOp>,
+        matte: std::sync::Arc<crate::matte::BitmapMatte>,
+    },
     /// The clip's opacity masks (`mask::apply_opacity_masks`): pixels scaled by the coverage.
     OpacityMask {
         masks: std::sync::Arc<[crate::mask::FlatMask]>,
@@ -433,7 +440,7 @@ pub fn apply_ops(ops: &[FxOp], img: &mut Image) {
 fn has_temporal(ops: &[FxOp]) -> bool {
     ops.iter().any(|o| match o {
         FxOp::TemporalDenoise { inputs, .. } => inputs.is_some(),
-        FxOp::Masked { ops, .. } => has_temporal(ops),
+        FxOp::Masked { ops, .. } | FxOp::MaskedBy { ops, .. } => has_temporal(ops),
         _ => false,
     })
 }
@@ -456,6 +463,10 @@ pub(crate) fn apply_ops_with(ops: &[FxOp], img: &mut Image, outer: &[FxOp], temp
                     crate::mask::mix(img, &original, &cov);
                 }
             }
+            FxOp::MaskedBy { ops: inner, matte } if has_temporal(inner) => {
+                let outer = before();
+                crate::matte::apply_masked(img, matte, |img| apply_ops_with(inner, img, &outer, temporal));
+            }
             _ => op.apply(img),
         }
     }
@@ -471,6 +482,14 @@ pub(crate) fn masks_ok(masks: &[crate::mask::FlatMask]) -> bool {
     active.clone().count() <= GPU_MASKS
         && active.clone().map(|m| m.pts.len()).sum::<usize>() <= GPU_MASK_POINTS
         && active.into_iter().all(|m| [m.feather, m.expansion, m.opacity].iter().chain(m.pts.iter().flatten()).all(|v| v.is_finite()))
+}
+
+/// The ops of a masked effect the GPU runs: no nested mask (one saved image at a time), no
+/// temporal op with inputs, each one [`FxOp::gpu_ok`].
+fn inner_gpu_ok(ops: &[FxOp]) -> bool {
+    ops.iter().all(|o| {
+        !matches!(o, FxOp::Masked { .. } | FxOp::MaskedBy { .. } | FxOp::OpacityMask { .. } | FxOp::TemporalDenoise { inputs: Some(_), .. }) && o.gpu_ok()
+    })
 }
 
 /// The largest median radius the GPU runs (a (2r+1)² window per pixel).
@@ -888,11 +907,10 @@ impl FxOp {
                     && *median_r <= GPU_MEDIAN_MAX
                     && denoise.is_finite()
             }
-            FxOp::Masked { ops, masks } => {
-                masks_ok(masks)
-                    && ops
-                        .iter()
-                        .all(|o| !matches!(o, FxOp::Masked { .. } | FxOp::OpacityMask { .. } | FxOp::TemporalDenoise { inputs: Some(_), .. }) && o.gpu_ok())
+            FxOp::Masked { ops, masks } => masks_ok(masks) && inner_gpu_ok(ops),
+            FxOp::MaskedBy { ops, matte } => {
+                use crate::matte::GPU_MATTE_MAX;
+                matte.is_valid() && matte.width <= GPU_MATTE_MAX && matte.height <= GPU_MATTE_MAX && inner_gpu_ok(ops)
             }
             FxOp::OpacityMask { masks } => masks_ok(masks),
             FxOp::ColorChain(ops) => {
@@ -1204,6 +1222,7 @@ impl FxOp {
                     crate::mask::mix(img, &original, &cov);
                 }
             }
+            FxOp::MaskedBy { ops, matte } => crate::matte::apply_masked(img, matte, |img| ops.iter().for_each(|op| op.apply(img))),
             FxOp::OpacityMask { masks } => {
                 if let Some(cov) = crate::mask::coverage(masks, img.w, img.h) {
                     crate::mask::scale_by(img, &cov);

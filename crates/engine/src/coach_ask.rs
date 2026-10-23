@@ -55,7 +55,16 @@ pub const MIN_COVERAGE: f64 = 0.75;
 pub const MIN_LESSON: f64 = 0.25;
 
 const K1: f64 = 1.2;
-const B: f64 = 0.5;
+/// BM25's length normalisation (Robertson & Zaragoza 2009, "The Probabilistic Relevance
+/// Framework: BM25 and Beyond", §3.4: 0 none, 1 full). 0.5 until C3.11; at 0.5 a long section
+/// (the compositor page's roto / paint / viewer sections run 300–600 words, a colour section
+/// 20–150) collects enough mentions of everyday words ("node", "undo", "match", "view") to tie
+/// with the short section a beginner's question names, and each new long section flipped a few of
+/// those near-ties (the "corpus dilution" in `tests/ai_pool.rs`'s floor history; Q67). Measured
+/// on the merged C3.10 corpus with `compositor-trackers.md` indexed: 0.5 → beginner 27 / 30, eval
+/// 115; 0.6 → 29 / 30, eval 115; 0.75 (the textbook default) → 29 / 30 but eval 112. The
+/// assistant's index uses it too (AI-POOL recall@5 1054 → 1055).
+const B: f64 = 0.6;
 /// How much a word of a section's heading or page title counts compared with one in the body.
 const TITLE_WEIGHT: f64 = 5.0;
 /// A "how do I …" question asks for steps: sections that have them count this much more.
@@ -79,6 +88,7 @@ pub const GUIDE_PAGES: &[(&str, &str)] = &[
     ("edit-menu.md", include_str!("../../../docs/guide/edit-menu.md")),
     ("effect-reference.md", include_str!("../../../docs/guide/effect-reference.md")),
     ("compositor.md", include_str!("../../../docs/guide/compositor.md")),
+    ("compositor-trackers.md", include_str!("../../../docs/guide/compositor-trackers.md")),
     ("editing.md", include_str!("../../../docs/guide/editing.md")),
     ("essential-sound.md", include_str!("../../../docs/guide/essential-sound.md")),
     ("effects.md", include_str!("../../../docs/guide/effects.md")),
@@ -167,6 +177,8 @@ const NOT_INDEXED: &[&str] = &[
     "updates.md",
     // fork PKG: installing each release package, not editing (like updates.md)
     "install.md",
+    // (compositor-trackers.md was left out in C3.5a, Q67: at B = 0.5 its words pulled three
+    // beginner colour questions to the wrong section; indexed since C3.11's length normalisation)
 ];
 
 /// Sections that are never an answer (page, heading): the glossary's table of Resolve / Premiere
@@ -1236,7 +1248,8 @@ pub(crate) fn assist_embed_texts(max_chars: usize) -> Vec<String> {
         .collect()
 }
 
-/// The word ranking of [`retrieve`]: (section index, score), best first.
+/// The word ranking of [`retrieve`]: (section index, score), best first; past the first
+/// [`SEE_KEEP`], sections the best ones link to are lifted ([`with_see_links`]).
 fn words_ranked(a: &Assist, question: &str) -> Vec<(usize, f64)> {
     let terms = query_terms(question);
     let how = question.chars().take(MAX_QUESTION_CHARS).collect::<String>().to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| w == "how");
@@ -1256,7 +1269,51 @@ fn words_ranked(a: &Assist, question: &str) -> Vec<(usize, f64)> {
         }
     }
     ranked.sort_by(|x, y| y.1.total_cmp(&x.1).then(x.0.cmp(&y.0)));
-    ranked
+    with_see_links(a, ranked)
+}
+
+/// The word ranking's first this many sections stay where they are ([`with_see_links`]): a
+/// lookup question's answer is nearly always among them (AI-POOL recall@5 ~97 %).
+const SEE_KEEP: usize = 5;
+/// The sections whose `see:` links are followed: the best this many.
+const SEE_FROM: usize = 3;
+/// A linked section scores this share of the score of the section that links to it (added to
+/// its own).
+const SEE_WEIGHT: f64 = 0.5;
+
+/// Link-based score propagation (C3.11; relevance propagation over hyperlinks, Shakery & Zhai
+/// 2003, "Relevance propagation for topic distillation"; Savoy 1996, "Citation schemes in
+/// hypertext information retrieval"): a section the best [`SEE_FROM`] sections name in their
+/// header's `see:` gets [`SEE_WEIGHT`] of the naming section's score. The guide's own cross
+/// references say which sections belong together, and a task usually needs several of them
+/// (a clone of yourself: a mask, a merge, a tracker), so when a new section joins the guide
+/// (`compositor.roto` next to `compositor.masks`) it lifts the older one it links to instead of
+/// only taking its slot. The first [`SEE_KEEP`] sections of the word ranking are kept as they are;
+/// the rest are re-ranked, each at most the last kept score (scores stay best first).
+fn with_see_links(a: &Assist, ranked: Vec<(usize, f64)>) -> Vec<(usize, f64)> {
+    let ids: HashMap<&str, usize> = a.headers.iter().enumerate().filter_map(|(i, h)| h.as_ref().map(|h| (h.id.as_str(), i))).collect();
+    let mut lift: HashMap<usize, f64> = HashMap::new();
+    for (i, s) in ranked.iter().take(SEE_FROM) {
+        let Some(Some(h)) = a.headers.get(*i) else { continue };
+        for j in h.see.iter().filter_map(|t| ids.get(t.as_str())) {
+            let e = lift.entry(*j).or_default();
+            *e = e.max(SEE_WEIGHT * s);
+        }
+    }
+    if lift.is_empty() {
+        return ranked;
+    }
+    let kept: Vec<(usize, f64)> = ranked.iter().take(SEE_KEEP).copied().collect();
+    let cap = kept.last().map_or(f64::MAX, |k| k.1);
+    let mut rest: HashMap<usize, f64> = ranked.iter().skip(SEE_KEEP).copied().collect();
+    for (j, v) in lift {
+        if !kept.iter().any(|(i, _)| *i == j) {
+            *rest.entry(j).or_default() += v;
+        }
+    }
+    let mut rest: Vec<(usize, f64)> = rest.into_iter().filter(|(_, s)| *s > 0.0 && s.is_finite()).collect();
+    rest.sort_by(|x, y| y.1.total_cmp(&x.1).then(x.0.cmp(&y.0)));
+    kept.into_iter().chain(rest.into_iter().map(|(i, s)| (i, s.min(cap)))).collect()
 }
 
 // ---------- steps ----------

@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use filmcraft_frame::{AudioBuffer, VideoFrame};
 use filmcraft_media::{FrameRequest, SharedSource};
-use filmcraft_project::{ItemId, Project};
+use filmcraft_project::{ClipId, ItemId, Project};
 use filmcraft_render::preview::{AudioSegment, Need, Segment, segment_at, video_segments};
 use filmcraft_time::{FrameRate, Tick, TimeRange};
 use serde::Serialize;
@@ -77,7 +77,8 @@ pub enum RenderMode {
     Selection,
 }
 
-type Memo = (Arc<Project>, ItemId, Arc<Vec<Segment>>);
+/// (project snapshot, sequence, matte-cache epoch, segments)
+type Memo = (Arc<Project>, ItemId, u64, Arc<Vec<Segment>>);
 type AudioMemo = (Arc<Project>, ItemId, Arc<Vec<AudioSegment>>);
 
 /// Preview files of one project, plus memoized segments for the latest project snapshots.
@@ -102,6 +103,10 @@ pub struct PreviewStore {
     pub live: Arc<filmcraft_render::mixer::LiveMix>,
     /// The render cache's index and queue (fork 6.3).
     pub cache: crate::render_cache::CacheState,
+    /// The session's Magic Mask mattes (fork G3.2): a segment showing a node with a Magic Mask
+    /// has its matte epochs in its hash, so a part rendered before (or while) the node was
+    /// tracked is not reused after ([`Self::set_mattes`]).
+    mattes: RwLock<Option<Arc<crate::magic_mask::MatteCache>>>,
 }
 
 /// Opened preview files kept at once (playback pre-opens the next part, so the part on screen,
@@ -481,14 +486,23 @@ impl PreviewStore {
         self.generation.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Segments of `seq` in this project snapshot (memoized per snapshot).
+    /// The matte cache whose epochs salt the hashes of segments with Magic Mask nodes.
+    pub fn set_mattes(&self, cache: Arc<crate::magic_mask::MatteCache>) {
+        *self.mattes.write().unwrap_or_else(|e| e.into_inner()) = Some(cache);
+    }
+
+    /// Segments of `seq` in this project snapshot (memoized per snapshot and matte epoch).
     pub fn segments(&self, project: &Arc<Project>, seq: ItemId) -> Arc<Vec<Segment>> {
+        let mattes = self.mattes.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let epoch = mattes.as_ref().map_or(0, |m| m.epoch());
         let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((_, _, s)) = memo.iter().find(|(p, q, _)| Arc::ptr_eq(p, project) && *q == seq) {
+        if let Some((_, _, _, s)) = memo.iter().find(|(p, q, e, _)| Arc::ptr_eq(p, project) && *q == seq && *e == epoch) {
             return s.clone();
         }
-        let segs = Arc::new(video_segments(project, seq));
-        memo.push((project.clone(), seq, segs.clone()));
+        let mut segs = video_segments(project, seq);
+        salt_magic_masks(&mut segs, project, seq, mattes.as_deref());
+        let segs = Arc::new(segs);
+        memo.push((project.clone(), seq, epoch, segs.clone()));
         if memo.len() > 4 {
             memo.remove(0);
         }
@@ -719,6 +733,36 @@ fn need_state(seg: &Segment) -> BarState {
     }
 }
 
+/// Fold the matte epochs of the Magic Mask nodes a segment shows into its hash (fork G3.2;
+/// segments without one keep theirs). Clips inside nested sequences are not followed.
+fn salt_magic_masks(segs: &mut [Segment], project: &Project, seq: ItemId, mattes: Option<&crate::magic_mask::MatteCache>) {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let Some(q) = project.sequence(seq) else { return };
+    for seg in segs.iter_mut() {
+        let mut keys: Vec<(u64, u64)> = Vec::new();
+        for c in &seg.clips {
+            if let Some((_, it)) = q.find_item(*c)
+                && let Some(g) = &it.grade
+            {
+                keys.extend(g.nodes.iter().filter(|n| n.magic_mask.is_some()).map(|n| (c.0, n.id)));
+            }
+        }
+        if keys.is_empty() {
+            continue;
+        }
+        let mut parts = [0u64; 2];
+        for (i, part) in parts.iter_mut().enumerate() {
+            let mut h = DefaultHasher::new();
+            (i, "magic-mask", &seg.hash).hash(&mut h);
+            for k in &keys {
+                (k, mattes.map_or(0, |m| m.matte_epoch(ClipId(k.0), k.1))).hash(&mut h);
+            }
+            *part = h.finish();
+        }
+        seg.hash = format!("{:016x}{:016x}", parts[0], parts[1]);
+    }
+}
+
 fn is_hash(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -804,6 +848,7 @@ pub fn render(s: &mut Session, mode: RenderMode, p: &Value) -> Result<Value> {
     let provider = s.media.full_res_provider(project.clone(), s.services.clone());
     let (prog, res) = (job.progress.clone(), job.result.clone());
     let nseg = todo.len();
+    let mattes = s.magic_mask.token();
     let pool = s.media.clone();
     let run = move || {
         let t0 = web_time::Instant::now();
@@ -832,6 +877,8 @@ pub fn render(s: &mut Session, mode: RenderMode, p: &Value) -> Result<Value> {
                 part_of_batch: true,
                 // previews stand in for the monitor picture: display-referred SDR
                 sdr: true,
+                // Magic Mask mattes tracked by now (fork G3.2)
+                mattes,
                 ..Default::default()
             };
             match filmcraft_export::export(&project, seq, &settings, &provider, &prog) {

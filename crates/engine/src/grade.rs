@@ -61,6 +61,12 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec("grade.setLut", "Set Node LUT", r#"{"clip":id?,"node":id?,"lut":"builtin:<id>"|"lib:<id>"|""?,"path":str?}"#, set_lut),
         spec("grade.toggleAnimation", "Toggle Node Parameter Animation", r#"{"clip":id?,"node":id?,"param":str,"time":ticks?}"#, toggle_animation),
         spec("grade.resetNode", "Reset Node", r#"{"clip":id?,"node":id?,"param":str?}"#, reset),
+        spec(
+            "grade.hdr.reset",
+            "Reset HDR Wheels",
+            r#"{"clip":id?,"node":id?,"zone":"global"|"black"|"dark"|"shadow"|"light"|"highlight"|"specular"?}"#,
+            reset_hdr,
+        ),
         spec("grade.bypass", "Bypass Grade", r#"{"clip":id?,"on":bool?}"#, bypass),
         spec("grade.clear", "Remove Grade", r#"{"clip":id?}"#, clear),
         menu_spec("grade.copy", "Copy Grade", r#"{"clip":id?}"#, copy, true),
@@ -457,7 +463,7 @@ fn set_param(s: &mut Session, p: &Value) -> Result<Value> {
 /// The picture at node `id`'s input (`p`'s `node`, else the current one) of the target clip at
 /// `p`'s `time` (else the playhead): the nodes before it, no effects after the grade, as working
 /// linear light at a quarter size. Returns the clip, the node id and the working space.
-fn node_input(s: &mut Session, p: &Value, cmd: &'static str) -> Result<(ClipId, u64, filmcraft_render::Image, filmcraft_color::WorkingSpace)> {
+pub(crate) fn node_input(s: &mut Session, p: &Value, cmd: &'static str) -> Result<(ClipId, u64, filmcraft_render::Image, filmcraft_color::WorkingSpace)> {
     let want = node_arg(p, cmd)?;
     let (c, current) = current_for(s, p, cmd)?;
     let seq_id = s.state.active_sequence.ok_or(EngineError::NoSequence)?;
@@ -811,7 +817,7 @@ fn widen_hue(centre: f32, width: f32, h: f32) -> (f32, f32) {
 
 /// The mean straight colour of the 3×3 pixels around `x`, `y` (0…1) of a premultiplied image;
 /// None where the image is transparent.
-fn sample(img: &filmcraft_render::Image, x: f32, y: f32) -> Option<[f32; 3]> {
+pub(crate) fn sample(img: &filmcraft_render::Image, x: f32, y: f32) -> Option<[f32; 3]> {
     if img.w == 0 || img.h == 0 {
         return None;
     }
@@ -880,6 +886,39 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
             }
             None => n.params.clear(),
         }
+        Ok(())
+    })?;
+    Ok(Value::Null)
+}
+
+/// Fork G4.2: resets one HDR wheel (`zone`: its exposure, saturation, balance, range and falloff)
+/// or, without `zone`, all of them. One undo step.
+fn reset_hdr(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "grade.hdr.reset";
+    let want = node_arg(p, CMD)?;
+    let current = current_for(s, p, CMD)?.1;
+    let prefix = match p.get("zone") {
+        None | Some(Value::Null) => "hdr.".to_string(),
+        Some(z) => {
+            let z = z.as_str().filter(|z| *z == "global" || filmcraft_project::grade::HDR_ZONES.contains(z));
+            let z = z.ok_or_else(|| bad(CMD, "`zone` must be global, black, dark, shadow, light, highlight or specular"))?;
+            format!("hdr.{z}.")
+        }
+    };
+    // nothing to reset: no undo step
+    let c = target(s, p, CMD)?;
+    let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+    let (_, it) = q.find_item(c).ok_or_else(|| bad(CMD, "no such clip"))?;
+    let g = it.grade.as_ref().ok_or_else(|| bad(CMD, "the clip has no grade"))?;
+    let id = pick(g, want, current, CMD)?;
+    let n = g.node(id).ok_or_else(|| bad(CMD, "no such node"))?;
+    if !n.params.keys().any(|k| k.starts_with(&prefix)) {
+        return Ok(Value::Null);
+    }
+    edit_grade(s, p, CMD, "Reset HDR Wheels", false, |g| {
+        let id = pick(g, want, current, CMD)?;
+        let n = node_mut(g, id, CMD)?;
+        n.params.retain(|k, _| !k.starts_with(&prefix));
         Ok(())
     })?;
     Ok(Value::Null)

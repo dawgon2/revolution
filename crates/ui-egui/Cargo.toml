@@ -60,6 +60,8 @@ filmcraft-isobmff = { workspace = true }
 egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
 # the nearby.* commands are real only with remote-net (S2b items 4–5 UI tests)
 filmcraft-engine = { workspace = true, features = ["remote-net"] }
+# a fake segmenter for the Magic Mask UI tests (G3.3; no model)
+filmcraft-mask = { workspace = true }
 
 # build.rs bakes contributors/contributors.json into the binary (About ▸ Contributors).
 [build-dependencies]

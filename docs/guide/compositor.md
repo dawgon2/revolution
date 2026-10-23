@@ -87,6 +87,66 @@ Saturation, Temperature, Tint, grain), and a curve editor with Y / R / G / B but
 the curve to add a point, double-click a point to remove it; scroll the settings to reach it). Selecting several
 nodes hides the rows.
 
+## Expressions: a setting worked out by a formula [Fork]
+
+> id: compositor.expressions | does: drives a comp setting with a small formula of time, frame, size or another setting, instead of or on top of keyframes | cmd: comp.setExpression, comp.clearExpression, comp.explain | resolve: Fusion's simple expressions (the = field on a control) | premiere: none (After Effects has expressions; Premiere has none) | when: a setting should follow time steadily (a spin, a pulse, a wiggle), follow a setting elsewhere in the comp, or depend on the comp's size | see: compositor.inspector, compositor.explain
+
+Keyframes are best for exact values at exact moments. Some motion is easier to describe than to
+keyframe: "turn 10 degrees a second", "shake a little", "stay as opaque as that Merge". An
+expression is a one-line formula worked out at every frame. Use either, or both: a formula can
+start from the keyframed value (`value`), so keyframes set the broad move and the formula
+changes it.
+
+1. Click a node on the canvas so its settings show under the canvas.
+2. Click **=** after a setting's label (`comp.inspector.<param>.expr.toggle`, for example
+   `comp.inspector.rotation.expr.toggle`). A one-line field opens under the row
+   (`comp.inspector.<param>.expr`).
+3. Type a formula, for example `time * 10`, and press **Enter** (or click elsewhere). It is
+   stored with `comp.setExpression` (**Ctrl+Z** takes it back), and the row shows its value at
+   the playhead.
+4. A typing mistake stays in the field with what is wrong under it, and its column (for example
+   ``expected `)` after `sin(time` at column 9``); nothing is stored. A stored formula that fails
+   while it runs (a division by zero, a deleted node) shows its error there too, and the setting
+   uses its keyframed value meanwhile: a render never fails because of a formula.
+5. To remove it, empty the field and press **Enter**, or send `comp.clearExpression`. Clicking
+   **=** again only hides the field; the formula stays.
+
+From the control channel or MCP, `comp.setExpression` takes `node`, `param` and `expression`
+(`comp` is optional: the selected comp clip). It answers with the value at `time` and any error,
+and refuses a formula that can't be read unless `"allowError": true`. `comp.explain` lists every
+formula with its value and error.
+
+What a formula can use:
+
+- **Built in:** `time` (seconds), `frame` (exact at 23.976 and 29.97), `fps`, `width`, `height`,
+  `value` (this setting's keyframed value now), `pi`, `e`.
+- **Settings:** `self.scale` (the same node) or `node("Blur 1").blurriness` and `node(3).opacity`
+  (by label or number).
+- **Maths:** `+ - * / %`, `^`, comparisons, `&&`, `||`, `!`, `test ? a : b`; points as `[x, y]`
+  and RGBA values as `[r, g, b, a]`, read with `v[0]`, `.x .y` or `.r .g .b .a`.
+- **Functions:** `sin cos tan asin acos atan atan2 sqrt abs sign min max clamp floor ceil round
+  fract exp ln log10 pow lerp smoothstep step`, `noise(x [, seed])` (smooth repeatable
+  randomness, −1 to 1), `random(seed)` (0 to 1, repeatable) and `wiggle(freq, amp [, seed])`
+  (`value` shaken by `amp`, `freq` times a second).
+
+Starting points, each with a trade-off:
+
+- A steady spin on Rotation: `time * 45`. Easy to read, but it never eases; keyframes suit a
+  spin that starts and stops.
+- A shake on Position: `wiggle(2, 5)`. The same on every playback; a seed (`wiggle(2, 5, 7)`)
+  gives a different shake.
+- Two Solids kept in step: `node("Back").color` on the second. One place to change, but
+  a web of references is harder to follow (`comp.explain` helps).
+
+Formulas work on a node's own numbers, points, RGBA swatches, checkboxes and menus (a menu takes the
+rounded number, kept within its choices); text, curves, mask shapes and the settings inside
+Color and Text nodes take none yet.
+
+- **Revolution:** a small formula language of its own, close to Fusion's simple expressions and
+  unlike After Effects' JavaScript: no scripting, no loops, no variables, no files. So a formula
+  from any project is safe to open: one over 4 096 bytes, nested too deeply or reading
+  itself in a loop gets a message instead of slowing or stopping the app.
+
 ## Comp size, Media In clips and node names (commands only for now) [Fork]
 
 > id: compositor.settings | does: changes a comp's size, frame rate and length, which clip a Media In node reads, and a node's name | cmd: comp.setSize, comp.setSource, comp.labelNode, comp.get | resolve: Fusion composition settings, MediaIn node source, renaming a node | premiere: — | when: a comp must be another size or length, a Media In node should read a different clip, or the graph needs clearer names | see: compositor.make, compositor.basics
@@ -186,6 +246,160 @@ Each drag or click is one undo step. The keys are the same as for Effect Control
 workflows (not the Fusion page's own shortcuts). An agent can also send `comp.setMasks` a full
 mask list.
 
+## Roto and Paint nodes [Fork]
+
+> id: compositor.roto | does: cuts a picture out along animated roto shapes, or paints brush strokes over it | cmd: comp.roto.addShape, comp.roto.setShapeKeyframe, comp.paint.addStroke | resolve: Polygon / B-Spline and Paint nodes on the Fusion page | premiere: animated masks in Effect Controls (no paint) | when: isolating a moving subject, or painting out a mark, a wire or a logo | see: compositor.masks
+
+A **Roto** node holds up to 256 shapes. Each one is a Bézier or B-spline outline with its own
+feather at every point, and its outline can be keyframed. **Output** picks what the node gives:
+
+- **Alpha** keeps its input only inside the shapes. With no shape switched on, the input passes
+  through unchanged.
+- **Matte** shows the shapes as white on black, ready to feed a Merge or a key.
+
+Select the node to see its shape list under the canvas. **Add shape** (`comp.roto.add`) adds an
+ellipse in the middle of the comp (`comp.roto.addShape`). Each shape `k` (counting from 0) has **Enabled**
+(`comp.roto<k>.enabled`), **Inverted** (`comp.roto<k>.inverted`), **Mode**
+(`comp.roto<k>.mode`: Add, Subtract, Intersect or Replace, combined with the shapes above it),
+**Feather** (`comp.roto<k>.feather`) and **Delete** (`comp.roto<k>.delete`). Shapes are drawn
+and reshaped on the Program monitor (below); an agent can also send an outline with
+`comp.roto.setShapeKeyframe`, one keyframe at a time.
+
+A **Paint** node draws strokes over its first input. Each stroke uses one tool:
+
+- **Color** paints a colour.
+- **Clone** copies the picture from a nearby spot. With a clone time offset it copies from
+  another frame instead, for example the frame before, to paint out something that moves away.
+  One Paint node clones from at most 4 other frames at a time; strokes past that copy from the
+  current frame, and `comp.explain` says so.
+- **Reveal** shows the node's second input, for example a clean plate.
+- **Erase** brings back the unpainted picture.
+
+A stroke lasts one frame or holds over a range of frames. The stroke list shows each stroke's
+tool, **Size** and **Opacity** (`comp.paint<k>.size` / `.opacity`) and how long it lasts, with
+**Move up** / **Move down** (`comp.paint<k>.up` / `.down`) and **Delete**
+(`comp.paint<k>.delete`). Strokes are painted on the Program monitor (below); an agent adds them
+with `comp.paint.addStroke`.
+
+Rotoscoping takes time whichever way you do it, so use the method that suits the shot:
+
+- A few shapes keyframed every few frames is quick, and fine for slow movement.
+- One keyframe per frame takes longer but stays exact on fast motion.
+- Magic Mask is often quicker for whole people or objects. Roto gives you control of every edge.
+
+Agents can also replace the whole list (`comp.setRoto`, `comp.setPaint`) or remove and
+reorder entries (`comp.roto.removeShape`, `comp.paint.removeStroke`, `comp.paint.reorder`).
+Roto shapes and paint strokes are saved with the project.
+
+## Drawing roto shapes and painting on the viewer [Fork] [Resolve-style]
+
+> id: compositor.viewer-tools | does: draws and reshapes roto shapes (points, Bézier handles, per-point feather) and paints strokes on the Program monitor | cmd: comp.roto.addShape, comp.roto.setShapeKeyframe, comp.paint.addStroke | resolve: the Polygon / B-Spline and Paint tools on the Fusion page's viewer | premiere: drawing a pen mask on the Program monitor | when: cutting out a moving subject by hand, or painting out a mark frame by frame | see: compositor.roto, compositor.masks
+
+Keep the Compositor open with the Roto or Paint node selected. Its shapes or the brush show over
+the Program monitor's picture (`compViewer.overlay`), with a small tool bar at its top left and a
+short hint at its bottom left. The comp clip has to be under the playhead. The tools work the
+same in both workflows.
+
+Drawing a roto shape, as with Resolve's Polygon and B-Spline tools:
+
+1. Pick **Bézier** (`compViewer.roto.bezier`) or **B-Spline** (`compViewer.roto.bSpline`). A
+   Roto node with no shapes starts in Bézier.
+2. Bézier: click to add a corner point, or press and drag to add a smooth point; the drag pulls
+   out its handles. B-Spline: click each control point. The curve stays inside the points, so a
+   B-spline is quick for soft, organic edges, while Bézier gives exact corners and curves.
+3. Click the first point (`compViewer.draft.first`) or press **Enter** to close the shape (at least
+   3 points). **Backspace** removes the last point and **Escape** drops the drawing.
+
+The new shape is keyframed at the playhead (`comp.roto.addShape`), and the tool goes back to
+**Select** (`compViewer.roto.select`).
+
+Reshaping, in Select:
+
+- Drag a square point (`compViewer.roto<k>.point<i>`) to move it, or drag inside a shape to move
+  all of it. **Alt-drag** a point also moves its whole shape.
+- A click selects a point. The selected shape's smooth points show round Bézier handles
+  (`compViewer.roto<k>.point<i>.in` / `.out`). Drag one to bend the curve; the other turns with
+  it. Hold **Alt** while dragging to move one handle alone (a cusp).
+- **Alt-click** a point of a Bézier shape to switch it between smooth and corner.
+- The selected point shows two orange diamonds on a dashed line: the outer feather
+  (`compViewer.roto.featherOut`) and the inner feather (`compViewer.roto.featherIn`). Drag one
+  away from the point to soften the edge outside or inside the outline there. This is per point,
+  on top of the shape's own **Feather**: use it where only part of the edge is blurred, such as
+  hair or a moving hand.
+
+Every change is a keyframe at the playhead (`comp.roto.setShapeKeyframe`). To animate, move the playhead and adjust the shape again. You can work every few
+frames and let the shape move smoothly between them, or key every frame for fast motion.
+
+Painting:
+
+1. Pick the tool on the bar: **Color**, **Clone**, **Reveal** or **Erase**
+   (`compViewer.paint.color` / `.clone` / `.reveal` / `.erase`). Set **Size** (pixels),
+   **Hardness** and **Opacity** (`compViewer.paint.size` / `.hardness` / `.opacity`), and for
+   Color the colour swatch (`compViewer.paint.swatch`). The circle under the pointer is the brush
+   size.
+2. Drag on the picture. Each drag is one stroke (`comp.paint.addStroke`). A mouse paints at
+   full pressure.
+3. Clone: **Alt-click** where to copy from, then paint. The offset from that spot to where you
+   start painting is kept for the next strokes, and a small cross shows where the brush copies
+   from.
+4. **This frame only** (`compViewer.paint.singleFrame`) makes the next strokes last only for the
+   playhead's frame. Use it for frame-by-frame fixes such as dust, a flash or a passing wire.
+   Leave it off for a fix that holds through the whole comp, such as a logo on a still wall.
+
+Each reshaping drag or stroke is one undo step. The brush settings are interface state (`ui.panels.compViewer.brush`), so an agent can read or
+set them with `ui.inspect` / `ui.set`.
+
+## Roto shapes that follow the object [Fork]
+
+> id: compositor.roto-track | does: makes a roto shape drawn once follow a moving object, by linking it to a tracker or by tracking it with Magic Mask | cmd: comp.roto.linkTracker, comp.roto.unlinkTracker, comp.roto.trackShape, comp.roto.stopTrack | resolve: connecting a Tracker to a Polygon's position, or Magic Mask on the Color page | premiere: Track Selected Mask in Effect Controls | when: a moving subject you would otherwise keyframe by hand | see: compositor.roto
+
+Draw a shape once and let it follow what it outlines. Each shape `k` of a Roto node has a second
+row with two ways to do that.
+
+**Follow a tracker.** Add a Tracker or Planar Tracker node, analyse it, and pick it in the
+shape's **Follow tracker** list (`comp.roto<k>.follow`, `comp.roto.linkTracker`). The shape
+moves the way the tracker measured, whatever the tracker node itself does with its picture.
+The shape stays where it is on screen at the playhead when you pick the tracker, and keyframes
+you already set stay where you drew them. Its own keyframes still work on top of the track, for a
+hand that also opens and closes. Pick **None** to stop following (`comp.roto.unlinkTracker`); the
+shape again stays where it is at the playhead. If the tracker is deleted, the list shows **Missing tracker** and the
+shape stays where it was drawn. An agent can also follow one point of a Tracker
+(`"output"`: the point's name), which moves the shape without turning it.
+
+**Track the shape with Magic Mask.** Draw the shape round the subject at the playhead, then
+click **Track forward** or **Track backward** (`comp.roto<k>.track.forward` / `.backward`,
+`comp.roto.trackShape`). Magic Mask (SAM 2.1 when it is installed, otherwise MobileSAM) follows
+the subject frame by frame through the Roto node's input. Each frame becomes a shape keyframe
+with the same number of points as your shape and the same per-point feather. An agent can space
+the keyframes out (`"every"`: frames) and pick the model (`"model"`). It runs in the background;
+**Stop** (`comp.roto<k>.track.stop`, `comp.roto.stopTrack`) keeps what was tracked so far. The
+whole track is one undo step. If you change the shape while it runs, nothing is written, so you
+can try again.
+
+Which to use depends on the shot:
+
+- A tracker suits rigid things and planes (a sign, a screen, a car door). The shape keeps its
+  exact outline and only moves.
+- Magic Mask suits things that change shape (a person, an animal). It redraws the outline every
+  frame, so check the edges and fix a keyframe where it slips.
+- For fast or blurred motion, a beginner may find Magic Mask quicker. A finishing artist may
+  prefer a tracker plus a few hand keyframes for full control.
+
+## Grouping nodes into a macro [Fork] [Resolve-style]
+
+> id: compositor.groups | does: packs connected nodes into one Group node (a macro) and puts chosen inner settings on it | cmd: comp.group, comp.ungroup, comp.group.expose, comp.group.unexpose | resolve: Group and Macro nodes on the Fusion page | premiere: none | when: a graph is too big to read, or the same nodes are reused | see: compositor.basics
+
+1. Select nodes that flow into one node (Media Out stays outside) and click **Group** over the
+   canvas (or right-click ▸ Group; `comp.group`). The picture doesn't change.
+2. Double-click the group (or **Open Group**) to edit its inside like the comp itself (the
+   comp commands take a `group` path); right-click ▸ Group Input adds an input. Select an
+   inner node and click **Expose** on a setting to put it on the group (`comp.group.expose`;
+   `comp.group.unexpose` takes it off).
+   The breadcrumb at the top goes back out.
+3. **Ungroup** (`comp.ungroup`) puts the nodes back. Groups are saved in the project.
+
+Grouping is optional: a flat graph is easier to follow while building, a group easier to reuse.
+
 ## Turning stacked clips into a comp
 
 > id: compositor.convert | does: replaces clips stacked on several tracks with one comp clip that looks the same | cmd: comp.convertToCompClip | resolve: New Fusion Clip from a selection | premiere: — (closest: Nest) | when: a layered shot you want to keep as one reusable piece | see: compositor.make
@@ -220,6 +434,28 @@ background is a Media In of the footage → Media Out.
 Both can be built in one go with the command batch kept in the repository as
 `tools/comp-accept.json` (an agent or script runs it through the control channel's
 `command_batch`): it puts comp A on V2 and comp B on V3, both reading the footage on V1.
+
+## Saving part of a comp as a template [Fork]
+
+> id: compositor.templates | does: saves a piece of a comp graph as a named template file and adds it to another comp later | ui: comp.canvas.saveTemplate, comp.canvas.insertTemplate | cmd: comp.template.save, comp.template.list, comp.template.insert, comp.template.delete | resolve: saving a Fusion macro or setting | premiere: — (closest: an effect preset) | when: a setup you build again and again, such as a glow or title look | see: compositor.recipes
+
+On the canvas: select nodes, right-click empty space, **Save Selection as Template…**
+{ui:comp.canvas.saveTemplate}, type a name. **Insert Template ▸** {ui:comp.canvas.insertTemplate}
+lists saved ones and places the chosen one where you clicked;
+**Delete Template…** inside it asks before it removes one.
+
+The same as commands:
+
+1. `comp.template.save` with `nodes` (ids from `comp.get`) and a `name`. Only links between
+   those ids are kept. A Media In that reads a project item is left out, as is Media Out (the
+   reply says so). An existing name needs `replace: true`.
+2. `comp.template.list`: names, sizes and save times. Damaged files are skipped.
+3. `comp.template.insert` with `name` and optionally `at: [x, y]` (canvas place of its top-left
+   corner). The copies get fresh ids; wire them in afterwards.
+4. `comp.template.delete` with `name` removes the file only.
+
+Files live in the data folder under `templates/comp`; names can't hold `/` or `..`. Small
+pieces combine more freely; whole looks are quicker to reuse. Pick what suits you.
 
 ## What makes a comp fast or slow
 

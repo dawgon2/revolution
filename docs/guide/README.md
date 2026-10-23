@@ -31,13 +31,14 @@ own solver and explanations).
 | [color/README.md](color/README.md) | How colour works in this fork, start here | written (G0–G1) |
 | [color/color-management.md](color/color-management.md) | F-Log2 / F-Gamut input, DaVinci Wide Gamut / Intermediate working space, Rec.709 output, highlight roll-off | written (G0–G1) |
 | [color/nodes.md](color/nodes.md) | What a node is, how the chain flows, one job per node, a starter tree for F-Log2 and other node orders with their trade-offs (CO1); the node canvas, parallel / layer / outside / splitter and combiner / key mixer nodes and what the explainer says about them (C2) | written (G0–G1, C2) |
-| [color/primaries.md](color/primaries.md) | Lift / Gamma / Gain / Offset wheels, contrast and pivot, saturation, temperature / tint | written (G0–G1) |
+| [color/primaries.md](color/primaries.md) | Lift / Gamma / Gain / Offset wheels, contrast and pivot, saturation, temperature / tint; HDR zone wheels | written (G0–G1, G4.2) |
 | [color/curves.md](color/curves.md) | Custom and the five hue / luma / sat curves | partial (G0–G1) |
-| [color/secondaries.md](color/secondaries.md) | Qualifier, windows, tracking (G2) | written (G2.1–G2.3) |
+| [color/secondaries.md](color/secondaries.md) | Qualifier (HSL and 3D), windows, tracking incl. planar (G2, G4), Magic Mask (G3), colour warper (G4) | written (G2.1–G2.3, G3.3, G4.1, G4.3, G4.4) |
 | [color/noise.md](color/noise.md) | Spatial noise reduction on a node (G2.4), temporal per clip (6.7 / 6.7b) | written (G2.4 spatial, 6.7b temporal) |
 | [color/matching.md](color/matching.md) | Stills, wipe / split, copy / paste / append grades, "same grade?", shot comparison, Shot Match, node explainer, AI explanations | written (G0–G2b) |
 | [color/reference-look.md](color/reference-look.md) | Reference pictures in the Gallery, "how do I get this look?": measured difference, grade recipe, on set, Do this | written (REF) |
-| [compositor.md](compositor.md) | Comps: nodes, New Comp Clip, Open in Compositor, Convert to Comp Clip, two starter comps, what is cached | done for C1 (comp size, Media In source and node names are commands only) |
+| [compositor.md](compositor.md) | Comps: nodes, New Comp Clip, Open in Compositor, Convert to Comp Clip, two starter comps, what is cached | done for C1 (comp size, Media In source and node names are commands only); C4: expressions, groups (macros), templates |
+| [compositor-trackers.md](compositor-trackers.md) | Tracker and Planar Tracker nodes: match move, stabilise, corner pin | C3.5a: numeric controls (viewer tools later) |
 | [color/finishing.md](color/finishing.md) | Grain, highlight soft clip, node LUTs, scopes (noise reduction: noise.md) | written (grain, soft clip, LUT; scopes GUIDE-8) |
 | [color/lumetri.md](color/lumetri.md) | Lumetri Color (Premiere-style) and how it relates to the node grader | written (cloud) |
 | [color/coach.md](color/coach.md) | Grading Coach: guided lessons (the lesson list, card buttons, outline, progress, the seven lessons, writing a lesson file), context hints (the list, the switch, writing a hint) and Ask the coach | written (G2.12) |

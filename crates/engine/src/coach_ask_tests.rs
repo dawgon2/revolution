@@ -128,7 +128,9 @@ fn thirty_beginner_questions_find_their_section_and_pass_the_command_check() {
         assert!(!a["summary"].as_str().unwrap_or("").contains("{ui:"));
     }
     eprintln!("ask the coach: {hits}/30 best sections; misses: {misses:#?}");
-    assert!(hits >= 28, "only {hits}/30 questions found their section first: {misses:#?}");
+    // 28 until C3.11; 29 with BM25 b 0.6 and `compositor-trackers.md` indexed (27 on the merged
+    // C3.10 corpus at b 0.5 even without that page)
+    assert!(hits >= 29, "only {hits}/30 questions found their section first: {misses:#?}");
 }
 
 #[test]
@@ -291,8 +293,9 @@ fn intros_fold_into_the_first_section_and_stubs_are_not_answers() {
 // ---------- the eval set (docs/fork/coach-eval/questions.toml, FORK-PLAN §1a.47) ----------
 
 /// Questions of the eval set that must pass (DIAGNOSIS.md §1 rule). This may only go up; raise it
-/// when the guide or the coach improves (FORK-PLAN §1a.47).
-const EVAL_FLOOR: usize = 114;
+/// when the guide or the coach improves (FORK-PLAN §1a.47). 115 measured with C3.11 (BM25 b 0.6,
+/// `compositor-trackers.md` indexed).
+const EVAL_FLOOR: usize = 115;
 
 #[derive(Deserialize)]
 struct EvalFile {
@@ -366,6 +369,19 @@ fn node_questions_in_everyday_words_find_the_nodes_lesson() {
         let a = ask(&mut s, q);
         assert_eq!(a["covered"], json!(true), "{q:?}: {a}");
         assert!(a["sources"].to_string().contains("nodes.md"), "{q:?}: answered from the nodes lesson: {a}");
+    }
+}
+
+/// Fork C3.5a: the comp tracker page (left out of the keyword coach's index) has sections (its
+/// page tag line) and the assistant's retrieval finds them. Without the tag line the page split
+/// into nothing and no coach read it.
+#[test]
+fn comp_tracker_questions_reach_the_trackers_page() {
+    let page = GUIDE_PAGES.iter().find(|(p, _)| *p == "compositor-trackers.md").map(|(_, s)| *s).unwrap_or("");
+    assert!(!coach_ask::split_page("compositor-trackers.md", page).is_empty(), "the page has answerable sections");
+    for q in ["how do I use the planar tracker node", "how do I track points with a tracker node in a comp", "how do I stabilise a shot in the compositor"] {
+        let got: Vec<&str> = retrieve(q, 5).iter().map(|r| r.section.page).collect();
+        assert!(got.contains(&"compositor-trackers.md"), "{q:?}: {got:?}");
     }
 }
 
@@ -930,4 +946,18 @@ fn command_reference_shortcuts_and_menus_match_the_specs() {
         }
     }
     assert!(problems.is_empty(), "{} mismatch(es):\n{}", problems.len(), problems.join("\n"));
+}
+
+/// C3.11: the `see:` link lift only re-ranks the sections after the word ranking's first five,
+/// scores stay best first and no section comes twice.
+#[test]
+fn see_links_keep_the_first_five_and_the_order() {
+    for q in ["clone myself so I appear twice in the same shot", "rotoscope the person so I can outline them", "how do I add a serial node?", "x", ""] {
+        let five = retrieve(q, 5);
+        let all = retrieve(q, MAX_RETRIEVE);
+        assert!(five.iter().zip(&all).all(|(a, b)| std::ptr::eq(a.section, b.section)), "{q}");
+        assert!(all.windows(2).all(|w| w[0].score >= w[1].score), "{q}");
+        let mut seen = std::collections::HashSet::new();
+        assert!(all.iter().all(|r| seen.insert(std::ptr::from_ref(r.section))), "{q}: a section twice");
+    }
 }

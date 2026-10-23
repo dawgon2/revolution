@@ -15,6 +15,7 @@ fn graph() -> CanvasGraph {
         is_output,
         key_inputs: 0,
         key_outputs: 0,
+        actions: Vec::new(),
     };
     CanvasGraph {
         nodes: vec![node(1, 0.0, 0, false), node(2, 220.0, 2, false), node(3, 440.0, 1, true)],

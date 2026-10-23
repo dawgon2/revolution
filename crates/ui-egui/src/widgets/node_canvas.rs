@@ -29,6 +29,10 @@ pub struct NodeView {
     pub key_inputs: u32,
     /// Bit `i` set: output port `i` carries a key.
     pub key_outputs: u32,
+    /// This node's own extra right-click entries as (key, label), after
+    /// [`CanvasGraph::node_actions`] (e.g. Ungroup on a group node only); a click gives
+    /// [`CanvasEvent::NodeAction`].
+    pub actions: Vec<(String, String)>,
 }
 
 /// A connection from an output port to an input port, as (node, port).
@@ -179,6 +183,23 @@ pub fn fit(state: &mut CanvasState, graph: &CanvasGraph, size: Vec2) {
 /// (`<ns>.canvas`, `<ns>.node.<id>`, `<ns>.port.<id>.in.<n>` / `.out.<n>`, `<ns>.edge.<from>-<to>.<port>`,
 /// `<ns>.add.<kind>`).
 pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, reg: &mut Registry, ns: &str) -> Vec<CanvasEvent> {
+    node_canvas_with_menu(ui, graph, state, reg, ns, &mut |_, _, _| {})
+}
+
+/// Extra contents of the background menu: drawn after its entries with the menu's `Ui`, the
+/// registry and where the menu was opened (canvas units). Runs only while the menu is open.
+pub type ExtraMenu<'a> = dyn FnMut(&mut Ui, &mut Registry, [f32; 2]) + 'a;
+
+/// [`node_canvas`] with extra background-menu contents (submenus and the like that the flat
+/// [`CanvasGraph::canvas_actions`] can't express).
+pub fn node_canvas_with_menu(
+    ui: &mut Ui,
+    graph: &CanvasGraph,
+    state: &mut CanvasState,
+    reg: &mut Registry,
+    ns: &str,
+    extra: &mut ExtraMenu<'_>,
+) -> Vec<CanvasEvent> {
     let mut events = Vec::new();
     state.zoom = finite_or(state.zoom, 1.0).clamp(MIN_ZOOM, MAX_ZOOM);
     state.pan = [finite_or(state.pan[0], 0.0), finite_or(state.pan[1], 0.0)];
@@ -306,7 +327,7 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
                     ui.close();
                 }
             }
-            for (key, label) in &graph.node_actions {
+            for (key, label) in graph.node_actions.iter().chain(&n.actions) {
                 let b = ui.button(crate::i18n::t(label));
                 reg.add_response(&format!("{ns}.nodeMenu.{key}"), &b, label);
                 if b.clicked() {
@@ -440,6 +461,8 @@ pub fn node_canvas(ui: &mut Ui, graph: &CanvasGraph, state: &mut CanvasState, re
                 ui.close();
             }
         }
+        let pos = ui.data(|d| d.get_temp(menu_at)).unwrap_or([0.0, 0.0]);
+        extra(ui, reg, pos);
     });
 
     // keys over the canvas

@@ -674,3 +674,47 @@ fn g2_accept_skin_qualifier_and_tracked_window_hold_over_5_seconds() {
     assert!(worst_centre > 1.15, "the subject stays graded over 5 s: {worst_centre}");
     assert!(worst_outside < 0.01, "nothing outside the subject changes: {worst_outside}");
 }
+
+/// Fork C3.9 review fix: `path_to_json`'s `in` / `out` form was read by serde as a MaskPath
+/// (`[x, y]` points, unknown keys ignored), dropping every tangent; both forms now round-trip
+/// with tangents and per-point feather.
+#[test]
+fn path_json_round_trips_tangents_and_feather_in_both_forms() {
+    use crate::masks::{path_from_json, path_to_json};
+    use filmcraft_geom::Vec2;
+    use filmcraft_project::{MaskPath, MaskVertex};
+    let v = |x: f64, y: f64, t: (f64, f64)| MaskVertex { p: Vec2::new(x, y), t_in: Vec2::new(-t.0, -t.1), t_out: Vec2::new(t.0, t.1), ..MaskVertex::default() };
+    let path =
+        MaskPath { vertices: vec![v(10.0, 10.0, (5.0, 0.0)).with_feather(2.0, 7.5), v(90.0, 20.0, (0.0, 0.0)), v(50.0, 80.0, (-3.0, 4.0))], closed: true };
+    assert_eq!(path_from_json(&path_to_json(&path)), Some(path.clone()), "the in / out form");
+    assert_eq!(path_from_json(&serde_json::to_value(&path).unwrap()), Some(path.clone()), "the serde form");
+    let open = MaskPath { closed: false, ..path.clone() };
+    assert_eq!(path_from_json(&path_to_json(&open)), Some(open.clone()));
+    assert_eq!(path_from_json(&serde_json::to_value(&open).unwrap()), Some(open));
+    // `{x, y}` points, camelCase feathers and bare point lists still read
+    let j = json!({"vertices": [{"p": {"x": 1.0, "y": 2.0}, "t_out": {"x": 3.0, "y": 0.0}, "featherOut": 4.0}, [5.0, 6.0], {"x": 7.0, "y": 8.0}]});
+    let p = path_from_json(&j).unwrap();
+    assert_eq!(p.vertices.len(), 3);
+    assert_eq!((p.vertices[0].t_out, p.vertices[0].feather_out), (Vec2::new(3.0, 0.0), 4.0));
+    assert_eq!(p.vertices[2].p, Vec2::new(7.0, 8.0));
+    // junk is refused, never a panic
+    for bad in [json!(null), json!(5), json!({"vertices": [{"p": "x"}]}), json!([[1.0]])] {
+        assert_eq!(path_from_json(&bad), None, "{bad}");
+    }
+}
+
+/// The monitor's pen sends `masks.add` its Bézier path in the `path_to_json` form: the curve
+/// handles are kept (they were dropped before the fix above).
+#[test]
+fn a_pen_mask_keeps_its_bezier_handles() {
+    use filmcraft_geom::Vec2;
+    use filmcraft_project::{MaskPath, MaskVertex};
+    let (mut s, clip) = demo();
+    let v = |x: f64, y: f64| MaskVertex { p: Vec2::new(x, y), t_in: Vec2::new(-20.0, 0.0), t_out: Vec2::new(20.0, 0.0), ..MaskVertex::default() };
+    let path = MaskPath { vertices: vec![v(100.0, 100.0), v(300.0, 120.0), v(200.0, 260.0)], closed: true };
+    let p = json!({"clip": clip.0, "effect": "opacity", "shape": "bezier", "path": crate::masks::path_to_json(&path)});
+    s.execute("masks.add", p).unwrap();
+    let l = s.execute("masks.list", json!({})).unwrap();
+    let got = crate::masks::path_from_json(&l["masks"][0]["path"]).unwrap();
+    assert_eq!(got.vertices.iter().map(|q| q.t_out).collect::<Vec<_>>(), vec![Vec2::new(20.0, 0.0); 3], "{got:?}");
+}

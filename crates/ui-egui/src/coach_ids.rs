@@ -29,7 +29,7 @@ pub const MAX_SEEN: usize = 50_000;
 pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "about.*", "about.credits.header.*", "about.credits.names.*", "about.tab.*", "addTracks.*.amount", "addTracks.*.placement",
     "addTracks.*.placement.option.*", "addTracks.*.type", "addTracks.*.type.option.*", "align.*", "assistant.doThis.*", "assistant.lesson.*", "assistant.line.*.*", "assistant.noSteps.*", "assistant.rate.*.correction", "assistant.rate.*.down", "assistant.rate.*.share", "assistant.rate.*.up", "assistant.reference.*", "assistant.seen.*", "assistant.setup.*", "assistant.step.*.*", "assistant.turn.*", "audioGain.*", "audioGain.*.value",
-    "audioMeters.channel.*", "clipMixer.*", "clips.card.*", "clips.split.*", "coach.ask.assistLine.*", "coach.ask.step.*", "coach.lessons.item.*", "comp.param.*", "comp.wheel.*", "comp.curve.*", "comp.param.*.stopwatch", "comp.mask.*", "comp.mask*.*", "colorDialog.par.*", "colorDialog.space.*", "colorDialog.working.*",
+    "audioMeters.channel.*", "clipMixer.*", "clips.card.*", "clips.split.*", "coach.ask.assistLine.*", "coach.ask.step.*", "coach.lessons.item.*", "comp.canvas.insertTemplate.**", "comp.canvas.deleteTemplate.**", "comp.param.*", "comp.canvas.breadcrumb.*", "comp.expose.*", "comp.wheel.*", "comp.curve.*", "comp.param.*.stopwatch", "comp.inspector.*.expr", "comp.inspector.*.expr.toggle", "comp.inspector.*.expr.error", "comp.mask.*", "comp.mask*.*", "comp.roto*.*", "comp.roto*.track.*", "comp.paint*.*", "comp.track.analyse.*", "comp.track.point*.x", "comp.track.point*.y", "comp.track.point*.delete", "comp.planar.corner*.x", "comp.planar.corner*.y", "compViewer.roto*.point*.*", "compViewer.roto*.point*", "compViewer.track.point*", "compViewer.track.pattern*", "compViewer.track.search*", "compViewer.planar.corner*", "compViewer.planar.region*", "colorDialog.par.*", "colorDialog.space.*", "colorDialog.working.*",
     "deleteTracks.*", "deleteTracks.*.option.*", "deleteTracks.*.option.empty", "deleteTracks.*.target", "display.*", "dock.gutter.*",
     "editCameras.enabled.*", "editCameras.name.*", "editCameras.thumb.*", "effectControls.*.*", "effectControls.*.*.eyedropper",
     "effectControls.*.*.graphs", "effectControls.*.*.keyframe.*", "effectControls.*.*.reset", "effectControls.*.*.stopwatch",
@@ -44,9 +44,9 @@ pub const DYNAMIC_ID_PATTERNS: &[&str] = &[
     "export.queue.item.*", "export.queue.item.*.*", "export.section.*", "exportFrame.depth.*", "exportFrame.format.*",
     "exportTemplate.control.*", "find.match.*", "find.row.*.column", "find.row.*.operator", "find.row.*.text", "fxEditor.*.*",
     "fxEditor.*.close", "fxEditor.*.curve", "fxEditor.*.curve.*", "fxEditor.*.node.*", "fxEditor.*.param.*", "fxEditor.*.plot",
-    "fxEditor.*.reset", "fxEditor.*.toggle.*", "gfxTemplates.control.*", "gfxTemplates.item.*", "grade.curve.*",
+    "fxEditor.*.reset", "fxEditor.*.toggle.*", "gfxTemplates.control.*", "gfxTemplates.item.*", "grade.curve.*", "grade.hdr.*.*", "grade.hdr.wheel.*", "grade.hdr.wheel.*.reset",
     "grade.param.**", "grade.param.**.reset", "grade.qual.show.*", "grade.tab.*", "grade.wheel.*", "grade.wheel.*.master", "grade.wheel.*.reset", "grade.window.*",
-    "grade.window.*.delete", "grade.window.*.invert", "grade.window.*.softness", "grade.window.*.track.*", "grade.window.add.*",
+    "grade.window.*.delete", "grade.window.*.invert", "grade.window.*.softness", "grade.window.*.track.*", "grade.window.add.*", "grade.warper.mode.*", "grade.warper.point.*",
     "graphics.*", "graphics.align.*", "graphics.arrange.*", "graphics.distribute.*", "graphics.layers.*", "graphics.layers.*.visible",
     "graphics.pin.*", "graphics.prop.*", "graphics.roll.*", "graphics.section.*", "graphics.textProperties.type.*", "graphics.time.*",
     "guides.manage.row.*", "header.*", "header.mode.*", "import.*", "import.link.*", "inspector.*.*", "inspector.file.*", "inspector.section.*", "inspector.tab.*", "labels.colors.*.color", "labels.colors.*.name",
@@ -137,6 +137,20 @@ pub fn narrowed(id: &str) -> Option<bool> {
     if let Some(k) = rest("grade.wheel.") {
         let k = k.strip_suffix(".reset").or_else(|| k.strip_suffix(".master")).unwrap_or(k);
         return Some(WHEELS.iter().any(|w| w.0 == k));
+    }
+    if let Some(k) = rest("grade.hdr.") {
+        // (panels/grade_hdr.rs: the HDR wheels and their fields)
+        use crate::panels::grade_hdr::{HDR_FIELDS, HDR_WHEELS};
+        let wheel = |z: &str| HDR_WHEELS.iter().any(|w| w.0 == z);
+        if let Some(w) = k.strip_prefix("wheel.") {
+            return Some(wheel(w.strip_suffix(".reset").unwrap_or(w)));
+        }
+        if k == "reset" || k == "graph" {
+            return Some(true);
+        }
+        let Some((z, f)) = k.split_once('.') else { return Some(false) };
+        let fields = if z == "global" { &HDR_FIELDS[..2] } else { &HDR_FIELDS[..] };
+        return Some(wheel(z) && fields.iter().any(|x| x.0 == f));
     }
     if let Some(k) = rest("grade.curve.") {
         return Some(CURVES.iter().any(|c| c.0.trim_start_matches("curve.") == k));
@@ -276,6 +290,9 @@ mod tests {
         assert!(matches_dynamic("grade.wheel.gain") && !matches_dynamic("grade.wheel.gian"));
         assert!(matches_dynamic("grade.tab.qualifier") && !matches_dynamic("grade.tab.qualifer"));
         assert!(matches_dynamic("grade.curve.master") && !matches_dynamic("grade.curve.y"));
+        assert!(matches_dynamic("grade.hdr.wheel.specular") && matches_dynamic("grade.hdr.wheel.global.reset") && !matches_dynamic("grade.hdr.wheel.mid"));
+        assert!(matches_dynamic("grade.hdr.shadow.falloff") && matches_dynamic("grade.hdr.global.sat"));
+        assert!(!matches_dynamic("grade.hdr.global.range") && !matches_dynamic("grade.hdr.light.hue") && !matches_dynamic("grade.hdr.x"));
         assert!(matches_dynamic("grade.window.add.linear") && !matches_dynamic("grade.window.add.star"));
         assert!(matches_dynamic("grade.qual.show.2") && !matches_dynamic("grade.qual.show.3"));
         assert!(matches_dynamic("stills.mode.wipe") && !matches_dynamic("stills.mode.fade"));

@@ -226,7 +226,7 @@ impl Session {
         let seq = st.sequence.filter(|q| self.project.sequence(*q).is_some())?;
         let scale = fit_scale(self.project.sequence(seq)?.settings.width);
         let provider = self.media.provider(self.project.clone(), self.services.clone());
-        let opts = filmcraft_render::RenderOptions { scale, captions: true, ..Default::default() };
+        let opts = filmcraft_render::RenderOptions { scale, captions: true, mattes: self.magic_mask.token(), ..Default::default() };
         let img = filmcraft_render::render_sequence(&self.project, seq, st.time.max(filmcraft_time::Tick::ZERO), opts, &provider);
         let (w, h) = (u32::try_from(img.w).ok()?, u32::try_from(img.h).ok()?);
         Some(StillPicture { w, h, rgba: img.over_black_rgba8() })

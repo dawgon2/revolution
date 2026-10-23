@@ -246,31 +246,106 @@ fn ixml_time_reference(x: &[u8]) -> Option<u64> {
     Some(low | field("BWF_TIME_REFERENCE_HIGH").unwrap_or(0) << 32)
 }
 
-/// Encode interleaved f32 samples as a 16-bit PCM WAV file.
+/// The most sample data a 16-bit WAV can hold: its RIFF sizes are 32-bit.
+pub const WAV16_MAX_DATA_BYTES: u64 = u32::MAX as u64 - 36;
+
+/// The 44-byte header of a 16-bit PCM WAV with `data_len` bytes of samples; `None` when a size
+/// doesn't fit its 32-bit field (never wrapped).
+fn wav16_header(data_len: u64, channels: u16, rate: u32) -> Option<[u8; 44]> {
+    if data_len > WAV16_MAX_DATA_BYTES || channels == 0 {
+        return None;
+    }
+    let riff = u32::try_from(36 + data_len).ok()?;
+    let data = u32::try_from(data_len).ok()?;
+    let block = channels.checked_mul(2)?;
+    let byte_rate = rate.checked_mul(u32::from(block))?;
+    let mut h = [0u8; 44];
+    let parts: [&[u8]; 12] = [
+        b"RIFF",
+        &riff.to_le_bytes(),
+        b"WAVEfmt ",
+        &16u32.to_le_bytes(),
+        &1u16.to_le_bytes(),
+        &channels.to_le_bytes(),
+        &rate.to_le_bytes(),
+        &byte_rate.to_le_bytes(),
+        &block.to_le_bytes(),
+        &16u16.to_le_bytes(),
+        b"data",
+        &data.to_le_bytes(),
+    ];
+    let mut i = 0;
+    for p in parts {
+        h.get_mut(i..i + p.len())?.copy_from_slice(p);
+        i += p.len();
+    }
+    Some(h)
+}
+
+/// Encode interleaved f32 samples as a 16-bit PCM WAV file. Input beyond what a WAV can hold
+/// (4 GB of samples) or a sample rate / channel count whose header fields overflow is cut to
+/// what fits (the header is never wrapped); [`try_write_wav16_planar`] refuses instead.
 pub fn write_wav16(samples: &[f32], channels: u16, rate: u32) -> Vec<u8> {
-    let data_len = samples.len() * 2;
-    let mut v = Vec::with_capacity(44 + data_len);
-    v.extend_from_slice(b"RIFF");
-    v.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
-    v.extend_from_slice(b"WAVEfmt ");
-    v.extend_from_slice(&16u32.to_le_bytes());
-    v.extend_from_slice(&1u16.to_le_bytes());
-    v.extend_from_slice(&channels.to_le_bytes());
-    v.extend_from_slice(&rate.to_le_bytes());
-    v.extend_from_slice(&(rate * channels as u32 * 2).to_le_bytes());
-    v.extend_from_slice(&(channels * 2).to_le_bytes());
-    v.extend_from_slice(&16u16.to_le_bytes());
-    v.extend_from_slice(b"data");
-    v.extend_from_slice(&(data_len as u32).to_le_bytes());
+    let channels = channels.clamp(1, 1024);
+    let rate = rate.min(u32::MAX / 2048);
+    let max = (WAV16_MAX_DATA_BYTES / 2 / u64::from(channels) * u64::from(channels)) as usize;
+    let samples = samples.get(..samples.len().min(max)).unwrap_or_default();
+    let data_len = samples.len() as u64 * 2;
+    let Some(h) = wav16_header(data_len, channels, rate) else { return Vec::new() };
+    let mut v = Vec::with_capacity(44 + data_len as usize);
+    v.extend_from_slice(&h);
     for s in samples {
         v.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes());
     }
     v
 }
 
+/// Encode equal-length planar f32 channels as a 16-bit PCM WAV, without an interleaved copy.
+/// Errors (never wraps or aborts) when the result wouldn't fit a WAV's 32-bit sizes or memory.
+pub fn try_write_wav16_planar(channels: &[&[f32]], rate: u32) -> std::result::Result<Vec<u8>, String> {
+    let n = channels.first().map_or(0, |c| c.len());
+    let ch = u16::try_from(channels.len()).ok().filter(|c| *c > 0).ok_or("1 to 65535 channels are supported")?;
+    if channels.iter().any(|c| c.len() != n) {
+        return Err("channels of different lengths".into());
+    }
+    let data_len = (n as u64).checked_mul(u64::from(ch)).and_then(|v| v.checked_mul(2)).ok_or("too much audio for one WAV file")?;
+    let h = wav16_header(data_len, ch, rate).ok_or_else(|| format!("{} MB of audio is more than one WAV file can hold (4 GB)", data_len / 1_000_000))?;
+    let total = usize::try_from(data_len + 44).map_err(|_| "too much audio for one WAV file")?;
+    let mut v = Vec::new();
+    v.try_reserve_exact(total).map_err(|_| "not enough memory for the WAV file")?;
+    v.extend_from_slice(&h);
+    for i in 0..n {
+        for c in channels {
+            let s = c.get(i).copied().filter(|s| s.is_finite()).unwrap_or(0.0);
+            v.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes());
+        }
+    }
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wav16_sizes_never_wrap() {
+        // planar = interleaved
+        let (l, r) = ([0.5f32, -0.25, 1.0], [0.0f32, 0.75, f32::NAN]);
+        let p = try_write_wav16_planar(&[&l, &r], 48_000).unwrap();
+        let i = write_wav16(&[0.5, 0.0, -0.25, 0.75, 1.0, 0.0], 2, 48_000);
+        assert_eq!(p, i);
+        assert_eq!(&p[40..44], &12u32.to_le_bytes());
+        // a size past the 32-bit fields is refused, never wrapped
+        assert!(wav16_header(WAV16_MAX_DATA_BYTES, 2, 48_000).is_some());
+        assert!(wav16_header(WAV16_MAX_DATA_BYTES + 1, 2, 48_000).is_none());
+        assert!(wav16_header(1 << 33, 8, 48_000).is_none());
+        assert!(wav16_header(4, 1, u32::MAX).is_none());
+        assert!(try_write_wav16_planar(&[&l, &r[..2]], 48_000).is_err());
+        assert!(try_write_wav16_planar(&[], 48_000).is_err());
+        // the legacy writer clamps hostile header values instead of overflowing
+        let w = write_wav16(&[0.1; 4], u16::MAX, u32::MAX);
+        assert!(w.len() >= 44);
+    }
 
     #[test]
     fn roundtrip() {

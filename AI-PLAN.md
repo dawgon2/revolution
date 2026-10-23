@@ -67,6 +67,17 @@ serial grades.
 and ≥ the template explainer's coverage on the new ones; mean answer time within AI1's ≤ 2.5 s;
 no crash on hostile graphs. Tag `ai-2`.
 
+## Phase AI2b: retrain on what shipped up to 0.3.0 (owner, 2026-10-22, FORK-PLAN §1a.128; ≈ 6–12 h)
+
+Right after Revolution 0.3.0 is published (after G4). Same recipe as AI2, on everything added since: A3 mixer,
+Y2 VFR, G3 Magic Mask + A3.7 voice isolation, C3 trackers / planar / roto / paint, C4 expressions / groups /
+templates, G4's grading tools. 1. **Data:** extend `tools/explainer-train/` with those node / tool cases (template
+explainer facts → target sentences), keeping all older data. 2. **Fact checker** knows the new controls. 3.
+**Held-out set 5** for the new features; sets 1–4 must not regress. 4. **Train** `smol360-v4` on the RX 6700 XT
+(TRAINING.md). 5. **Coach:** add questions for the new guide sections to `docs/fork/coach-eval/questions.toml`,
+re-measure `ai_pool` / coach floors (raise, never lower). 6. **Ship** as `explainer-smol360-v4` (§1a.33) if it
+beats v3 on sets 1–4 and covers set 5 at least as well as the template explainer. Tag `ai-2b`.
+
 ## Phase AI3: the grading assistant, a model-backed "Ask the coach" (owner, 2026-10-14; ≈ 70–120 h)
 
 Owner: "I want to be able to ask it advanced questions about how to grade. What nodes do what,
@@ -385,6 +396,86 @@ catches more regressions (FORK-PLAN §1a.85). Writing work, no GPU: the Dell lan
 - **Done:** the targets reached (or the guide's limit stated, if fewer sections support honest
   questions), splits checked, a ~150-question daily sample chosen, counts in HANDOFF; marker
   `.dell-pool-complete`.
+
+## Phase AI7: an assistant that can walk you through a whole complex edit (owner, 2026-10-22, FORK-PLAN §1a.129; ≈ 90–160 h)
+
+Owner (live, 2026-10-22 ~15:45): "What I really want though is the AI to be a lottt better. I asked some questions to
+it a couple hours ago and it just wasn't very helpful at all. I don't necessarily want to implement AI6 right now (nor
+do I think it would be good as a hands on assistant yet) but I want to have a phase that actually makes the AI good
+enough to walk you through an entire complex editing process." AI7 makes the Assistant a good **teacher and guide**;
+it still never runs commands (that is AI6's "Do this", which stays unscheduled). Runs after the pause that follows
+AI2b, before DECODER-PLAN D (FORK-PLAN §1a.129).
+
+**Why it is weak today (the owner's inbox conversation, 2026-10-22 13:24–13:27, `assistant-inbox/`, five turns,
+SmolLM3-3B `smollm3-assist-v1`, page Compositing, Resolve workflow):**
+- *"how do I use the compositor"*: ten lines stitched from four guide sections, one of them unrelated
+  (`command-reference.export-lists`: export presets in a compositor answer) and one aimed at agents, not people
+  (`comp.explain` over the control channel / MCP). No overview, no "what you'll see".
+- *"only give me instructions for the resolve workflow"*: answered "how to switch to the Resolve workflow" instead
+  of redoing the previous answer the Resolve way. **No follow-up memory**, and it didn't know the owner was already
+  in the Resolve workflow.
+- *"how do I use the compositor in the resolve workflow"*: three lines about viewing a node; nothing about the
+  Fusion page.
+- *"help me with step one more in depth"*: "I don't know". It can't see its own previous answer.
+- *"how do I use fusion on a clip I already have"*: skin-grading and golden-hour notes. "Fusion" didn't map to the
+  compositor, and `compositor.convert` (the right answer) was retrieved but not used.
+
+So the problems are, in order: (1) no conversation state, (2) no app state (workflow, page, selection), (3)
+retrieval that lets unrelated sections in and misses Resolve / Premiere vocabulary, (4) an answer built by pasting
+guide lines rather than explaining, (5) a small model with no training on multi-step or multi-turn help, (6) no notion
+of a long task with stages. AI7 fixes them in that order, measuring after each.
+
+1. **The five turns above become eval cases first** (multi-turn, with expected sources and must / must-not facts),
+   plus every later owner-inbox conversation (§1a.92). They fail today; they must pass at the end. ≈ 2–3 h.
+2. **Conversation memory.** Each question is rewritten into a standalone one using the earlier turns before
+   retrieval ("step one more in depth" → "explain in depth: open the Fusion page …"; "only the Resolve way" →
+   re-answer the last question in the Resolve workflow). The previous answer's steps are addressable ("step 3",
+   "the second one", "that node"). Long conversations are summarised to fit the context. ≈ 8–14 h.
+3. **Knows where you are (read-only facts).** The current workflow (Premiere / Resolve), page, open panels,
+   selection (clip, comp node, grade node), project facts (clips imported, sequence exists, frame size, rate,
+   log profile from the Fuji maker note) go in as compact facts. Answers use **only that workflow's names**
+   (Fusion page, not "Window ▸ Compositor", in Resolve). Agent-only routes (control channel, MCP, command ids as
+   instructions) never appear unless the question asks for them; ids stay as clickable outlines. ≈ 8–14 h.
+4. **Retrieval that finds the right thing.** A synonym / vocabulary map from Resolve and Premiere terms to
+   FilmCraft sections (Fusion → compositor, Fairlight → audio, Lumetri → colour, Power Window → windows, nest,
+   compound clip …), generated from the guide headers' `resolve:` / `premiere:` fields and checked by a test; a
+   reranker or relevance floor so off-topic sections (export lists, skin practice notes) are dropped; for a task
+   question, sections from every stage it touches. Recall@5 on the eval set must rise; off-topic citations ≈ 0.
+   ≈ 8–14 h.
+5. **Answers that explain, not pasted lines.** The model writes in its own words from the retrieved sections, in a
+   fixed shape: one-line goal → what it does / why → numbered steps (each with what you should see) → common
+   mistakes → what to do next. The grounding checker stays (every control and command checked against the live app;
+   unknown ones removed; general advice marked as general). "I don't know" stays better than a guess, but it must
+   say what it *does* know and ask a clarifying question when the question is ambiguous. ≈ 10–16 h.
+6. **Walkthrough mode for long tasks.** "Walk me through …" (e.g. a YouTube video from a card of F-Log2 clips to
+   upload; a music video with a node grade, titles and a Fusion comp; a two-camera interview with voice clean-up)
+   gives a **plan of stages** first (ingest → organise → rough cut → fine cut → audio → colour → titles /
+   compositing → export), each with options and trade-offs (beginner vs pro, never one right way, §1a.47), and
+   then guides one stage at a time. It **watches the app state** (read-only) to see when a step is done ("you've
+   added the comp clip; next, connect …") and offers the next step; you can skip, go back, ask a side question and
+   return, or pause and resume later (the plan is saved in the project). Nothing is executed for you. ≈ 20–35 h.
+7. **Whole-workflow knowledge.** The guide gains end-to-end workflow pages (the stages above, joined up; how the
+   pages / panels hand off; where each workflow differs) and ≥ 10 full worked scenarios written as options, each
+   tested by walking it in the real app via the control channel. Unique fork features (proxies, render cache,
+   Magic Mask, node explainer, two-GPU export, Send to Resolve once it exists) placed in the right stage. ≈ 15–25 h.
+8. **A stronger model for capable GPUs, the small one kept.** Per §1a.124 ("compete with Resolve Studio": pick
+   the strongest tier capable GPUs can run, keep Faster + CPU fallback), evaluate a 7–8B open-licence chat model on
+   the existing GPU inference path (`crates/llm` `gpu_forward`; the RX 6700 XT's 12 GB fits ~8B at Q4), e.g.
+   Qwen3-8B (Apache-2.0), OLMo 2 7B (Apache-2.0), against a 4B tier and today's SmolLM3-3B. Settings: Better (GPU,
+   big) / Faster (small) / Auto. Pick by the eval, not by size. **Each model download needs the owner's yes** (name,
+   source, size). **Qwen3-8B and Qwen3-4B approved (owner 2026-10-22, FORK-PLAN §1a.130);** others still need a yes. ≈ 10–18 h.
+9. **Train for it.** Multi-turn and walkthrough training data from items 1, 6 and 7 (follow-ups, "more in depth",
+   "the Resolve way", side questions, a stage done / not done), generated from the guide and reviewed; tune the chosen
+   model(s) on the RX 6700 XT (TRAINING.md). Held-out set: the walkthrough scenarios and the owner's turns never go in
+   training. ≈ 10–20 h (mostly GPU time).
+10. **Eval and acceptance.** A multi-turn set (≥ 80 conversations, ≥ 300 turns) and ≥ 10 full walkthroughs scored
+   per turn (right sources, right workflow's names, no agent-only routes, no off-topic lines, follows up on the
+   previous turn) and per walkthrough (completes the task in the real app when followed literally, driven via the
+   control channel). **Accept:** the owner's five turns all pass; ≥ 90 % of multi-turn turns correct; ≥ 8 of 10
+   walkthroughs completed end to end by following the Assistant alone; the coach / `ai_pool` floors don't drop;
+   answers stream first words in ≤ 2 s on the Better tier on this PC; without a model the keyword coach still works.
+   Guide pages, es + zh-cn strings, tag `ai-7`, local build. The owner trying a walkthrough is welcome but never
+   blocks acceptance (OWNER-QUESTIONS: never block on the owner).
 
 ## Phase AI6: the hands-on assistant, and Claude as co-editor over MCP (owner, 2026-10-15; before Phase 7; ≈ 135–255 h)
 

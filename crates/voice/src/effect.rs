@@ -126,6 +126,43 @@ fn weights() -> Option<Arc<Weights>> {
     m.weights.clone()
 }
 
+/// Run DeepFilterNet3 over whole 48 kHz channels (1 … 8 of equal length) offline, latency removed:
+/// the "Faster" model of a rendered voice isolation (fork AUDIO-PLAN A3.7), the same processing as
+/// the live effect at Amount 100 %, no limit. `progress(fraction)` returns `false` to stop. `Err`
+/// when the model isn't installed / doesn't load, or it was stopped.
+pub fn isolate_offline(channels: &[Vec<f32>], progress: &mut dyn FnMut(f32) -> bool) -> Result<Vec<Vec<f32>>, ModelError> {
+    let w = weights().ok_or_else(|| ModelError(status().2.unwrap_or_else(|| "the DeepFilterNet3 voice model isn't installed".into())))?;
+    let n = channels.first().map_or(0, Vec::len);
+    if channels.is_empty() || channels.len() > 8 || channels.iter().any(|c| c.len() != n) {
+        return Err(ModelError("1 to 8 channels of equal length are supported".into()));
+    }
+    let mut fx = VoiceIsolate::new(&w, channels.len())?;
+    let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(channels.len());
+    for c in channels {
+        let mut b = Vec::new();
+        b.try_reserve_exact(n + LATENCY).map_err(|_| ModelError("not enough memory for this much audio".into()))?;
+        b.extend_from_slice(c);
+        b.resize(n + LATENCY, 0.0);
+        bufs.push(b);
+    }
+    let total = n + LATENCY;
+    let mut i = 0;
+    while i < total {
+        let end = (i + 48_000).min(total);
+        let mut views: Vec<&mut [f32]> = bufs.iter_mut().filter_map(|b| b.get_mut(i..end)).collect();
+        fx.process(&mut views);
+        i = end;
+        if !progress(i as f32 / total.max(1) as f32) {
+            return Err(ModelError("cancelled".into()));
+        }
+    }
+    for b in bufs.iter_mut() {
+        b.drain(..LATENCY.min(b.len()));
+        b.truncate(n);
+    }
+    Ok(bufs)
+}
+
 fn factory(sample_rate: f32, channels: usize) -> Option<Box<dyn AudioEffect>> {
     if (sample_rate - 48_000.0).abs() > 0.5 {
         return None;

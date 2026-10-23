@@ -28,7 +28,7 @@ use rayon::prelude::*;
 pub const MAX_FEATURES: usize = 160;
 const WIN: i32 = 7;
 const LEVELS: usize = 4;
-const FB_MAX: f32 = 0.5;
+pub(crate) const FB_MAX: f32 = 0.5;
 const RANSAC_THRESHOLD: f64 = 1.0;
 const RANSAC_ITERS: usize = 300;
 
@@ -41,9 +41,10 @@ pub struct Gray {
 }
 
 impl Gray {
-    pub fn new(w: usize, h: usize, px: Vec<f32>) -> Self {
-        assert_eq!(px.len(), w * h);
-        Self { w, h, px }
+    /// A `w`×`h` image from row-major pixels. None when `px` doesn't hold exactly `w`×`h`
+    /// pixels (or the size overflows).
+    pub fn new(w: usize, h: usize, px: Vec<f32>) -> Option<Self> {
+        (w.checked_mul(h) == Some(px.len())).then_some(Self { w, h, px })
     }
     /// Luma of 8-bit RGBA (Rec. 709 weights on the encoded values).
     pub fn from_rgba8(w: usize, h: usize, rgba: &[u8]) -> Self {
@@ -52,13 +53,18 @@ impl Gray {
     }
     #[inline]
     fn at(&self, x: i32, y: i32) -> f32 {
-        let x = x.clamp(0, self.w as i32 - 1) as usize;
-        let y = y.clamp(0, self.h as i32 - 1) as usize;
-        self.px[y * self.w + x]
+        // total for any (pub) field values: an empty or short image reads 0 instead of panicking
+        let (Some(mx), Some(my)) = (self.w.checked_sub(1), self.h.checked_sub(1)) else { return 0.0 };
+        let x = usize::try_from(x).unwrap_or(0).min(mx);
+        let y = usize::try_from(y).unwrap_or(0).min(my);
+        y.checked_mul(self.w).and_then(|i| i.checked_add(x)).and_then(|i| self.px.get(i)).copied().unwrap_or(0.0)
     }
     /// Bilinear sample at continuous coordinates (pixel centres at integers), clamped.
     #[inline]
     pub fn sample(&self, x: f32, y: f32) -> f32 {
+        // far-off coordinates read the clamped edge anyway; bounding them first keeps the
+        // integer corner arithmetic below from overflowing on a diverged estimate
+        let (x, y) = (x.clamp(-2.0, self.w as f32 + 1.0), y.clamp(-2.0, self.h as f32 + 1.0));
         let (x0, y0) = (x.floor(), y.floor());
         let (fx, fy) = (x - x0, y - y0);
         let (x0, y0) = (x0 as i32, y0 as i32);
@@ -74,6 +80,9 @@ impl Gray {
     pub(crate) fn down(&self) -> Gray {
         let k = [1.0, 4.0, 6.0, 4.0, 1.0].map(|v: f32| v / 16.0);
         let (w, h) = (self.w, self.h);
+        if w == 0 || h == 0 || w.checked_mul(h) != Some(self.px.len()) {
+            return Gray { w: 0, h: 0, px: Vec::new() };
+        }
         let mut tmp = vec![0.0f32; w * h];
         tmp.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
             for (x, o) in row.iter_mut().enumerate() {
@@ -211,10 +220,53 @@ pub fn features(g: &Gray, region: &[Vec2], max: usize, min_dist: f32) -> Vec<[f3
     out
 }
 
+/// Region bounding-box pixels above which [`features_in`] looks on a coarser pyramid level.
+const FEATURE_BUDGET_PX: f64 = (1u64 << 20) as f64;
+
+/// [`features`] of `region` (full-resolution pixels) in the prepared frame `p`, found on the finest
+/// pyramid level whose share of the region's bounding box is at most [`FEATURE_BUDGET_PX`]
+/// pixels, returned in full-resolution pixels. A large region of a 6K frame then costs about what
+/// one of an HD frame does (the structure tensor is 49 gradients per pixel); LK refines from there.
+pub fn features_in(p: &Prepared, region: &[Vec2], max: usize, min_dist: f32) -> Vec<[f32; 2]> {
+    let g = p.base();
+    let lo = region.iter().fold(Vec2::new(f64::INFINITY, f64::INFINITY), |a, q| Vec2::new(a.x.min(q.x), a.y.min(q.y)));
+    let hi = region.iter().fold(Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY), |a, q| Vec2::new(a.x.max(q.x), a.y.max(q.y)));
+    let bw = (hi.x.min(g.w as f64) - lo.x.max(0.0)).max(0.0);
+    let bh = (hi.y.min(g.h as f64) - lo.y.max(0.0)).max(0.0);
+    let mut area = if (bw * bh).is_finite() { bw * bh } else { 0.0 };
+    let mut l = 0;
+    while l + 1 < p.levels.len() && area > FEATURE_BUDGET_PX {
+        l += 1;
+        area /= 4.0;
+    }
+    let Some(lg) = p.levels.get(l) else { return Vec::new() };
+    if l == 0 {
+        return features(lg, region, max, min_dist);
+    }
+    let s = (1u32 << l.min(16)) as f32;
+    let scaled: Vec<Vec2> = region.iter().map(|q| *q * (1.0 / s as f64)).collect();
+    features(lg, &scaled, max, (min_dist / s).max(1.0)).into_iter().map(|f| [f[0] * s, f[1] * s]).collect()
+}
+
 /// Pyramidal Lucas–Kanade: where `p` in `a` moved to in `b` (pyramids from [`Gray::pyramid`]).
 fn lk(pa: &[Gray], pb: &[Gray], p: [f32; 2]) -> Option<[f32; 2]> {
+    lk_from(pa, pb, p, [0.0, 0.0])
+}
+
+/// [`lk`] starting from a guessed displacement `init` (full-resolution pixels; Bouguet's initial
+/// guess, scaled to the coarsest level). None when the window is flat or the estimate diverges.
+pub(crate) fn lk_from(pa: &[Gray], pb: &[Gray], p: [f32; 2], init: [f32; 2]) -> Option<[f32; 2]> {
     let levels = pa.len().min(pb.len());
-    let mut d = [0.0f32; 2];
+    if levels == 0 || !(p[0].is_finite() && p[1].is_finite() && init[0].is_finite() && init[1].is_finite()) {
+        return None;
+    }
+    let top = (1u32 << (levels - 1).min(16)) as f32;
+    let mut d = [init[0] / top, init[1] / top];
+    let (Some(a0), Some(b0)) = (pa.first(), pb.first()) else { return None };
+    if (a0.w, a0.h) != (b0.w, b0.h) {
+        return None;
+    }
+    let bound = 4.0 * a0.w.saturating_add(a0.h) as f32;
     for lvl in (0..levels).rev() {
         let s = (1u32 << lvl) as f32;
         let (a, b) = (&pa[lvl], &pb[lvl]);
@@ -258,6 +310,9 @@ fn lk(pa: &[Gray], pb: &[Gray], p: [f32; 2]) -> Option<[f32; 2]> {
             let ey = (gxx * by - gxy * bx) / det;
             v[0] += ex;
             v[1] += ey;
+            if !(v[0].is_finite() && v[1].is_finite()) || v[0].abs() > bound || v[1].abs() > bound {
+                return None;
+            }
             if ex * ex + ey * ey < 1e-6 {
                 break;
             }
@@ -268,14 +323,14 @@ fn lk(pa: &[Gray], pb: &[Gray], p: [f32; 2]) -> Option<[f32; 2]> {
         }
     }
     let q = [p[0] + d[0], p[1] + d[1]];
-    let (w, h) = (pa[0].w as f32, pa[0].h as f32);
+    let (w, h) = (a0.w as f32, a0.h as f32);
     (q[0].is_finite() && q[1].is_finite() && q[0] >= 0.0 && q[1] >= 0.0 && q[0] < w && q[1] < h).then_some(q)
 }
 
 /// Least-squares fit of `method` mapping `src` → `dst`.
 pub fn fit_ls(method: TrackMethod, src: &[Vec2], dst: &[Vec2]) -> Option<Affine> {
     let n = src.len();
-    if n == 0 || (method != TrackMethod::Position && n < 2) {
+    if n == 0 || n != dst.len() || (method != TrackMethod::Position && n < 2) {
         return None;
     }
     let inv = 1.0 / n as f64;
@@ -329,7 +384,7 @@ impl Rng {
 pub fn fit_robust(method: TrackMethod, src: &[Vec2], dst: &[Vec2]) -> Option<(Affine, usize)> {
     let n = src.len();
     let k = if method == TrackMethod::Position { 1 } else { 2 };
-    if n < k {
+    if n < k || n != dst.len() {
         return None;
     }
     let inliers_of = |m: &Affine| -> Vec<usize> { (0..n).filter(|&i| (m.apply(src[i]) - dst[i]).length() < RANSAC_THRESHOLD).collect() };
@@ -388,22 +443,29 @@ pub struct Step {
 }
 
 /// A frame prepared for tracking (its pyramid).
+#[derive(Clone)]
 pub struct Prepared {
-    levels: Vec<Gray>,
+    pub(crate) levels: Vec<Gray>,
 }
 
 impl Prepared {
+    /// The pyramid of `g`. A frame whose pixel count doesn't match its size (or that is empty)
+    /// becomes an empty 0×0 frame, which every tracker refuses instead of indexing out of bounds.
     pub fn new(g: Gray) -> Self {
+        if g.w == 0 || g.h == 0 || g.w.checked_mul(g.h) != Some(g.px.len()) {
+            return Self { levels: vec![Gray { w: 0, h: 0, px: Vec::new() }] };
+        }
         Self { levels: g.pyramid() }
     }
     pub fn base(&self) -> &Gray {
-        &self.levels[0]
+        static EMPTY: Gray = Gray { w: 0, h: 0, px: Vec::new() };
+        self.levels.first().unwrap_or(&EMPTY)
     }
 }
 
 /// Track the picture inside `region` (polygon in frame pixels) from `a` to `b`.
 pub fn track_step(a: &Prepared, b: &Prepared, region: &[Vec2], method: TrackMethod) -> Option<Step> {
-    let feats = features(a.base(), region, MAX_FEATURES, 5.0);
+    let feats = features_in(a, region, MAX_FEATURES, 5.0);
     if feats.len() < 3 {
         return None;
     }
@@ -464,6 +526,36 @@ impl Homography {
     fn is_finite(&self) -> bool {
         self.m.iter().all(|v| v.is_finite())
     }
+
+    /// The inverse map (adjugate over the determinant, renormalised to `m[8]` = 1 when possible).
+    /// None when singular or non-finite.
+    pub fn inverse(&self) -> Option<Homography> {
+        let m = &self.m;
+        let adj = [
+            m[4] * m[8] - m[5] * m[7],
+            m[2] * m[7] - m[1] * m[8],
+            m[1] * m[5] - m[2] * m[4],
+            m[5] * m[6] - m[3] * m[8],
+            m[0] * m[8] - m[2] * m[6],
+            m[2] * m[3] - m[0] * m[5],
+            m[3] * m[7] - m[4] * m[6],
+            m[1] * m[6] - m[0] * m[7],
+            m[0] * m[4] - m[1] * m[3],
+        ];
+        let det = m[0] * adj[0] + m[1] * adj[3] + m[2] * adj[6];
+        // singular relative to the rows' lengths (Hadamard's bound |det| <= |r0| |r1| |r2|): rows
+        // mix pixel offsets with unit-free terms, so the largest entry cubed refused real
+        // corner pins of large frames (a 6240 px floor plane: det 0.02 against 0.03, C3.8 review);
+        // 1e-14 stays two orders above the rounding of a dependent set of rows (~1e-16)
+        let row = |r: usize| m.get(r * 3..r * 3 + 3).map_or(f64::NAN, |v| v.iter().map(|x| x * x).sum::<f64>().sqrt());
+        let scale = row(0) * row(1) * row(2);
+        if !(det.is_finite() && scale.is_finite() && det.abs() > 1e-14 * scale.max(1e-300)) {
+            return None;
+        }
+        let w = if adj[8].abs() > 1e-12 { adj[8] } else { det };
+        let out = Homography { m: adj.map(|v| v / w) };
+        out.is_finite().then_some(out)
+    }
 }
 
 /// The similarity moving `pts` to centroid 0 and mean distance √2 (H&Z §4.4), as (scale, cx, cy).
@@ -477,7 +569,7 @@ fn normalising(pts: &[Vec2]) -> Option<(f64, f64, f64)> {
 
 /// Solve the n×n system `a` x = `b` (row-major) by Gaussian elimination with partial pivoting.
 /// None when singular (a pivot below `1e-10` of the largest entry).
-fn solve(a: &mut [f64], b: &mut [f64], n: usize) -> Option<Vec<f64>> {
+pub(crate) fn solve(a: &mut [f64], b: &mut [f64], n: usize) -> Option<Vec<f64>> {
     if a.len() != n * n || b.len() != n {
         return None;
     }
@@ -613,7 +705,7 @@ pub struct PerspectiveStep {
 /// Track the plane inside `region` (polygon in frame pixels) from `a` to `b` as a homography.
 /// None when too little detail survives (fewer than 8 inliers: four points fit any quad exactly).
 pub fn track_step_perspective(a: &Prepared, b: &Prepared, region: &[Vec2]) -> Option<PerspectiveStep> {
-    let feats = features(a.base(), region, MAX_FEATURES, 5.0);
+    let feats = features_in(a, region, MAX_FEATURES, 5.0);
     if feats.len() < 8 {
         return None;
     }
@@ -668,7 +760,7 @@ mod tests {
                 acc / 4.0
             })
             .collect();
-        Gray::new(w, h, px)
+        Gray::new(w, h, px).unwrap()
     }
 
     fn pose(t: f64, rot_per: f64, scale_per: f64) -> Affine {
@@ -774,7 +866,7 @@ mod tests {
                 acc / 4.0
             })
             .collect();
-        Gray::new(w, hgt, px)
+        Gray::new(w, hgt, px).unwrap()
     }
 
     #[test]
@@ -841,8 +933,46 @@ mod tests {
     }
 
     #[test]
+    fn gray_new_rejects_a_mismatched_buffer_and_samplers_are_total() {
+        // Gray::new used to assert_eq! (panic) on a buffer that doesn't match the size
+        assert!(Gray::new(4, 4, vec![0.0; 15]).is_none());
+        assert!(Gray::new(usize::MAX, 2, vec![0.0; 2]).is_none());
+        assert_eq!(Gray::new(2, 2, vec![0.25; 4]).map(|g| (g.w, g.h)), Some((2, 2)));
+        // inconsistent public fields read 0 instead of indexing out of bounds
+        let empty = Gray { w: 0, h: 0, px: Vec::new() };
+        assert_eq!(empty.sample(1.0, 1.0), 0.0);
+        assert_eq!(empty.down().w, 0);
+        let short = Gray { w: 10, h: 10, px: vec![0.5; 3] };
+        assert!(short.sample(5.0, 5.0).is_finite() && short.grad(9, 9).0.is_finite());
+        assert_eq!(short.down().w, 0);
+        let sq = [Vec2::new(0.0, 0.0), Vec2::new(9.0, 0.0), Vec2::new(9.0, 9.0), Vec2::new(0.0, 9.0)];
+        assert!(features(&short, &sq, 10, 1.0).is_empty());
+        assert_eq!(Prepared { levels: Vec::new() }.base().w, 0);
+        // mismatched correspondences are refused, not indexed
+        assert!(fit_ls(TrackMethod::PositionScaleRotation, &sq, &sq[..3]).is_none());
+        assert!(fit_robust(TrackMethod::PositionScaleRotation, &sq, &sq[..3]).is_none());
+        assert!(lk_from(&[Gray::new(64, 64, vec![0.5; 4096]).unwrap()], &[Gray::new(32, 64, vec![0.5; 2048]).unwrap()], [8.0, 8.0], [0.0, 0.0]).is_none());
+    }
+
+    #[test]
+    fn features_of_a_large_region_come_from_a_coarser_level() {
+        // 1536×1024 > the 1 Mpx budget: found on level 1, reported in full-resolution pixels
+        let (w, h) = (1536, 1024);
+        let g = frame(w, h, &Affine::translate(768.0, 512.0));
+        let p = Prepared::new(g);
+        let all = [Vec2::new(0.0, 0.0), Vec2::new(w as f64, 0.0), Vec2::new(w as f64, h as f64), Vec2::new(0.0, h as f64)];
+        let f = features_in(&p, &all, MAX_FEATURES, 5.0);
+        assert!(f.len() >= 20, "{}", f.len());
+        assert!(f.iter().all(|q| q[0] % 2.0 == 0.0 && q[1] % 2.0 == 0.0 && q[0] < w as f32 && q[1] < h as f32));
+        assert!(f.iter().any(|q| q[0] > 0.5 * w as f32), "full-resolution coordinates");
+        // a small region stays on the full-resolution level (unchanged behaviour)
+        let small = circle(Vec2::new(768.0, 512.0), 60.0);
+        assert_eq!(features_in(&p, &small, MAX_FEATURES, 5.0), features(p.base(), &small, MAX_FEATURES, 5.0));
+    }
+
+    #[test]
     fn perspective_tracking_of_a_flat_region_is_refused() {
-        let flat = Prepared::new(Gray::new(64, 48, vec![0.5; 64 * 48]));
+        let flat = Prepared::new(Gray::new(64, 48, vec![0.5; 64 * 48]).unwrap());
         let region = [Vec2::new(5.0, 5.0), Vec2::new(60.0, 5.0), Vec2::new(60.0, 40.0), Vec2::new(5.0, 40.0)];
         assert!(track_step_perspective(&flat, &flat, &region).is_none());
         assert!(track_step_perspective(&flat, &flat, &[]).is_none());

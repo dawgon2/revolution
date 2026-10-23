@@ -11,7 +11,7 @@ build = "build.rs"
 workspace = true
 
 [features]
-default = ["llm", "voice-isolation"]
+default = ["llm", "voice-isolation", "magic-mask"]
 # Local AI explanations of grade nodes (fork G2.11): inference on the CPU and the opt-in model
 # download (Settings ▸ Color ▸ AI explanations). Weights are never bundled.
 llm = ["filmcraft-engine/llm", "filmcraft-engine/llm-download"]
@@ -21,6 +21,9 @@ whisper = ["filmcraft-engine/whisper", "filmcraft-engine/speech-download"]
 neural-voices = ["filmcraft-engine/neural-voices"]
 # Voice isolation (fork AUDIO-PLAN A2): DeepFilterNet3 on the CPU, downloaded on request.
 voice-isolation = ["filmcraft-engine/voice-isolation"]
+# Magic Mask (fork GRADE-PLAN G3): MobileSAM on the CPU; the weights are put in the data folder
+# (models/mobilesam/mobile_sam.pt), never bundled.
+magic-mask = ["filmcraft-engine/magic-mask"]
 
 [dependencies]
 filmcraft-engine = { workspace = true, features = ["fork-resolve-default", "fork-inbox", "fork-update", "remote-net"] } # FORK-ONLY (RS1, AI5 inbox, UPD); remote-net: S2

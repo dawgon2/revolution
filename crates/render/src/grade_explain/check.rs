@@ -2183,6 +2183,7 @@ mod tests {
             sat: [0.2, 1.0],
             lum: [0.0, 1.0],
             invert: false,
+            three_d: false,
             words: "hues around orange (±18°), saturation 20–100 %, luminance 0–100 %".into(),
         });
         q.matte_coverage = Some(0.13);

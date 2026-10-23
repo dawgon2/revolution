@@ -13,6 +13,13 @@
 //! | `audio.voiceIsolate.cancelDownload` | stop a running download |
 //! | `audio.voiceIsolate.installFile` | install from a local file: the release zip (checksum checked) or the checkpoint itself |
 //! | `audio.voiceIsolate.remove` | unload and delete the model; the effect falls back to DeNoise |
+//!
+//! Fork AUDIO-PLAN A3.7 adds a second, "Better" model for rendered voice isolation
+//! (`audio.voiceIsolate.render`, [`crate::voice_isolation_render`]): MossFormer2_SE_48K
+//! (Apache-2.0), installed under `<data dir>/models/mossformer2-se-48k/`. `status` reports it under
+//! `better`; `installFile` / `remove` take `"model": "better"` for it (their default stays the live
+//! effect's DeepFilterNet3, "faster"; a render's default is "better"). The app never downloads it (221.6 MB; the official file is at
+//! `filmcraft_voice::mossformer::SOURCE_URL`).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -33,13 +40,57 @@ fn checkpoint() -> Option<PathBuf> {
     model_dir().map(|d| d.join("model_120.ckpt.best")).filter(|p| p.is_file())
 }
 
-/// Point the effect at an installed model (cheap: it loads on first use). Called when a session
-/// starts; does nothing in builds without the model code.
+fn better_dir() -> Option<PathBuf> {
+    crate::transcript::models_dir().map(|d| d.join("mossformer2-se-48k"))
+}
+
+/// The installed MossFormer2 checkpoint, if any.
+fn better_checkpoint() -> Option<PathBuf> {
+    better_dir().map(|d| d.join("last_best_checkpoint.pt")).filter(|p| p.is_file())
+}
+
+/// Whether a rendered "Better" isolation would run MossFormer2 (built in and installed).
+/// (Installed in the data directory, or a checkpoint path already given to `filmcraft-voice`.)
+pub(crate) fn better_ready() -> bool {
+    #[cfg(feature = "voice-isolation")]
+    let set = filmcraft_voice::mossformer::status().0.is_some();
+    #[cfg(not(feature = "voice-isolation"))]
+    let set = false;
+    available() && (better_checkpoint().is_some() || set)
+}
+
+/// Point the effect (and the rendered "Better" model) at installed models (cheap: they load on
+/// first use). Called when a session starts; does nothing in builds without the model code.
 pub fn init() {
     #[cfg(feature = "voice-isolation")]
-    if let Some(p) = checkpoint() {
-        filmcraft_voice::effect::set_model_path(&p);
+    {
+        if let Some(p) = checkpoint() {
+            filmcraft_voice::effect::set_model_path(&p);
+        }
+        if let Some(p) = better_checkpoint() {
+            filmcraft_voice::mossformer::set_model_path(&p);
+        }
     }
+}
+
+fn better_status() -> Value {
+    #[cfg(feature = "voice-isolation")]
+    let (path, loaded, error) = filmcraft_voice::mossformer::status();
+    #[cfg(not(feature = "voice-isolation"))]
+    let (path, loaded, error): (Option<PathBuf>, bool, Option<String>) = (None, false, None);
+    json!({
+        "available": available(),
+        "installed": better_checkpoint().is_some(),
+        "loaded": loaded,
+        "path": path.map(|p| p.display().to_string()),
+        "error": error,
+        "name": "MossFormer2_SE_48K (rendered voice isolation, \"Better\")",
+        "size": 221_552_019u64,
+        "license": "Apache-2.0",
+        "source": "https://huggingface.co/alibabasglab/MossFormer2_SE_48K",
+        "sampleRates": [48_000],
+        "live": false,
+    })
 }
 
 fn available() -> bool {
@@ -72,6 +123,8 @@ fn status(s: &mut Session, _: &Value) -> Result<Value> {
         "source": "https://github.com/Rikorose/DeepFilterNet",
         "sampleRates": [48_000],
         "download": running(s),
+        "better": better_status(),
+        "renderDefault": crate::voice_isolation_render::DEFAULT_MODEL,
     }))
 }
 
@@ -184,6 +237,15 @@ fn install_file(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(CMD, "the model is downloading; cancel the download first"));
     }
     let src = PathBuf::from(str_p(p, "path").ok_or_else(|| bad(CMD, "missing `path`"))?);
+    if is_better(CMD, p)? {
+        let dir = better_dir().ok_or_else(|| bad(CMD, "no data directory for models"))?;
+        let warning = install_better(CMD, &src, &dir)?;
+        let mut st = status(s, &Value::Null)?;
+        if let Some(o) = st.as_object_mut() {
+            o.insert("warning".into(), json!(warning));
+        }
+        return Ok(st);
+    }
     let dir = model_dir().ok_or_else(|| bad(CMD, "no data directory for models"))?;
     install_from(CMD, &src, &dir)?;
     status(s, &Value::Null)
@@ -222,8 +284,67 @@ fn install_from(cmd: &str, _: &Path, _: &Path) -> Result<()> {
     need_build(cmd)
 }
 
-fn remove(s: &mut Session, _: &Value) -> Result<Value> {
+/// `"model": "better"` (MossFormer2) or `"faster"` / absent (DeepFilterNet3).
+fn is_better(cmd: &str, p: &Value) -> Result<bool> {
+    match str_p(p, "model") {
+        None | Some("faster") => Ok(false),
+        Some("better") => Ok(true),
+        Some(m) => Err(bad(cmd, format!("unknown model `{m}`: use \"better\" (MossFormer2) or \"faster\" (DeepFilterNet3)"))),
+    }
+}
+
+/// Check a MossFormer2 checkpoint by loading it (about half a second, size-capped), then copy it in
+/// place. Runs on the command thread like `install_from`. A file that loads but isn't the published
+/// release (size / SHA-256) is installed with a warning (a fine-tuned copy of the same network
+/// works), which is returned.
+#[cfg(feature = "voice-isolation")]
+fn install_better(cmd: &str, src: &Path, dir: &Path) -> Result<Option<String>> {
+    use filmcraft_voice::mossformer as mf;
+    let len = std::fs::metadata(src).map_err(|e| bad(cmd, format!("{}: {e}", src.display())))?.len();
+    if len > mf::MAX_FILE_BYTES {
+        return Err(bad(cmd, format!("{} is not the MossFormer2_SE_48K checkpoint ({len} bytes)", src.display())));
+    }
+    mf::MossFormer2::load(src).map_err(|e| bad(cmd, e.0))?;
+    let warning = if len != mf::CHECKPOINT_SIZE {
+        Some(format!(
+            "{} isn't the published MossFormer2_SE_48K file ({len} bytes, not {}); installed anyway since it loads",
+            src.display(),
+            mf::CHECKPOINT_SIZE
+        ))
+    } else {
+        match sha256(src) {
+            Ok(h) if h == mf::CHECKPOINT_SHA256 => None,
+            Ok(h) => Some(format!("{} isn't the published MossFormer2_SE_48K file (SHA-256 {h}); installed anyway since it loads", src.display())),
+            Err(e) => Some(format!("couldn't check {}'s SHA-256 ({e})", src.display())),
+        }
+    };
+    std::fs::create_dir_all(dir).map_err(|e| bad(cmd, e.to_string()))?;
+    let dst = dir.join(mf::CHECKPOINT);
+    if std::fs::canonicalize(src).ok() != std::fs::canonicalize(&dst).ok() {
+        std::fs::copy(src, &dst).map_err(|e| bad(cmd, e.to_string()))?;
+    }
+    mf::unload();
+    mf::set_model_path(&dst);
+    Ok(warning)
+}
+
+#[cfg(not(feature = "voice-isolation"))]
+fn install_better(cmd: &str, _: &Path, _: &Path) -> Result<Option<String>> {
+    need_build(cmd).map(|()| None)
+}
+
+fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "audio.voiceIsolate.remove";
+    if is_better(CMD, p)? {
+        #[cfg(feature = "voice-isolation")]
+        filmcraft_voice::mossformer::unload();
+        let mut freed = 0u64;
+        if let Some(dir) = better_dir().filter(|d| d.is_dir()) {
+            freed = std::fs::read_dir(&dir).map(|it| it.flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum()).unwrap_or(0);
+            std::fs::remove_dir_all(&dir).map_err(|e| bad(CMD, e.to_string()))?;
+        }
+        return Ok(json!({"removed": freed > 0, "freed": freed, "model": "better"}));
+    }
     if running(s).is_some() {
         return Err(bad(CMD, "the model is downloading; cancel the download first"));
     }
@@ -246,7 +367,7 @@ pub fn commands() -> Vec<CommandSpec> {
         spec("audio.voiceIsolate.status", "Voice Isolation Model Status", "{}", status),
         spec("audio.voiceIsolate.download", "Download Voice Isolation Model", r#"{"wait":bool?}"#, download),
         spec("audio.voiceIsolate.cancelDownload", "Cancel Voice Isolation Model Download", "{}", cancel_download),
-        spec("audio.voiceIsolate.installFile", "Install Voice Isolation Model from File", r#"{"path":str}"#, install_file),
-        spec("audio.voiceIsolate.remove", "Remove Voice Isolation Model", "{}", remove),
+        spec("audio.voiceIsolate.installFile", "Install Voice Isolation Model from File", r#"{"path":str,"model":str?}"#, install_file),
+        spec("audio.voiceIsolate.remove", "Remove Voice Isolation Model", r#"{"model":str?}"#, remove),
     ]
 }

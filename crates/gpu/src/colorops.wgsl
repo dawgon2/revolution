@@ -75,6 +75,22 @@ const CO_MIX_STASH: u32 = 26u;
 // reads it).
 const CO_KEY_BEGIN: u32 = 27u;
 const CO_KEY_END: u32 = 28u;
+// colour warper (fork G4.1): `filmcraft_color::warp::Warp2D`
+const CO_WARP: u32 = 29u;
+
+// HDR zone wheels (fork G4.2; 29 is the colour warper's, G4.1)
+const CO_ZONE_WHEELS: u32 = 30u;
+
+// `ops::zone_weight`: smoothstep across `edge ± falloff / 2`, reversed for a dark zone.
+fn zone_weight(dark: bool, s: f32, edge: f32, falloff: f32) -> f32 {
+    let f = max(falloff, 0.05);
+    let a = clamp((s - edge) / f + 0.5, 0.0, 1.0);
+    let u = a * a * (3.0 - 2.0 * a);
+    if (dark) {
+        return 1.0 - u;
+    }
+    return u;
+}
 
 fn rgb_to_hsl(c: vec3<f32>) -> vec3<f32> {
     let r = c.x; let g = c.y; let b = c.z;
@@ -488,6 +504,138 @@ fn grain_noise(xy: vec2<f32>, inv_size: f32, softness: f32, seed: u32) -> f32 {
 // One op of a chain: `code` at `*pcp` on `c_in`; moves `*pcp` past the op (to `len` on an
 // unknown code). A literal `code` (the specialised chains below) lets the compiler drop every
 // other case.
+// `Warp2D::lookup` of the (du, dv) field at `base` (`nc` × `nr`, row major); `space` 0 hue-sat
+// (u wraps), 1 chroma-luma
+fn warp_lookup(base: u32, nc: u32, nr: u32, space: u32, u0: f32, v0: f32) -> vec2<f32> {
+    let fnc = f32(nc);
+    let fnr = f32(nr);
+    var i0: u32;
+    var i1: u32;
+    var fx: f32;
+    if (space == 0u) {
+        let x = (u0 - floor(u0)) * fnc;
+        let i = clamp(floor(x), 0.0, fnc - 1.0);
+        i0 = u32(i);
+        i1 = select(i0 + 1u, 0u, i0 + 1u >= nc);
+        fx = x - i;
+    } else {
+        let x = clamp(u0, 0.0, 1.0) * (fnc - 1.0);
+        let i = clamp(floor(x), 0.0, fnc - 2.0);
+        i0 = u32(i);
+        i1 = i0 + 1u;
+        fx = x - i;
+    }
+    let y = clamp(v0, 0.0, 1.0) * (fnr - 1.0);
+    let j = clamp(floor(y), 0.0, fnr - 2.0);
+    let fy = y - j;
+    let j0 = u32(j);
+    let r0 = base + j0 * nc * 2u;
+    let r1 = r0 + nc * 2u;
+    let a = vec2(at(r0 + i0 * 2u), at(r0 + i0 * 2u + 1u));
+    let b = vec2(at(r0 + i1 * 2u), at(r0 + i1 * 2u + 1u));
+    let cc = vec2(at(r1 + i0 * 2u), at(r1 + i0 * 2u + 1u));
+    let d = vec2(at(r1 + i1 * 2u), at(r1 + i1 * 2u + 1u));
+    let top = a + (b - a) * fx;
+    let bot = cc + (d - cc) * fx;
+    return top + (bot - top) * fy;
+}
+
+// `warp::hsv_to_rgb`
+fn warp_hsv(h: f32, s: f32, v: f32) -> vec3<f32> {
+    let k0 = vec3(5.0, 3.0, 1.0) + vec3(h * 6.0);
+    let k = k0 - 6.0 * floor(k0 / 6.0);
+    return vec3(v) - vec3(v * s) * clamp(min(k, vec3(4.0) - k), vec3(0.0), vec3(1.0));
+}
+
+// `warp::scale_luma` (SCALE_FLOOR 1e-3, MAX_SCALE 16)
+fn warp_luma(o: vec3<f32>, t: f32, w: vec3<f32>) -> vec3<f32> {
+    let y2 = w.x * o.x + w.y * o.y + w.z * o.z;
+    if (t >= 0.0 && y2 > 1e-3) {
+        return o * clamp(t / y2, 0.0, 16.0);
+    }
+    return o + vec3(t - y2);
+}
+
+// `Warp2D::apply`
+// whether every component is finite (by the exponent bits: comparisons with NaN may be folded away)
+fn warp_finite(c: vec3<f32>) -> bool {
+    let e = bitcast<vec3<u32>>(c) & vec3(0x7f800000u);
+    return all(e != vec3(0x7f800000u));
+}
+
+fn warp2d(c: vec3<f32>, space: u32, keep: bool, w: vec3<f32>, nc: u32, nr: u32, base: u32) -> vec3<f32> {
+    let mx = max(max(c.x, c.y), c.z);
+    if (!warp_finite(c) || !(mx > 1e-6) || nc < 2u || nr < 2u) {
+        return c;
+    }
+    let mn = min(min(c.x, c.y), c.z);
+    let d = mx - mn;
+    let s = d / mx;
+    var h = 0.0;
+    if (d >= 1e-7) {
+        if (mx == c.x) {
+            h = (c.y - c.z) / d + select(0.0, 6.0, c.y < c.z);
+        } else if (mx == c.y) {
+            h = (c.z - c.x) / d + 2.0;
+        } else {
+            h = (c.x - c.y) / d + 4.0;
+        }
+        h = h / 6.0;
+    }
+    let y = w.x * c.x + w.y * c.y + w.z * c.z;
+    var uv = vec2(clamp(s, 0.0, 1.0), y);
+    if (space == 0u) {
+        uv = vec2(h, clamp(s, 0.0, 1.0));
+    }
+    let dd = warp_lookup(base, nc, nr, space, uv.x, uv.y);
+    if (dd.x == 0.0 && dd.y == 0.0) {
+        return c;
+    }
+    if (space == 0u) {
+        let h2 = h + dd.x;
+        let o = warp_hsv(h2 - floor(h2), max(s + dd.y, 0.0), mx);
+        if (keep) {
+            return warp_luma(o, y, w);
+        }
+        return o;
+    }
+    return warp_luma(warp_hsv(h, max(s + dd.x, 0.0), mx), max(y + dd.y, 0.0), w);
+}
+
+// 3D qualifier (fork G4.3, `filmcraft_color::key3d`): sub-op 0 the key (`hdr, soft, ni, ne`,
+// then `x, y, z, r` per include sphere and per exclude sphere), 1 the despill (`dir, amount`)
+const CO_KEY3D: u32 = 31u;
+
+// `key3d::membership` of `p` in the `n` spheres at `base`
+fn key3d_member(base: u32, n: u32, p: vec3<f32>, soft: f32) -> f32 {
+    if (n == 0u) {
+        return 0.0;
+    }
+    var d = 3.4e38;
+    for (var i = 0u; i < n; i = i + 1u) {
+        let b = base + i * 4u;
+        let q = p - vec3(at(b), at(b + 1u), at(b + 2u));
+        d = min(d, max(sqrt(q.x * q.x + q.y * q.y + q.z * q.z) - at(b + 3u), 0.0));
+    }
+    let t = clamp(d / soft, 0.0, 1.0);
+    return 1.0 - t * t * (3.0 - 2.0 * t);
+}
+
+// `Key3d::matte` (spheres from `base`)
+fn key3d_matte(c: vec3<f32>, hdr: bool, soft: f32, ni: u32, ne: u32, base: u32) -> f32 {
+    if (!warp_finite(c)) {
+        return 0.0;
+    }
+    let u0 = to_unit(c, hdr, unit_scale(c, hdr));
+    // `key3d::opponent` (LUMA_WEIGHT 0.5)
+    let p = vec3(0.5 * (u0.x + u0.y + u0.z) * 0.57735026, (u0.x - u0.y) * 0.70710677, (u0.x + u0.y - 2.0 * u0.z) * 0.4082483);
+    let inc = key3d_member(base, ni, p, soft);
+    if (inc <= 0.0) {
+        return 0.0;
+    }
+    return inc * (1.0 - key3d_member(base + ni * 4u, ne, p, soft));
+}
+
 fn chain_op(code: u32, c_in: vec3<f32>, xy: vec2<f32>, pcp: ptr<function, u32>, len: u32) -> vec3<f32> {
     var c = c_in;
     var pc = *pcp;
@@ -734,6 +882,23 @@ fn chain_op(code: u32, c_in: vec3<f32>, xy: vec2<f32>, pcp: ptr<function, u32>, 
             mask_reg = mh * ms * ml;
             pc = pc + 9u;
         }
+        case CO_KEY3D: {
+            if (at(pc + 1u) == 0.0) {
+                let ni = u32(at(pc + 4u));
+                let ne = u32(at(pc + 5u));
+                mask_reg = key3d_matte(c, at(pc + 2u) != 0.0, at(pc + 3u), ni, ne, pc + 6u);
+                pc = pc + 6u + (ni + ne) * 4u;
+            } else {
+                let dir = vec3(at(pc + 2u), at(pc + 3u), at(pc + 4u));
+                let k = c.x * dir.x + c.y * dir.y + c.z * dir.z;
+                // `key3d::despill`: non-finite pixels pass unchanged
+                if (warp_finite(c) && warp_finite(vec3(k)) && k > 0.0) {
+                    let s = at(pc + 5u) * k;
+                    c = c - s * dir;
+                }
+                pc = pc + 6u;
+            }
+        }
         case CO_STASH: {
             stash_reg = c;
             pc = pc + 1u;
@@ -755,6 +920,13 @@ fn chain_op(code: u32, c_in: vec3<f32>, xy: vec2<f32>, pcp: ptr<function, u32>, 
             mask_reg = m;
             c = stash_reg + (c - stash_reg) * m;
             pc = pc + 2u;
+        }
+        case CO_WARP: {
+            let nc = u32(at(pc + 6u));
+            let nr = u32(at(pc + 7u));
+            let w = vec3(at(pc + 3u), at(pc + 4u), at(pc + 5u));
+            c = warp2d(c, u32(at(pc + 1u)), at(pc + 2u) != 0.0, w, nc, nr, pc + 8u);
+            pc = pc + 8u + nc * nr * 2u;
         }
         case CO_HSL_CORRECT: {
             let shift = at(pc + 1u);
@@ -800,6 +972,36 @@ fn chain_op(code: u32, c_in: vec3<f32>, xy: vec2<f32>, pcp: ptr<function, u32>, 
             let d = at(pc + 1u) * 0.15 * wl * grain_noise(xy, at(pc + 2u), at(pc + 3u), seed);
             c = c + vec3(d);
             pc = pc + 9u;
+        }
+        case CO_ZONE_WHEELS: {
+            // `ops::ZoneWheels::apply`: weights, pivot, global (exposure, sat, shift), then six
+            // zones (edge, falloff, exposure, sat, shift), the first three dark
+            let w = vec3(at(pc + 1u), at(pc + 2u), at(pc + 3u));
+            let y = w.x * c.x + w.y * c.y + w.z * c.z;
+            let r = y / at(pc + 4u);
+            var s = -30.0;
+            if (r > exp2(-30.0)) {
+                s = min(log2(r), 30.0);
+            }
+            var e = at(pc + 5u);
+            var sat = at(pc + 6u);
+            var d = vec3(at(pc + 7u), at(pc + 8u), at(pc + 9u));
+            for (var i = 0u; i < 6u; i = i + 1u) {
+                let b = pc + 10u + i * 7u;
+                let k = zone_weight(i < 3u, s, at(b), at(b + 1u));
+                e = e + k * at(b + 2u);
+                sat = sat * (1.0 + k * (at(b + 3u) - 1.0));
+                d = d + k * vec3(at(b + 4u), at(b + 5u), at(b + 6u));
+            }
+            // ZONE_MAX_STOPS 16, ZONE_MAX_SAT 65536, ZONE_MAX_VALUE 1e30
+            let gain = exp2(min(max(e, -16.0), 16.0));
+            let sat2 = min(max(sat, 0.0), 65536.0);
+            let c2 = (c + vec3(y) * d) * gain;
+            let y2 = w.x * c2.x + w.y * c2.y + w.z * c2.z;
+            let o = vec3(y2) + (c2 - vec3(y2)) * sat2;
+            // a NaN result is 0, as on the CPU
+            c = select(vec3(0.0), min(max(o, vec3(-1e30)), vec3(1e30)), o == o);
+            pc = pc + 52u;
         }
         default: {
             // unknown code: stop (the encoder never writes one)

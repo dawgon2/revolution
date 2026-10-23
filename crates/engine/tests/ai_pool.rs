@@ -17,8 +17,13 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Keyword-coach pool questions that must pass (measured; may only go up, AI-PLAN AI-POOL; 144 with
-/// feature-rs4-cut-page, 146 with feature-rs4-inspector, 148 with feature-ai2-branch-notes).
-const POOL_COACH_FLOOR: usize = 148;
+/// feature-rs4-cut-page, 146 with feature-rs4-inspector, 148 with feature-ai2-branch-notes, 150 with feature-layout;
+/// 149 measured 2026-10-22 with C3.9's `compositor.viewer-tools` / `compositor-trackers.viewer`
+/// sections: one question flips on the corpus statistics, no guide text tuned); 149 with C3.11
+/// (BM25 b 0.5 → 0.6, `compositor-trackers.md` indexed, and `pool-k1k-planar` given the Planar
+/// Tracker node's own section as an `alt`: `pool-s1k-page-bar` now passes, `pool-x1k-hw-encoder`
+/// misses).
+const POOL_COACH_FLOOR: usize = 149;
 /// Advanced pool questions with an expected source in retrieval's top 5 (measured; only up, except
 /// 904 → 903 when FEATURE-POOL dropped `feat-pk-trim-gap`, a hit made untrue by package trimming;
 /// 911 with feature-project-package-trim; 917 with feature-assistant-search; 920 with
@@ -31,8 +36,12 @@ const POOL_COACH_FLOOR: usize = 148;
 /// (15.696 vs 15.724)); 984 with feature-tarball-menu-entry; 997 with feature-rs4-cut-page; 1007 with
 /// feature-rs4-edit-toolbar; 1018 with feature-rs4-resolve-edits; 1017 measured 2026-10-21 (C2b's mixer
 /// guide text and §1a.116's F-Log section joined the corpus; no questions changed); 1015 with the RS4.2
-/// Inspector section (pages.inspector); 1029 with feature-rs4-inspector; 1038 with feature-ai2-branch-notes.
-const POOL_RETRIEVAL_FLOOR: usize = 1038;
+/// Inspector section (pages.inspector); 1029 with feature-rs4-inspector; 1038 with feature-ai2-branch-notes;
+/// 1055 with feature-layout; 1054 measured 2026-10-22 when C3.5a (compositor-trackers.nodes) and C3.5b
+/// (compositor.roto) merged: each alone holds 1055, together they push `pool-c3-grade-per-clip` out of
+/// its top 5 (no guide text tuned); 1055 with C3.11's BM25 b 0.5 → 0.6 (`coach_ask::B`; the
+/// `see:` link lift leaves the top 5 alone).
+const POOL_RETRIEVAL_FLOOR: usize = 1055;
 /// Token-set similarity at or above which a training question counts as a near-copy of a test one.
 const NEAR_COPY: f64 = 0.7;
 
@@ -68,6 +77,11 @@ struct PoolQuestion {
     /// A creative question's goal family.
     #[serde(default)]
     family: Option<String>,
+    /// Sections that answer one source's part of a creative plan as well (source id → section
+    /// ids), e.g. a feature that shipped after the item was written; counted by the creative
+    /// coverage only.
+    #[serde(default)]
+    alt_sources: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// One earlier question and answer of a chain.
@@ -295,6 +309,14 @@ fn pool_files_are_well_formed_and_grounded() {
             assert!(ADV_KINDS.contains(&q.kind.as_str()), "{file}: {}: kind {}", q.id, q.kind);
             assert!(!q.q.trim().is_empty() && !q.must.is_empty() && !q.sources.is_empty(), "{file}: {}: q, must, sources required", q.id);
             assert!(q.sources.iter().all(|x| ids.contains(x)), "{file}: {}: unknown source in {:?}", q.id, q.sources);
+            for (k, alts) in &q.alt_sources {
+                assert!(q.kind == "creative" && q.sources.contains(k), "{file}: {}: alt_sources key {k} is not a source of a creative item", q.id);
+                assert!(
+                    !alts.is_empty() && alts.iter().all(|x| ids.contains(x) && !q.sources.contains(x)),
+                    "{file}: {}: bad alt_sources for {k}: {alts:?}",
+                    q.id
+                );
+            }
             assert!(q.must.iter().chain(&q.must_not).all(|f| !f.trim().is_empty()), "{file}: {}: empty fact", q.id);
             assert!(q.style.as_deref().is_none_or(|x| STYLES.contains(&x)), "{file}: {}: style {:?}", q.id, q.style);
             assert!(q.origin.as_deref().is_none_or(|x| ["agent", "owner-verbatim", "owner-paraphrase"].contains(&x)), "{file}: {}: origin", q.id);
@@ -509,7 +531,31 @@ struct WithOrigin {
 /// share the slots that `practice.node-trees.*` and a few neighbours used to fill; no creative items added).
 /// 554 measured 2026-10-21 (C2b's mixer guide text and §1a.116's F-Log section; corpus statistics only);
 /// 552 with the RS4.2 Inspector section (pages.inspector).
-const CREATIVE_COVERAGE_FLOOR: usize = 552;
+/// 554 measured 2026-10-21 (FEATURE-POOL layout; no creative items added, LAY's pages.layout / layout-presets text).
+/// 551 with G3.2's `color.secondaries.magic-mask` section (no plan cites it yet; it takes three slots).
+/// 549 with A3.7's audio.md subsection on the live / rendered voice models (corpus statistics and
+/// displaced cited slots only; its wording isn't tuned to the held-out items).
+/// 548 with C3.5b's `compositor.roto` section (no plan cites it yet; corpus statistics only, its
+/// wording isn't tuned to the held-out items).
+/// 547 with C3.7's `compositor.roto-track` section (no plan cites it yet; corpus statistics only,
+/// its wording isn't tuned to the held-out items).
+/// 546 with C3.9's `compositor.viewer-tools` and `compositor-trackers.viewer` sections (no plan
+/// cites them yet; corpus statistics and displaced cited slots only, the wording isn't tuned to the
+/// held-out items); re-measured 546 after merging C3.7's `compositor.roto-track` (both sections in).
+/// 581 with C3.11 (545 on the merged C3.9 + C3.10 corpus before it): the sections the best three
+/// name in their `see:` are lifted into the slots after the first five (`coach_ask::with_see_links`,
+/// link-based relevance propagation), and BM25 b 0.5 → 0.6. The step-by-step "corpus dilution"
+/// above was mostly new sections that are right for the question (`compositor.roto` for "rotoscope
+/// the person", paint for a dust spot) taking the slot of an older cited one; following the guide's
+/// own links brings the cited neighbour back without dropping the new one.
+/// 580 with G4.4's `color.secondaries.planar` sections (measured 582 before, floor 581; lowered on
+/// purpose). The new sections take slots of cited ones on tracking plans (579): `pool-cr3-billboard-
+/// occlusion`, `pool-cr11-wedding-cams`, `pool-cr14-outline-roto` and `pool-cr2-ghost-handheld`
+/// lose one each, `pool-cr2-remove-sign` gains one. Where the planar section is a correct answer
+/// for a plan's "which tracker" part (a flat sign, a logo on a wall, a planar screen replacement:
+/// `pool-cr3-billboard-occlusion`, `pool-cr2-remove-sign`, `pool-cr3-phone-resolve`) it is accepted
+/// through `alt_sources` for `tracking.what` (580); the guide wording isn't tuned to the items.
+const CREATIVE_COVERAGE_FLOOR: usize = 580;
 
 /// AI-PLAN AI4 item 5c: a creative question needs a section for each sub-task, not one best match,
 /// so it is scored by how many of its plan's sections the model is sent (coverage), apart from the
@@ -518,12 +564,15 @@ const CREATIVE_COVERAGE_FLOOR: usize = 552;
 #[test]
 fn creative_retrieval_covers_the_plan() {
     use filmcraft_engine::coach_assist::{SECTIONS, retrieve_with_picture};
-    let covers = |got: &[coach_ask::Retrieved], srcs: &[String]| srcs.iter().filter(|s| got.iter().any(|r| r.header.is_some_and(|h| &h.id == *s))).count();
+    let covers = |got: &[coach_ask::Retrieved], q: &PoolQuestion| {
+        let alt = |s: &String| q.alt_sources.get(s).map(Vec::as_slice).unwrap_or_default();
+        q.sources.iter().filter(|s| got.iter().any(|r| r.header.is_some_and(|h| &h.id == *s || alt(s).contains(&h.id)))).count()
+    };
     let all: Vec<_> = batches().into_iter().flat_map(|(_, b)| b.question).collect();
     let (mut bare, mut found, mut wanted, mut short) = (0, 0, 0, Vec::new());
     for q in all.iter().filter(|q| q.kind == "creative") {
-        bare += covers(&coach_ask::retrieve(&q.q, SECTIONS), &q.sources);
-        let n = covers(&retrieve_with_picture(&q.q, &q.q, None, SECTIONS), &q.sources);
+        bare += covers(&coach_ask::retrieve(&q.q, SECTIONS), q);
+        let n = covers(&retrieve_with_picture(&q.q, &q.q, None, SECTIONS), q);
         found += n;
         wanted += q.sources.len();
         if n < q.sources.len() {
@@ -533,9 +582,9 @@ fn creative_retrieval_covers_the_plan() {
     eprintln!("creative coverage@{SECTIONS}: {found} / {wanted} (bare question {bare}); short: {short:?}");
     assert!(found >= CREATIVE_COVERAGE_FLOOR, "creative coverage fell to {found} / {wanted} (floor {CREATIVE_COVERAGE_FLOOR})");
     let lookup: Vec<_> = all.iter().filter(|q| q.kind != "creative" && q.context.is_empty() && q.facts.is_none()).collect();
-    let hit = |got: Vec<coach_ask::Retrieved>, srcs: &[String]| usize::from(covers(&got, srcs) > 0);
-    let before: usize = lookup.iter().map(|q| hit(coach_ask::retrieve(&q.q, SECTIONS), &q.sources)).sum();
-    let after: usize = lookup.iter().map(|q| hit(retrieve_with_picture(&q.q, &q.q, None, SECTIONS), &q.sources)).sum();
+    let hit = |got: Vec<coach_ask::Retrieved>, q: &PoolQuestion| usize::from(covers(&got, q) > 0);
+    let before: usize = lookup.iter().map(|q| hit(coach_ask::retrieve(&q.q, SECTIONS), q)).sum();
+    let after: usize = lookup.iter().map(|q| hit(retrieve_with_picture(&q.q, &q.q, None, SECTIONS), q)).sum();
     eprintln!("lookup hits@{SECTIONS}: {before} -> {after} with sub-goals");
     assert!(after.saturating_mul(100) >= before.saturating_mul(99), "sub-goals cost the lookup questions too much: {before} -> {after}");
 }
@@ -621,7 +670,10 @@ fn search_by_meaning_coverage() {
     use filmcraft_engine::coach_assist::{SECTIONS, retrieve_with_picture_in};
     use filmcraft_engine::coach_meaning::{SearchMode, available};
     assert!(available(), "no embedding model in <data dir>/models/embed/bge-small-en-v1.5 (FILMCRAFT_DATA_DIR?)");
-    let covers = |got: &[coach_ask::Retrieved], srcs: &[String]| srcs.iter().filter(|s| got.iter().any(|r| r.header.is_some_and(|h| &h.id == *s))).count();
+    let covers = |got: &[coach_ask::Retrieved], q: &PoolQuestion| {
+        let alt = |s: &String| q.alt_sources.get(s).map(Vec::as_slice).unwrap_or_default();
+        q.sources.iter().filter(|s| got.iter().any(|r| r.header.is_some_and(|h| &h.id == *s || alt(s).contains(&h.id)))).count()
+    };
     let all: Vec<_> = batches().into_iter().flat_map(|(_, b)| b.question).collect();
     let creative: Vec<_> = all.iter().filter(|q| q.kind == "creative").collect();
     let lookup: Vec<_> = all.iter().filter(|q| q.kind != "creative" && q.context.is_empty() && q.facts.is_none()).collect();
@@ -631,11 +683,11 @@ fn search_by_meaning_coverage() {
         let mut found = 0;
         let mut planned = 0; // questions with ≥ 2 plan sections in the top SECTIONS (§1a.98's measure)
         for q in &creative {
-            let n = covers(&retrieve_with_picture_in(mode, &q.q, &q.q, None, SECTIONS), &q.sources);
+            let n = covers(&retrieve_with_picture_in(mode, &q.q, &q.q, None, SECTIONS), q);
             found += n;
             planned += usize::from(n >= 2.min(q.sources.len()));
         }
-        let hits: usize = lookup.iter().map(|q| usize::from(covers(&retrieve_with_picture_in(mode, &q.q, &q.q, None, SECTIONS), &q.sources) > 0)).sum();
+        let hits: usize = lookup.iter().map(|q| usize::from(covers(&retrieve_with_picture_in(mode, &q.q, &q.q, None, SECTIONS), q) > 0)).sum();
         eprintln!(
             "SEARCH {mode:?}: creative coverage@{SECTIONS} {found} / {wanted}, questions with >= 2 plan sections {planned} / {}, lookup hits {hits} / {}",
             creative.len(),

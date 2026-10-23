@@ -1,0 +1,187 @@
+# FEATURE-POOL batch feature-layout (FEATURE-QUEUE row "LAY page layouts": Save Layout button in the page bar
+# with its right-click menu (Reset to Saved Layout, Restore Original Layout, Save Layout as Preset…, Manage Layout
+# Presets…); pages / workspaces keep unsaved arrangements across switches and restarts; Window ▸ Layout Presets
+# (save, load, update, rename, delete, export / import `.revlayout`)).
+# Source: pages.md (pages.layout, pages.layout-presets). Held-out test questions, written from the guide's text
+# only (README.md beside this file). start-1 already holds two pages.layout questions (pool-s1-save-layout,
+# pool-s1-layout-switch) and color-1 a reset coach question; these ask about what LAY added. The training pairs
+# (feature-layout.jsonl) keep off these questions' facts where they can.
+# No creative family (a layout is not a creative goal). No recipe spot check: the Dell's app build predates LAY.
+
+# ---------- advanced format ----------
+
+[[question]]
+id = "feat-lay-button-where"
+kind = "tool"
+q = "Where's the Save Layout button?"
+sources = ["pages.layout"]
+must = ["bottom right of the window, left of Lessons"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-lay-reset-vs-original"
+kind = "tool"
+q = "What's the difference between Reset to Saved Layout and Restore Original Layout?"
+sources = ["pages.layout"]
+must = ["Reset to Saved Layout goes back to the last arrangement you saved", "Restore Original Layout throws your saved version away and brings back the page as Revolution ships it"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-lay-unsaved-quit"
+kind = "tool"
+q = "if i never click save layout are my moved panels gone after i quit"
+sources = ["pages.layout"]
+must = ["no: each page keeps how you left it when you go to another page and after you quit", "Save Layout only decides what Reset brings back"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-lay-small-window"
+kind = "tool"
+q = "My window is small and there's no Save Layout button. How do I save the page then?"
+sources = ["pages.layout"]
+must = ["on a small window Save Layout is left out so the pages keep their room", "use Window ▸ Workspaces ▸ Save Changes to this Workspace"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-lay-reset-ui-resolve"
+kind = "tool"
+q = "Resolve has Workspace > Reset UI Layout. What do I use here?"
+sources = ["pages.layout"]
+must = ["right-click Save Layout ▸ Restore Original Layout for the page as it ships (or Reset to Saved Layout for your last save)"]
+must_not = []
+style = "resolve-words"
+
+[[question]]
+id = "feat-lay-preset-what"
+kind = "tool"
+q = "What does a layout preset keep that Save Layout doesn't?"
+sources = ["pages.layout-presets"]
+must = ["every page's arrangement (in the Premiere workflow, every workspace), not just one page", "and which page you were on"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-lay-laptop-desk"
+kind = "approach"
+q = "I cut on a laptop on location and finish on a big monitor at home. How should I handle the panel layouts?"
+sources = ["pages.layout-presets", "pages.layout"]
+must = ["one layout preset per setup", "Save Layout as Preset… for each, then choose its name in Window ▸ Layout Presets"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-lay-other-computer"
+kind = "multi-step"
+q = "How do I move my layout preset to my other computer?"
+sources = ["pages.layout-presets"]
+must = ["Manage Layout Presets… ▸ Export… to a .revlayout file", "Import… it on the other computer"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-lay-load-keeps-saved"
+kind = "pro-practice"
+q = "If I load a layout preset, is each page's saved layout overwritten?"
+sources = ["pages.layout-presets"]
+must = ["no: Reset to Saved Layout still goes back to each page's saved version", "to make the preset's arrangement the saved one, load it and click Save Layout"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-lay-update-preset"
+kind = "tool"
+q = "redid my color page, want my Desk preset to have the new version"
+sources = ["pages.layout-presets"]
+must = ["Manage Layout Presets… ▸ Update replaces the preset with how the pages are now"]
+must_not = []
+style = "sloppy"
+
+[[question]]
+id = "feat-lay-newer-preset"
+kind = "tool"
+q = "A colleague's preset comes from a newer Revolution with a panel my version doesn't have. Will it load?"
+sources = ["pages.layout-presets"]
+must = ["yes: it skips that page and loads the rest"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-lay-landing-page"
+kind = "tool"
+q = "Which page am I on after loading a layout preset?"
+sources = ["pages.layout-presets"]
+must = ["the page the preset was saved on"]
+must_not = []
+style = "beginner"
+
+[[question]]
+id = "feat-lay-premiere-workspaces-gone"
+kind = "tool"
+q = "In the Resolve workflow Window > Workspaces shows Edit Page and Color Grading instead of Editing and Color. Are my Premiere workspaces gone?"
+sources = ["pages.layout"]
+must = ["no: the Resolve workflow lists the pages' workspaces instead", "back in the Premiere workflow the Premiere workspaces are exactly as they were"]
+must_not = []
+style = "premiere-words"
+
+[[question]]
+id = "feat-lay-custom-renamed"
+kind = "tool"
+q = "My own workspace called Edit Page now shows as Edit Page (custom). What happened?"
+sources = ["pages.layout"]
+must = ["it was renamed once so it stays in the list beside the page workspace of the same name"]
+must_not = []
+style = "premiere-words"
+
+[[question]]
+id = "feat-lay-preset-or-workspace"
+kind = "approach"
+q = "Should I use a layout preset or Save as New Workspace?"
+sources = ["pages.layout-presets"]
+must = ["a preset switches every page together between setups (small and big screen, editing and color sessions)", "a workspace of your own is an extra layout beside the pages, e.g. a second edit layout you switch to by name"]
+must_not = []
+style = "premiere-words"
+
+[[question]]
+id = "feat-lay-task-color-portable"
+kind = "task"
+q = "Set up the Color page my way, make it stick, and take the whole setup to the studio's machine."
+sources = ["pages.layout", "pages.layout-presets"]
+must = ["arrange the Color page and click Save Layout", "Save Layout as Preset… to keep every page", "Manage Layout Presets… ▸ Export… a .revlayout file, Import… on the studio machine"]
+must_not = []
+style = "pro"
+
+[[question]]
+id = "feat-lay-chain-undo-mess"
+kind = "chain"
+context = [{ q = "how do I keep my rearranged Fairlight page?", a = "Click Save Layout at the bottom right, left of Lessons (or Window ▸ Workspaces ▸ Save Changes to this Workspace). The page opens that way from now on, also after a restart." }]
+q = "and if I wreck it later by dragging stuff around?"
+sources = ["pages.layout"]
+must = ["right-click Save Layout ▸ Reset to Saved Layout goes back to the saved arrangement"]
+must_not = []
+style = "follow-up"
+
+# ---------- keyword-coach format ----------
+
+[[coach]]
+id = "feat-lay-c-preset"
+kind = "how"
+q = "save layout preset for all pages"
+origin = "agent"
+page = "pages.md"
+heading = "Layout presets: every page together"
+status = "covered"
+facts = ["Save Layout as Preset…", ".revlayout"]
+
+[[coach]]
+id = "feat-lay-c-original"
+kind = "how"
+q = "restore original page layout"
+origin = "agent"
+page = "pages.md"
+heading = "Rearrange a page and keep it"
+status = "covered"
+facts = ["Restore Original Layout"]

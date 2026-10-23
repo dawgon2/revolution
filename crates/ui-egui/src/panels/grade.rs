@@ -329,6 +329,7 @@ pub(crate) fn canvas_graph(g: &Grade, cur: Option<u64>) -> CanvasGraph {
         is_output: false,
         key_inputs: 0,
         key_outputs: 0,
+        actions: Vec::new(),
     }];
     let key = crate::i18n::t("Key").to_string();
     for (i, n) in g.nodes.iter().take(MAX_NODES).enumerate() {
@@ -364,6 +365,7 @@ pub(crate) fn canvas_graph(g: &Grade, cur: Option<u64>) -> CanvasGraph {
             is_output,
             key_inputs,
             key_outputs,
+            actions: Vec::new(),
         });
     }
     let edges = edges.iter().map(|e| EdgeView { from: (e.from.node, e.from.index), to: (e.to.node, e.to.index) }).collect();
@@ -479,10 +481,10 @@ fn round_icon(ui: &mut egui::Ui, glyph: &str, on: bool, t: &crate::theme::Tokens
 }
 
 /// The tabs of the grade panel (`grade.tab.{id}`).
-pub(crate) const TABS: [&str; 6] = ["primaries", "curves", "qualifier", "windows", "noise", "match"];
+pub(crate) const TABS: [&str; 9] = ["primaries", "hdr", "curves", "warper", "qualifier", "windows", "magicMask", "noise", "match"];
 
 /// The tabs the Curves panel takes over when it is in the layout (Resolve's middle palette).
-const MIDDLE_TABS: [&str; 3] = ["curves", "qualifier", "windows"];
+const MIDDLE_TABS: [&str; 5] = ["curves", "warper", "qualifier", "windows", "magicMask"];
 
 /// The window shapes the Windows tab adds (`grade.window.add.{shape}`).
 pub(crate) const WINDOW_SHAPES: [&str; 3] = ["ellipse", "rectangle", "linear"];
@@ -572,11 +574,15 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
     let mut cmds: Vec<(&'static str, Value)> = Vec::new();
     let mut arm: Option<bool> = None;
     let armed = app.ui.grade_picker.filter(|a| a.clip == clip.0 && a.node == node_id).map(|a| a.add);
+    // the 3D qualifier's stroke tool (fork G4.3)
+    let q3_armed = app.ui.qual3d_tool.filter(|a| a.clip == clip.0 && a.node == node_id).map(|a| a.exclude);
+    let mut q3_arm: Option<bool> = None;
     let wb_armed = app.ui.wb_picker.is_some_and(|w| w.clip == clip.0 && w.node == Some(node_id));
     let wb_toggle = std::cell::Cell::new(false);
 
     bui.horizontal(|ui| {
-        let labels = [tl!("Primaries"), tl!("Curves"), tl!("Qualifier"), tl!("Windows"), tl!("Noise"), tl!("Match")];
+        let labels =
+            [tl!("Primaries"), tl!("HDR"), tl!("Curves"), tl!("Warper"), tl!("Qualifier"), tl!("Windows"), tl!("Magic Mask"), tl!("Noise"), tl!("Match")];
         for (id, label) in TABS.into_iter().zip(labels) {
             if !shown.contains(&id) || mixer {
                 continue;
@@ -616,6 +622,9 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
     let coach_scroll = super::coach::scroll_request(app, bui.ctx());
     let mut coach_scrolled = false;
     let mut pedits: Vec<super::grade_mixer::ParamEdit> = Vec::new();
+    // the Magic Mask tab (fork G3.3)
+    let mmview = (tab == "magicMask" && !mixer).then(|| super::magic_mask::view(app, clip, &it, &node));
+    let mut mm_acts: Vec<super::magic_mask::Act> = Vec::new();
     egui::ScrollArea::vertical().id_salt(("grade-primaries", tab, middle)).auto_shrink([false, false]).show(&mut sui, |bui| {
         if mixer {
             if middle {
@@ -756,9 +765,26 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
                     });
                 }
             }
+        } else if tab == "hdr" {
+            // the HDR zone wheels (fork G4.2)
+            let mut edits = Vec::new();
+            super::grade_hdr::controls(bui, &node, mt, &t, &mut edits, &mut autos);
+            for e in edits {
+                match e {
+                    super::grade_hdr::HdrEdit::Set { key, value } => sets.push(set(&key, value, Some(key_of(&key)))),
+                    super::grade_hdr::HdrEdit::Reset(zone) => cmds.push(("grade.hdr.reset", json!({"node": node_id, "zone": zone}))),
+                }
+            }
         } else if tab == "match" {
             if let Some(mv) = &mview {
                 match_controls(bui, mv, clip, node_id, &t, &mut cmds, &mut autos);
+            }
+        } else if tab == "warper" {
+            // the colour warper (fork G4.1)
+            super::grade_warper::controls(bui, &node, &t, gest, &mut cmds, &mut autos);
+        } else if tab == "magicMask" {
+            if let Some(v) = &mmview {
+                super::magic_mask::controls(bui, v, &t, gest, &mut mm_acts, &mut autos);
             }
         } else if tab == "windows" {
             if let Some(wv) = wview.take() {
@@ -787,8 +813,14 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
             }
         } else if tab == "qualifier" {
             super::grade_mixer::key_input_controls(bui, &grade, &node, mt, &t, &mut pedits, &mut autos);
+            // the key: HSL ranges or the 3D qualifier (fork G4.3)
+            super::grade_qual3d::mode_row(bui, &node, &t, &mut cmds, &mut autos);
+            let three_d = node.qual3d_active().is_some();
             let mut edits = Vec::new();
-            qualifier_controls(bui, &node, mt, &t, armed, &mut arm, &mut edits, &mut autos);
+            qualifier_controls(bui, &node, mt, &t, (armed, three_d), &mut arm, &mut edits, &mut autos);
+            if three_d {
+                super::grade_qual3d::controls(bui, &node, &t, gest, q3_armed, &mut q3_arm, &mut cmds, &mut autos);
+            }
             for (key, v) in edits {
                 sets.push(match v {
                     Some(v) => set(key, v, Some(key_of(key))),
@@ -897,8 +929,13 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
         app.ui.grade_tab = tab.to_string();
     }
     // each picker follows the panel that has its tab
+    if shown.contains(&"magicMask") {
+        super::magic_mask::tool_state(app, clip, node_id, tab);
+    }
+    super::magic_mask::apply(app, clip, node_id, mm_acts);
     if shown.contains(&"qualifier") {
-        qualifier_picker_state(app, clip, node_id, tab, arm, armed);
+        qualifier_picker_state(app, clip, node_id, tab, arm, armed, node.qual3d_active().is_some());
+        super::grade_qual3d::tool_state(app, clip, &node, tab, q3_arm);
     }
     if shown.contains(&"primaries") {
         wb_picker_state(app, clip, node_id, tab, wb_toggle.get(), wb_armed);
@@ -953,8 +990,16 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
 }
 
 /// After a pass of the panel with the Qualifier tab: keep the qualifier picker in step with what
-/// was clicked (one armed picker at a time; leaving the tab disarms it).
-fn qualifier_picker_state(app: &mut FilmcraftApp, clip: ClipId, node_id: u64, tab: &str, arm: Option<bool>, armed: Option<bool>) {
+/// was clicked (one armed picker at a time; leaving the tab disarms it). With the node's 3D key on
+/// (`three_d`, fork G4.3) the HSL picker is hidden, so it is put down (a click must not rewrite
+/// the ranges).
+fn qualifier_picker_state(app: &mut FilmcraftApp, clip: ClipId, node_id: u64, tab: &str, arm: Option<bool>, armed: Option<bool>, three_d: bool) {
+    if three_d {
+        if armed.is_some() {
+            app.ui.grade_picker = None;
+        }
+        return;
+    }
     match arm {
         Some(add) if armed == Some(add) => app.ui.grade_picker = None,
         Some(add) => {
@@ -962,6 +1007,8 @@ fn qualifier_picker_state(app: &mut FilmcraftApp, clip: ClipId, node_id: u64, ta
             // (one armed picker at a time: a click fills one thing)
             app.ui.eyedropper = None;
             app.ui.wb_picker = None;
+            app.ui.magic_mask.tool = None;
+            app.ui.qual3d_tool = None;
         }
         None if tab != "qualifier" || armed.is_none() => app.ui.grade_picker = None,
         None => {}
@@ -975,7 +1022,9 @@ fn wb_picker_state(app: &mut FilmcraftApp, clip: ClipId, node_id: u64, tab: &str
         if app.ui.wb_picker.is_some() {
             // (one armed picker at a time: a click fills one thing)
             app.ui.grade_picker = None;
+            app.ui.magic_mask.tool = None;
             app.ui.eyedropper = None;
+            app.ui.qual3d_tool = None;
         }
     } else if (wb_armed && tab != "primaries") || app.ui.wb_picker.is_some_and(|w| w.clip == clip.0 && w.node.is_some_and(|n| n != node_id)) {
         // (another tab, or another node selected while armed)
@@ -984,14 +1033,16 @@ fn wb_picker_state(app: &mut FilmcraftApp, clip: ClipId, node_id: u64, tab: &str
 }
 
 /// The Qualifier tab (G2.1): on / invert, the picker, the HSL ranges, softness, matte blur and
-/// the highlight view. Edits go to `edits` as (key, value), a reset as (key, None).
+/// the highlight view; with the 3D key (`armed.1`, fork G4.3) only on / invert, the view and the
+/// matte blur (`grade_qual3d::controls` has the rest). Edits go to `edits` as (key, value), a
+/// reset as (key, None).
 #[allow(clippy::too_many_arguments)]
 fn qualifier_controls(
     ui: &mut egui::Ui,
     node: &GradeNode,
     mt: Tick,
     t: &crate::theme::Tokens,
-    armed: Option<bool>,
+    (armed, three_d): (Option<bool>, bool),
     arm: &mut Option<bool>,
     edits: &mut Vec<(&'static str, Option<Value>)>,
     autos: &mut Vec<(String, Rect, String)>,
@@ -1012,6 +1063,9 @@ fn qualifier_controls(
         }
     });
     ui.horizontal(|ui| {
+        if three_d {
+            return;
+        }
         for (add, id, label, tip) in [
             (false, "grade.qual.pick", tl!("Pick"), tl!("Click the picture to select that colour")),
             (true, "grade.qual.add", tl!("Add"), tl!("Click the picture to widen the selection to that colour")),
@@ -1038,16 +1092,12 @@ fn qualifier_controls(
         }
     });
     ui.separator();
-    float_rows(
-        ui,
-        node,
-        mt,
-        t,
-        &["qual.hue", "qual.hueWidth", "qual.satLow", "qual.satHigh", "qual.lumLow", "qual.lumHigh", "qual.soft", "qual.blur"],
-        on,
-        edits,
-        autos,
-    );
+    let keys: &[&str] = if three_d {
+        &["qual.blur"]
+    } else {
+        &["qual.hue", "qual.hueWidth", "qual.satLow", "qual.satHigh", "qual.lumLow", "qual.lumHigh", "qual.soft", "qual.blur"]
+    };
+    float_rows(ui, node, mt, t, keys, on, edits, autos);
 }
 
 /// Slider rows for number parameters (`enabled`: editable), with a reset button each. Edits go
@@ -1511,17 +1561,23 @@ struct WindowView {
     node: u64,
     selected: Option<usize>,
     tracking: Vec<usize>,
+    /// Windows being tracked as a plane (fork G4.4) and their jobs.
+    planar: Vec<(usize, u64)>,
 }
 
 fn app_view(session: &filmcraft_engine::Session, clip: ClipId, node: u64) -> WindowView {
     let selected = session.state.selected_mask.filter(|s| s.clip == clip && s.node == Some(node)).map(|s| s.mask);
-    let tracking = session.mask_jobs.iter().filter(|j| j.target.clip == clip && j.target.node == Some(node)).map(|j| j.target.mask).collect();
-    WindowView { clip, node, selected, tracking }
+    let mine = |t: &filmcraft_engine::masks::MaskSel| t.clip == clip && t.node == Some(node);
+    let planar: Vec<(usize, u64)> = session.planar_jobs.iter().filter(|j| mine(&j.target)).map(|j| (j.target.mask, j.job)).collect();
+    let mut tracking: Vec<usize> = session.mask_jobs.iter().filter(|j| mine(&j.target)).map(|j| j.target.mask).collect();
+    tracking.extend(planar.iter().map(|(m, _)| *m));
+    WindowView { clip, node, selected, tracking, planar }
 }
 
 /// The Windows tab (G2.2 / G2.3): add a window (`masks.add` with `node`), and per window select
-/// (handles on the Program monitor), invert, softness, delete and track backward / forward
-/// (`masks.track`). Commands go to `cmds`.
+/// (handles on the Program monitor), invert, softness, delete, track backward / forward
+/// (`masks.track`) and track as a plane both ways (`masks.trackPlanar`, fork G4.4; clicking
+/// again while it runs stops it, ✕ planar clears it). Commands go to `cmds`.
 fn window_controls(
     ui: &mut egui::Ui,
     v: WindowView,
@@ -1579,6 +1635,29 @@ fn window_controls(
                 autos.push((format!("grade.window.{i}.track.{dir}"), r.rect, tip.to_string()));
                 if r.clicked() {
                     cmds.push(("masks.track", with(json!({"mask": i, "direction": dir}))));
+                }
+            }
+            // planar track (fork G4.4): both ways from the playhead; a running one stops
+            let running = v.planar.iter().find(|(m, _)| *m == i).map(|(_, j)| *j);
+            let on = w.planar.is_some();
+            let (label, tip) = match running {
+                Some(_) => (tl!("Stop"), tl!("Stop planar tracking (keeps what was tracked)")),
+                None => (tl!("Planar"), tl!("Track the window as a plane (a sign, a screen, a wall), both ways from the playhead")),
+            };
+            let r = ui.add_enabled(running.is_some() || !tracking, egui::Button::new(label).small().selected(on && running.is_none())).on_hover_text(tip);
+            autos.push((format!("grade.window.{i}.track.planar"), r.rect, tip.to_string()));
+            if r.clicked() {
+                match running {
+                    Some(job) => cmds.push(("jobs.cancel", json!({"job": job}))),
+                    None => cmds.push(("masks.trackPlanar", with(json!({"mask": i})))),
+                }
+            }
+            if on && running.is_none() {
+                let tip = tl!("Clear the planar track (the window stays where it is seen)");
+                let r = ui.small_button(tl!("✕ planar")).on_hover_text(tip);
+                autos.push((format!("grade.window.{i}.track.clearPlanar"), r.rect, tip.to_string()));
+                if r.clicked() {
+                    cmds.push(("masks.clearPlanar", with(json!({"mask": i}))));
                 }
             }
             let r = ui.small_button("✕").on_hover_text(tl!("Delete window"));

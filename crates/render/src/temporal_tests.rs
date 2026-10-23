@@ -243,7 +243,7 @@ fn the_op_is_first_in_the_layer_ops_before_every_grade_op() {
     use filmcraft_color::WorkingSpace;
     let fx = |p: &Project, seq: ItemId| {
         let it = &p.sequence(seq).unwrap().video_tracks[0].items[0];
-        crate::grade::item_fx(p, it, Tick(0), Tick(0), WorkingSpace::Rec709, 1.0, 16, 16)
+        crate::grade::item_fx(p, it, Tick(0), Tick(0), WorkingSpace::Rec709, 1.0, 16, 16, None)
     };
     let count = |fx: &[FxOp]| fx.iter().filter(|o| matches!(o, FxOp::TemporalDenoise { .. })).count();
     // with a grade whose node has spatial NR and a window
@@ -549,7 +549,7 @@ fn clip_temporal_nr_is_ignored_on_items_that_dont_take_it() {
     p.item_mut(item).unwrap().as_media_mut().unwrap().media = MediaRef::Generator(filmcraft_media::Generator::ColorMatte { color: [0.2, 0.4, 0.6, 1.0] });
     assert!(!crate::grade::takes_temporal_nr(&p, item));
     let it = &p.sequence(seq).unwrap().video_tracks[0].items[0];
-    assert!(crate::grade::item_fx(&p, it, Tick(0), Tick(0), WorkingSpace::Rec709, 1.0, 16, 16).is_empty());
+    assert!(crate::grade::item_fx(&p, it, Tick(0), Tick(0), WorkingSpace::Rec709, 1.0, 16, 16, None).is_empty());
     assert!(!crate::grade::changes_picture(&p, it, Tick(0), true));
     assert!(!crate::grade::ever_temporal(&p, it));
     assert!(!crate::grade::temporal_at(&p, seq, FPS.tick_of(2)));

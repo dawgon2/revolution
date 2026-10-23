@@ -56,7 +56,7 @@ fn pt(x: f64, y: f64) -> ParamValue {
     ParamValue::Vec2(Vec2::new(x, y))
 }
 
-fn half(v: f32) -> f32 {
+pub(super) fn half(v: f32) -> f32 {
     super::blend_tests::f16_to_f32(f32_to_f16(v))
 }
 

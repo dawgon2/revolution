@@ -414,7 +414,7 @@ fn timed_neighbours(seq: &Sequence, item: &TrackItem, t: Tick, rate: impl FrameT
 fn temporal_radius(ops: &[FxOp]) -> Option<u8> {
     ops.iter().find_map(|o| match o {
         FxOp::TemporalDenoise { radius, .. } => Some(*radius),
-        FxOp::Masked { ops, .. } => temporal_radius(ops),
+        FxOp::Masked { ops, .. } | FxOp::MaskedBy { ops, .. } => temporal_radius(ops),
         _ => None,
     })
 }
@@ -424,7 +424,7 @@ fn set_inputs(ops: &mut [FxOp], inputs: &Arc<TemporalInputs>) {
     for o in ops {
         match o {
             FxOp::TemporalDenoise { inputs: i, .. } => *i = Some(inputs.clone()),
-            FxOp::Masked { ops, .. } => set_inputs(ops, inputs),
+            FxOp::Masked { ops, .. } | FxOp::MaskedBy { ops, .. } => set_inputs(ops, inputs),
             _ => {}
         }
     }

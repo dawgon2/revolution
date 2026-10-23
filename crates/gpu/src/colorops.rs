@@ -34,6 +34,11 @@ const CO_MIX_STASH: f32 = 26.0;
 /// `fused_steps`; `colorops.wgsl` says what they do).
 pub(crate) const CO_KEY_BEGIN: f32 = 27.0;
 pub(crate) const CO_KEY_END: f32 = 28.0;
+const CO_WARP: f32 = 29.0;
+/// HDR zone wheels (fork G4.2; 29 is the colour warper's, G4.1).
+const CO_ZONE_WHEELS: f32 = 30.0;
+/// The 3D qualifier's key and despill (fork G4.3; one code, a sub-op: `colorops.wgsl`).
+const CO_KEY3D: f32 = 31.0;
 
 /// Values a program may hold (tables of a few thousand samples each; a chain is a handful of ops).
 pub const MAX_PROGRAM: usize = filmcraft_color::ops::MAX_GPU_PROGRAM;
@@ -79,6 +84,22 @@ fn lut(p: &mut Vec<f32>, l: &filmcraft_color::Lut) -> Option<()> {
         None => p.extend([0.0; 7]),
     }
     Some(())
+}
+
+/// HDR zone wheels as `code, weights, pivot, global (exposure, sat, shift), zones (edge, falloff,
+/// exposure, sat, shift)…` ([`filmcraft_color::ops::ZONE_PROGRAM_LEN`] values; the pivot as
+/// [`ZoneWheels::stops`](filmcraft_color::ops::ZoneWheels::stops) reads it).
+fn zone_wheels(p: &mut Vec<f32>, z: &filmcraft_color::ops::ZoneWheels) {
+    let pivot = if z.pivot.is_finite() && z.pivot > 0.0 { z.pivot } else { 0.18 };
+    p.push(CO_ZONE_WHEELS);
+    p.extend(z.weights);
+    p.push(pivot);
+    p.extend([z.global.exposure, z.global.sat]);
+    p.extend(z.global.shift);
+    for zone in &z.zones {
+        p.extend([zone.edge, zone.falloff, zone.adjust.exposure, zone.adjust.sat]);
+        p.extend(zone.adjust.shift);
+    }
 }
 
 /// The program of a chain (None: too large, or a table too long to index in `f32`).
@@ -171,10 +192,24 @@ pub fn program_and_codes(ops: &[ColorOp]) -> Option<(Vec<f32>, Vec<u32>)> {
             ColorOp::HslKey { hue, range, sat_min, sat_max, luma_min, luma_max, soft, hdr } => {
                 p.extend([CO_HSL_KEY, *hue, *range, *sat_min, *sat_max, *luma_min, *luma_max, *soft, flag(*hdr)]);
             }
+            ColorOp::Key3d(k) => {
+                // `code, 0, hdr, soft, ni, ne, (x, y, z, r)…` (≤ 64 a side: exact in f32)
+                let (inc, exc) = (k.include(), k.exclude());
+                p.extend([CO_KEY3D, 0.0, flag(k.hdr()), k.soft(), inc.len() as f32, exc.len() as f32]);
+                p.extend(inc.iter().chain(exc).flatten());
+            }
+            ColorOp::Despill { dir, amount } => p.extend([CO_KEY3D, 1.0, dir[0], dir[1], dir[2], *amount]),
             ColorOp::Stash => p.push(CO_STASH),
             ColorOp::MixStash { invert } => p.extend([CO_MIX_STASH, flag(*invert)]),
             ColorOp::HslCorrect { hue_shift, sat, temp, tint, show_mask, hdr } => {
                 p.extend([CO_HSL_CORRECT, *hue_shift, *sat, *temp, *tint, (*show_mask).min(16) as f32, flag(*hdr)]);
+            }
+            ColorOp::Warp2D(w) => {
+                // `code, space, preserve luma, weights, cols, rows, (du, dv)…` (sides ≤ 1024: exact in f32)
+                p.extend([CO_WARP, w.space().code() as f32, flag(w.preserve_luma())]);
+                p.extend(w.weights());
+                p.extend([w.cols() as f32, w.rows() as f32]);
+                p.extend(w.field());
             }
             ColorOp::Look { look, intensity, hdr } => p.extend([CO_LOOK, (*look).min(1 << 20) as f32, *intensity, flag(*hdr)]),
             ColorOp::Grain { strength, inv_size, softness, seed, weights } => {
@@ -182,6 +217,7 @@ pub fn program_and_codes(ops: &[ColorOp]) -> Option<(Vec<f32>, Vec<u32>)> {
                 p.extend([CO_GRAIN, *strength, *inv_size, *softness, (seed & 0xffff) as f32, (seed >> 16) as f32]);
                 p.extend(weights);
             }
+            ColorOp::ZoneWheels(z) => zone_wheels(&mut p, z),
         }
         // (every op's first value is its code)
         codes.push(*p.get(start)? as u32);

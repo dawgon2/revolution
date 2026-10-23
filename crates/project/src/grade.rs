@@ -142,6 +142,19 @@ pub struct GradeNode {
     /// hostile value loads as `None` (not finite) or clamped to ±[`MAX_POS`].
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_pos")]
     pub pos: Option<[f32; 2]>,
+    /// Magic Mask (fork G3): strokes for the segmentation model and how its matte is refined;
+    /// limits the node like a window. `None`: no Magic Mask. Loads cleaned.
+    #[serde(rename = "magicMask", default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::magic_mask::de_magic")]
+    pub magic_mask: Option<crate::magic_mask::MagicMask>,
+    /// Colour warper (fork G4.1): hue-sat and chroma-luma meshes of dragged points. `None`: no
+    /// warper. Loads cleaned.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::warper::de_warper")]
+    pub warper: Option<crate::warper::Warper>,
+    /// 3D qualifier (fork G4.3): picked colour clusters, softness, despill, and whether the
+    /// node's qualifier keys with it instead of the HSL ranges. `None`: the HSL qualifier. Loads
+    /// cleaned.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::qual3d::de_qual3d")]
+    pub qual3d: Option<crate::qual3d::Qual3d>,
 }
 
 /// The farthest a stored canvas position may be from the origin (canvas units).
@@ -248,7 +261,167 @@ pub const NODE_PARAMS: &[NodeParam] = &[
     // smoothly towards 1 instead of clipping; amount 0 is off
     NodeParam { key: "hl.rolloff", label: "Highlight roll-off", kind: NodeParamKind::Float { identity: 0.0, min: 0.0, max: 1.0 } },
     NodeParam { key: "hl.knee", label: "Roll-off knee", kind: NodeParamKind::Float { identity: 0.75, min: 0.5, max: 0.95 } },
+    // HDR zone wheels (fork G4.2, [`HdrWheels`]): per zone an exposure (stops), a saturation and a
+    // colour balance (a wheel; its master is unused); the six tonal zones also have their edge
+    // (`range`, stops from mid grey) and the width of their soft edge (`falloff`, stops). Global
+    // has no range: it acts everywhere.
+    NodeParam {
+        key: "hdr.global.exposure",
+        label: "HDR Global exposure",
+        kind: NodeParamKind::Float { identity: 0.0, min: -HDR_MAX_EXPOSURE, max: HDR_MAX_EXPOSURE },
+    },
+    NodeParam { key: "hdr.global.sat", label: "HDR Global saturation", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: HDR_MAX_SAT } },
+    NodeParam { key: "hdr.global.balance", label: "HDR Global balance", kind: NodeParamKind::Wheel { range: 1.0 } },
+    NodeParam {
+        key: "hdr.black.exposure",
+        label: "HDR Black exposure",
+        kind: NodeParamKind::Float { identity: 0.0, min: -HDR_MAX_EXPOSURE, max: HDR_MAX_EXPOSURE },
+    },
+    NodeParam { key: "hdr.black.sat", label: "HDR Black saturation", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: HDR_MAX_SAT } },
+    NodeParam { key: "hdr.black.balance", label: "HDR Black balance", kind: NodeParamKind::Wheel { range: 1.0 } },
+    NodeParam { key: "hdr.black.range", label: "HDR Black range", kind: NodeParamKind::Float { identity: -4.0, min: -HDR_MAX_RANGE, max: HDR_MAX_RANGE } },
+    NodeParam {
+        key: "hdr.black.falloff",
+        label: "HDR Black falloff",
+        kind: NodeParamKind::Float { identity: 1.0, min: HDR_MIN_FALLOFF, max: HDR_MAX_FALLOFF },
+    },
+    NodeParam {
+        key: "hdr.dark.exposure",
+        label: "HDR Dark exposure",
+        kind: NodeParamKind::Float { identity: 0.0, min: -HDR_MAX_EXPOSURE, max: HDR_MAX_EXPOSURE },
+    },
+    NodeParam { key: "hdr.dark.sat", label: "HDR Dark saturation", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: HDR_MAX_SAT } },
+    NodeParam { key: "hdr.dark.balance", label: "HDR Dark balance", kind: NodeParamKind::Wheel { range: 1.0 } },
+    NodeParam { key: "hdr.dark.range", label: "HDR Dark range", kind: NodeParamKind::Float { identity: -2.5, min: -HDR_MAX_RANGE, max: HDR_MAX_RANGE } },
+    NodeParam { key: "hdr.dark.falloff", label: "HDR Dark falloff", kind: NodeParamKind::Float { identity: 1.0, min: HDR_MIN_FALLOFF, max: HDR_MAX_FALLOFF } },
+    NodeParam {
+        key: "hdr.shadow.exposure",
+        label: "HDR Shadow exposure",
+        kind: NodeParamKind::Float { identity: 0.0, min: -HDR_MAX_EXPOSURE, max: HDR_MAX_EXPOSURE },
+    },
+    NodeParam { key: "hdr.shadow.sat", label: "HDR Shadow saturation", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: HDR_MAX_SAT } },
+    NodeParam { key: "hdr.shadow.balance", label: "HDR Shadow balance", kind: NodeParamKind::Wheel { range: 1.0 } },
+    NodeParam { key: "hdr.shadow.range", label: "HDR Shadow range", kind: NodeParamKind::Float { identity: -1.0, min: -HDR_MAX_RANGE, max: HDR_MAX_RANGE } },
+    NodeParam {
+        key: "hdr.shadow.falloff",
+        label: "HDR Shadow falloff",
+        kind: NodeParamKind::Float { identity: 1.0, min: HDR_MIN_FALLOFF, max: HDR_MAX_FALLOFF },
+    },
+    NodeParam {
+        key: "hdr.light.exposure",
+        label: "HDR Light exposure",
+        kind: NodeParamKind::Float { identity: 0.0, min: -HDR_MAX_EXPOSURE, max: HDR_MAX_EXPOSURE },
+    },
+    NodeParam { key: "hdr.light.sat", label: "HDR Light saturation", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: HDR_MAX_SAT } },
+    NodeParam { key: "hdr.light.balance", label: "HDR Light balance", kind: NodeParamKind::Wheel { range: 1.0 } },
+    NodeParam { key: "hdr.light.range", label: "HDR Light range", kind: NodeParamKind::Float { identity: 1.0, min: -HDR_MAX_RANGE, max: HDR_MAX_RANGE } },
+    NodeParam {
+        key: "hdr.light.falloff",
+        label: "HDR Light falloff",
+        kind: NodeParamKind::Float { identity: 1.0, min: HDR_MIN_FALLOFF, max: HDR_MAX_FALLOFF },
+    },
+    NodeParam {
+        key: "hdr.highlight.exposure",
+        label: "HDR Highlight exposure",
+        kind: NodeParamKind::Float { identity: 0.0, min: -HDR_MAX_EXPOSURE, max: HDR_MAX_EXPOSURE },
+    },
+    NodeParam { key: "hdr.highlight.sat", label: "HDR Highlight saturation", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: HDR_MAX_SAT } },
+    NodeParam { key: "hdr.highlight.balance", label: "HDR Highlight balance", kind: NodeParamKind::Wheel { range: 1.0 } },
+    NodeParam {
+        key: "hdr.highlight.range",
+        label: "HDR Highlight range",
+        kind: NodeParamKind::Float { identity: 2.5, min: -HDR_MAX_RANGE, max: HDR_MAX_RANGE },
+    },
+    NodeParam {
+        key: "hdr.highlight.falloff",
+        label: "HDR Highlight falloff",
+        kind: NodeParamKind::Float { identity: 1.0, min: HDR_MIN_FALLOFF, max: HDR_MAX_FALLOFF },
+    },
+    NodeParam {
+        key: "hdr.specular.exposure",
+        label: "HDR Specular exposure",
+        kind: NodeParamKind::Float { identity: 0.0, min: -HDR_MAX_EXPOSURE, max: HDR_MAX_EXPOSURE },
+    },
+    NodeParam { key: "hdr.specular.sat", label: "HDR Specular saturation", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: HDR_MAX_SAT } },
+    NodeParam { key: "hdr.specular.balance", label: "HDR Specular balance", kind: NodeParamKind::Wheel { range: 1.0 } },
+    NodeParam { key: "hdr.specular.range", label: "HDR Specular range", kind: NodeParamKind::Float { identity: 4.5, min: -HDR_MAX_RANGE, max: HDR_MAX_RANGE } },
+    NodeParam {
+        key: "hdr.specular.falloff",
+        label: "HDR Specular falloff",
+        kind: NodeParamKind::Float { identity: 1.0, min: HDR_MIN_FALLOFF, max: HDR_MAX_FALLOFF },
+    },
 ];
+
+/// The HDR zone wheels' tonal zones, darkest first (fork G4.2). The first [`HDR_DARK_ZONES`]
+/// act below their edge, the rest above it.
+pub const HDR_ZONES: [&str; 6] = ["black", "dark", "shadow", "light", "highlight", "specular"];
+/// How many of [`HDR_ZONES`] are dark zones (acting below their edge).
+pub const HDR_DARK_ZONES: usize = 3;
+/// The largest HDR zone exposure, in stops either way.
+pub const HDR_MAX_EXPOSURE: f32 = 4.0;
+/// The largest HDR zone saturation.
+pub const HDR_MAX_SAT: f32 = 4.0;
+/// The farthest a zone edge may sit from mid grey, in stops.
+pub const HDR_MAX_RANGE: f32 = 10.0;
+/// The narrowest and widest soft edge of a zone, in stops (never 0: a hard edge would band).
+pub const HDR_MIN_FALLOFF: f32 = 0.1;
+pub const HDR_MAX_FALLOFF: f32 = 8.0;
+
+/// One HDR wheel's settings at one time (fork G4.2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HdrZone {
+    /// Exposure in stops (0: none).
+    pub exposure: f32,
+    /// Saturation multiplier (1: none).
+    pub sat: f32,
+    /// The colour balance wheel's offsets `[r, g, b]` (only their differences matter).
+    pub balance: [f32; 3],
+    /// The zone's edge, stops from mid grey (unused for Global).
+    pub range: f32,
+    /// The width of the zone's soft edge in stops (unused for Global).
+    pub falloff: f32,
+}
+
+impl HdrZone {
+    /// Whether the wheel changes nothing (its range and falloff alone don't).
+    pub fn is_identity(&self) -> bool {
+        let b = self.balance;
+        self.exposure == 0.0 && self.sat == 1.0 && b[0] == b[1] && b[1] == b[2]
+    }
+}
+
+/// A node's HDR zone wheels at one time (fork G4.2): Global, then [`HDR_ZONES`] in order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HdrWheels {
+    pub global: HdrZone,
+    pub zones: [HdrZone; 6],
+}
+
+impl GradeNode {
+    /// HDR wheel `zone` (`"global"` or one of [`HDR_ZONES`]) at clip time `t`, clamped; missing
+    /// keys are the identity and the default range / falloff.
+    pub fn hdr_zone_at(&self, zone: &str, t: Tick) -> HdrZone {
+        let k = |what: &str| format!("hdr.{zone}.{what}");
+        let w = self.wheel_at(&k("balance"), t);
+        HdrZone {
+            exposure: self.float_at(&k("exposure"), t),
+            sat: self.float_at(&k("sat"), t),
+            balance: [w[0], w[1], w[2]],
+            range: self.float_at(&k("range"), t),
+            falloff: self.float_at(&k("falloff"), t),
+        }
+    }
+
+    /// The node's HDR zone wheels at clip time `t`; None when every wheel is the identity.
+    pub fn hdr_at(&self, t: Tick) -> Option<HdrWheels> {
+        // (nothing to read on a node without any `hdr.` key: the common case stays cheap)
+        if !self.params.keys().any(|k| k.starts_with("hdr.")) {
+            return None;
+        }
+        let h = HdrWheels { global: self.hdr_zone_at("global", t), zones: HDR_ZONES.map(|z| self.hdr_zone_at(z, t)) };
+        (!(h.global.is_identity() && h.zones.iter().all(HdrZone::is_identity))).then_some(h)
+    }
+}
 
 /// The graph parameters (fork C2, `docs/fork/DESIGN-C2.md` §1), one entry per mixer input
 /// (`<family>.<i>`, `i` < [`MAX_MIX_INPUTS`]).
@@ -301,6 +474,9 @@ impl GradeNode {
             lut: String::new(),
             kind: NodeKind::Correction,
             pos: None,
+            magic_mask: None,
+            warper: None,
+            qual3d: None,
         }
     }
 
@@ -381,6 +557,12 @@ impl GradeNode {
             invert: f("qual.invert") >= 0.5,
             show: f("qual.show").round() as u32,
         })
+    }
+
+    /// The node's 3D qualifier when its qualifier keys with it (fork G4.3; the qualifier itself
+    /// is still switched on by `qual.on`, [`GradeNode::qualifier_at`]).
+    pub fn qual3d_active(&self) -> Option<&crate::qual3d::Qual3d> {
+        self.qual3d.as_ref().filter(|q| q.is_active())
     }
 }
 
@@ -992,6 +1174,56 @@ mod tests {
         big.place_new(&[20_000], None);
         big.offset_positions(&[1, 2], [f32::MAX, f32::NAN]);
         assert_eq!(big.nodes[0].pos, None);
+    }
+
+    /// Fork G4.2: a node from before the HDR wheels has none and saves byte-identically; set
+    /// wheels round-trip; hostile values clamp or read as identity; range / falloff alone change
+    /// nothing.
+    #[test]
+    fn hdr_wheels_default_round_trip_and_clamp() {
+        let t = Tick(0);
+        let mut before = Grade::with_node();
+        before.nodes[0].params.insert("lift".into(), Param::new(ParamValue::Color([0.1, 0.0, 0.0, 0.0])));
+        let old = serde_json::to_string(&before).unwrap();
+        let g: Grade = serde_json::from_str(&old).unwrap();
+        assert!(g.nodes[0].hdr_at(t).is_none());
+        assert_eq!(serde_json::to_string(&g).unwrap(), old);
+        assert!(!old.contains("hdr"));
+        let z = GradeNode::new(1).hdr_zone_at("shadow", t);
+        assert_eq!(z, HdrZone { exposure: 0.0, sat: 1.0, balance: [0.0; 3], range: -1.0, falloff: 1.0 });
+        let mut n = GradeNode::new(1);
+        n.params.insert("hdr.shadow.range".into(), Param::new(ParamValue::Float(-2.0)));
+        n.params.insert("hdr.light.falloff".into(), Param::new(ParamValue::Float(3.0)));
+        n.params.insert("hdr.dark.balance".into(), Param::new(ParamValue::Color([0.2, 0.2, 0.2, 0.9])));
+        assert!(n.hdr_at(t).is_none(), "range, falloff and a grey balance alone change nothing");
+        n.params.insert("hdr.highlight.exposure".into(), Param::new(ParamValue::Float(-1.5)));
+        let h = n.hdr_at(t).unwrap();
+        assert_eq!((h.zones[4].exposure, h.zones[2].range, h.zones[3].falloff), (-1.5, -2.0, 3.0));
+        let mut g = Grade::with_node();
+        g.nodes[0] = n.clone();
+        let back: Grade = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert_eq!(back, g);
+        // hostile: NaN / ∞ / absurd / mistyped
+        let mut h = GradeNode::new(1);
+        h.params.insert("hdr.global.exposure".into(), Param::new(ParamValue::Float(1e300)));
+        h.params.insert("hdr.global.sat".into(), Param::new(ParamValue::Float(f64::NAN)));
+        h.params.insert("hdr.black.range".into(), Param::new(ParamValue::Float(-1e300)));
+        h.params.insert("hdr.black.falloff".into(), Param::new(ParamValue::Float(0.0)));
+        h.params.insert("hdr.black.balance".into(), Param::new(ParamValue::Color([f32::NAN, 1e9, -f32::INFINITY, 0.0])));
+        h.params.insert("hdr.specular.exposure".into(), Param::new(ParamValue::Text("x".into())));
+        h.params.insert("hdr.dark.exposure".into(), Param::new(ParamValue::Float(f64::NEG_INFINITY)));
+        let w = h.hdr_at(t).unwrap();
+        assert_eq!(w.global.exposure, HDR_MAX_EXPOSURE);
+        assert_eq!(w.global.sat, 1.0);
+        assert_eq!((w.zones[0].range, w.zones[0].falloff, w.zones[0].balance), (-HDR_MAX_RANGE, HDR_MIN_FALLOFF, [0.0, 1.0, 0.0]));
+        assert_eq!((w.zones[5].exposure, w.zones[1].exposure), (0.0, 0.0));
+        // every zone has its five keys in the schema
+        for z in HDR_ZONES {
+            for k in ["exposure", "sat", "balance", "range", "falloff"] {
+                assert!(node_param(&format!("hdr.{z}.{k}")).is_some(), "{z}.{k}");
+            }
+        }
+        assert!(node_param("hdr.global.range").is_none());
     }
 
     /// Fork C2: the graph parameters resolve per input, read as identity when missing and clamp.

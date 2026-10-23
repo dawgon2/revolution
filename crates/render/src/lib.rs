@@ -15,6 +15,7 @@ pub mod blend;
 pub mod color_match;
 pub mod colorman;
 pub mod comp;
+pub mod contour;
 pub mod denoise;
 pub mod effects;
 pub mod flow;
@@ -30,17 +31,21 @@ pub mod look_diff;
 pub mod lumetri_presets;
 pub mod luts;
 pub mod mask;
+pub mod matte;
 pub mod mixer;
 pub mod multicam;
 pub mod offline;
+pub mod paint;
 pub mod picture_facts;
 pub mod plan;
 pub mod preview;
 pub mod remix;
+pub mod roto;
 pub mod scene;
 pub mod temporal;
 pub mod tnr;
 pub mod track;
+pub mod track_run;
 pub mod transitions;
 pub mod vfx;
 
@@ -109,11 +114,24 @@ pub struct RenderOptions {
     /// paused Program frame only; off for playback, scrubbing and everything else, where the
     /// temporal op is left out.
     pub temporal: bool,
+    /// Where Magic Mask mattes come from (fork G3.2, [`matte::register`]); none by default: a
+    /// node with a Magic Mask then changes the whole picture. The engine sets its session's
+    /// token for the Program monitor, the render cache and exports.
+    pub mattes: matte::MatteToken,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
-        Self { scale: 1.0, effects: true, depth: 0, captions: false, working_output: false, high_quality: false, temporal: false }
+        Self {
+            scale: 1.0,
+            effects: true,
+            depth: 0,
+            captions: false,
+            working_output: false,
+            high_quality: false,
+            temporal: false,
+            mattes: matte::MatteToken::NONE,
+        }
     }
 }
 
@@ -268,7 +286,8 @@ pub(crate) fn render_seq_tracks(project: &Project, seq: &Sequence, t: Tick, opts
             // the adjustment layer's grade, before its effects (fork ADR 0004)
             let (aw, ah) = (adjusted.w, adjusted.h);
             // (temporal noise reduction is for media clips only)
-            let mut ops = grade::item_fx(project, item, mt, t, seq.settings.color.working, opts.scale, aw, ah);
+            // (Magic Mask is refused on adjustment layers: no mattes)
+            let mut ops = grade::item_fx(project, item, mt, t, seq.settings.color.working, opts.scale, aw, ah, None);
             grade::strip_temporal(&mut ops);
             for op in ops {
                 op.apply(&mut adjusted);
@@ -542,7 +561,10 @@ pub(crate) fn item_layer_ex(
         };
         // the colour grade: after the input transform, before the effect stack (fork ADR 0004)
         let (lw, lh) = (layer.w, layer.h);
-        let mut ops = grade::item_fx(project, item, mt, t, cx.working, px_scale, lw, lh);
+        // Magic Mask mattes (fork G3.2): tracked in the sequence frame, warped into the layer
+        let to_seq = motion.then_apply(&Affine::scale(1.0 / px_scale as f64, 1.0 / px_scale as f64));
+        let mattes = matte::layer_mattes(project, seq, item, mt, opts.mattes, &to_seq, lw, lh);
+        let mut ops = grade::item_fx(project, item, mt, t, cx.working, px_scale, lw, lh, mattes.as_ref());
         // temporal noise reduction (fork 6.7): the neighbours' base layers, or the op removed
         temporal::attach_images(&mut ops, project, seq, item, t, opts, sources, want, (lw, lh));
         for op in &ops {
@@ -653,6 +675,7 @@ pub(crate) fn base_layer(
                 working_output: true,
                 high_quality: opts.high_quality,
                 temporal: opts.temporal,
+                mattes: opts.mattes,
             };
             match item.multicam_angle(nested) {
                 // a multi-camera clip shows its angle's track only (nothing for an audio-only angle)
@@ -820,6 +843,45 @@ pub fn render_comp_node(
     Some(comp::render_cpu(&view, ctx, &srcs))
 }
 
+/// One node's output of the comp item `comp` at comp time `t`, `size` pixels (fork C3.5a: the
+/// picture a Tracker node analyses). `clip` = (sequence, comp clip): Layer sources read the tracks
+/// below that clip, as the clip renders; without it they are transparent. `None` for an unknown
+/// comp item or node, or a clip that isn't there; a graph that can't be evaluated gives a
+/// transparent picture.
+pub fn render_comp_node_at(
+    project: &Project,
+    comp: ItemId,
+    node: filmcraft_project::dag::NodeId,
+    clip: Option<(ItemId, filmcraft_project::ClipId)>,
+    t: Tick,
+    size: (usize, usize),
+    sources: &dyn SourceProvider,
+) -> Option<Image> {
+    let ItemKind::Comp(c) = &project.item(comp)?.kind else { return None };
+    c.node(node)?;
+    let mut view = (**c).clone();
+    view.output = Some(node);
+    let size = (size.0.max(1), size.1.max(1));
+    let want = (size.0 as f32 / c.width.max(1) as f32).clamp(1.0 / 64.0, 1.0);
+    let opts = RenderOptions { scale: want, ..Default::default() };
+    let ctx = comp::CompCtx { t, size, project: Some(project), high_quality: false };
+    let stand_in;
+    let (seq, track) = match clip {
+        Some((seq_id, clip)) => {
+            let seq = project.sequence(seq_id)?;
+            seq.find_item(clip)?;
+            (seq, seq.video_tracks.iter().position(|tr| tr.items.iter().any(|i| i.id == clip)))
+        }
+        None => {
+            let settings = filmcraft_project::SequenceSettings { width: c.width, height: c.height, frame_rate: c.rate, color: c.color, ..Default::default() };
+            stand_in = Sequence::blank(settings);
+            (&stand_in, None)
+        }
+    };
+    let srcs = comp::project::ProjectSources { project, seq, track, opts, sources };
+    Some(comp::render_cpu(&view, ctx, &srcs))
+}
+
 pub fn render_item(project: &Project, item: ItemId, t: Tick, scale: f32, sources: &dyn SourceProvider) -> Option<Image> {
     let pi = project.item(item)?;
     match &pi.kind {
@@ -886,3 +948,6 @@ mod par_tests;
 #[cfg(test)]
 #[path = "temporal_tests.rs"]
 mod temporal_tests;
+
+#[cfg(test)]
+mod matte_source_tests;

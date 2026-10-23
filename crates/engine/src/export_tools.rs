@@ -479,6 +479,11 @@ pub fn spawn_export(s: &mut Session, project: Arc<Project>, seq: ItemId, mut set
         let _ = std::fs::create_dir_all(dir);
     }
     write_sidecar(s, &project, seq, &settings)?;
+    // Magic Mask mattes tracked by now limit their nodes in the export (fork G3.2): a frozen
+    // copy, so a track still running doesn't change the export half way (the stepped web export
+    // reads the live cache)
+    let mattes = s.magic_mask.snapshot_registration();
+    settings.mattes = mattes.token();
     let id = s.jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
     let job = crate::Job { id, label, progress: Default::default(), result: Default::default() };
     // Export always renders full-resolution media, whatever the proxy toggle says.
@@ -486,6 +491,7 @@ pub fn spawn_export(s: &mut Session, project: Arc<Project>, seq: ItemId, mut set
     let (prog, res) = (job.progress.clone(), job.result.clone());
     if cfg!(target_arch = "wasm32") && !wait && filmcraft_export::stepped(format) {
         // No threads: the host advances the export between UI frames (`Session::pump_jobs`).
+        settings.mattes = s.magic_mask.token();
         let mut exporter = filmcraft_export::Exporter::new(project, seq, &settings, &prog).map_err(|e| EngineError::Other(e.to_string()))?;
         exporter.set_batch(1);
         s.jobs.push(job);
@@ -499,6 +505,8 @@ pub fn spawn_export(s: &mut Session, project: Arc<Project>, seq: ItemId, mut set
             prog.finished.store(true, Ordering::Relaxed);
         }
         *res.lock().unwrap_or_else(|x| x.into_inner()) = Some(r);
+        // (the frozen mattes live as long as the export)
+        drop(mattes);
     };
     let run = crate::export_tools::guard_job(job.progress.clone(), job.result.clone(), run);
     s.jobs.push(job);

@@ -500,3 +500,37 @@ fn shot_match_places_its_node_on_a_hand_made_layout() {
     let g = grade(&s, c).unwrap();
     assert!(!g.has_positions() && g.stored_pos(id).is_none());
 }
+
+/// Fork G4.2: the HDR wheels' keys go through `grade.setParam` (clamped, typed) and
+/// `grade.hdr.reset` resets one wheel or all of them in one undo step; hostile zones are refused.
+#[test]
+fn hdr_wheels_set_clamp_and_reset() {
+    let (mut s, c) = demo();
+    let a = add(&mut s, json!({"clip": c.0}));
+    s.execute("grade.setParam", json!({"node": a, "param": "hdr.shadow.exposure", "value": 99.0})).unwrap();
+    s.execute("grade.setParam", json!({"node": a, "param": "hdr.shadow.falloff", "value": 0.0})).unwrap();
+    s.execute("grade.setParam", json!({"node": a, "param": "hdr.light.balance", "value": [0.2, -0.1, -0.1]})).unwrap();
+    s.execute("grade.setParam", json!({"node": a, "param": "hdr.global.sat", "value": 1.5})).unwrap();
+    assert!(s.execute("grade.setParam", json!({"node": a, "param": "hdr.global.range", "value": 1.0})).is_err());
+    assert!(s.execute("grade.setParam", json!({"node": a, "param": "hdr.light.balance", "value": 1.0})).is_err());
+    let n = grade(&s, c).unwrap().node(a).unwrap().clone();
+    assert_eq!(n.param("hdr.shadow.exposure").unwrap().value, ParamValue::Float(4.0));
+    assert_eq!(n.param("hdr.shadow.falloff").unwrap().value, ParamValue::Float(f64::from(filmcraft_project::grade::HDR_MIN_FALLOFF)));
+    assert!(n.hdr_at(filmcraft_time::Tick(0)).is_some());
+    for z in [json!("Shadow"), json!(3), json!("hdr"), json!("")] {
+        assert!(s.execute("grade.hdr.reset", json!({"node": a, "zone": z})).is_err(), "{z}");
+    }
+    s.execute("grade.hdr.reset", json!({"node": a, "zone": "shadow"})).unwrap();
+    let n = grade(&s, c).unwrap().node(a).unwrap().clone();
+    assert!(n.param("hdr.shadow.exposure").is_none() && n.param("hdr.shadow.falloff").is_none());
+    assert!(n.param("hdr.light.balance").is_some() && n.param("hdr.global.sat").is_some());
+    s.execute("grade.setParam", json!({"node": a, "param": "saturation", "value": 0.5})).unwrap();
+    s.execute("grade.hdr.reset", json!({"node": a})).unwrap();
+    let n = grade(&s, c).unwrap().node(a).unwrap().clone();
+    assert!(n.params.keys().all(|k| !k.starts_with("hdr.")) && n.param("saturation").is_some());
+    // nothing left to reset: no undo step, so one undo brings the wheels back
+    s.execute("grade.hdr.reset", json!({"node": a})).unwrap();
+    s.execute("grade.hdr.reset", json!({"node": a, "zone": "light"})).unwrap();
+    s.execute("edit.undo", json!({})).unwrap();
+    assert!(grade(&s, c).unwrap().node(a).unwrap().param("hdr.light.balance").is_some());
+}

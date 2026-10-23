@@ -246,7 +246,9 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
     let lin_inv = Affine { e: 0.0, f: 0.0, ..to_clip };
     // (masks are keyed and rendered at the clip's effect time: frame holds match)
     let et = it.effect_time_at(ph);
-    let path = m.path_at(et);
+    // (a planar-tracked mask, fork G4.4: drawn and dragged where it is seen; the engine maps the
+    // gestures back into the track's reference frame)
+    let path = filmcraft_render::mask::shown_path(m, et);
     let feather = m.feather.f64_at(et).max(0.0);
     let expansion = m.expansion.f64_at(et);
     let t = app.tokens;
@@ -458,7 +460,10 @@ fn seg_dist(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 /// Draft vertices → a mask path.
 pub fn draft_path(points: &[[f64; 4]]) -> MaskPath {
     MaskPath {
-        vertices: points.iter().map(|q| MaskVertex { p: Vec2::new(q[0], q[1]), t_in: Vec2::new(-q[2], -q[3]), t_out: Vec2::new(q[2], q[3]) }).collect(),
+        vertices: points
+            .iter()
+            .map(|q| MaskVertex { p: Vec2::new(q[0], q[1]), t_in: Vec2::new(-q[2], -q[3]), t_out: Vec2::new(q[2], q[3]), ..MaskVertex::default() })
+            .collect(),
         closed: true,
     }
 }

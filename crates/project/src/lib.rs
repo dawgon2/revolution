@@ -11,23 +11,30 @@
 
 pub mod caption;
 pub mod comp;
+pub mod comp_template;
 pub mod dag;
 pub mod effect;
 pub mod essential;
+pub mod expr;
 pub mod find;
 pub mod grade;
 pub mod graphic;
 pub mod graphic_design;
 pub mod gtemplate;
 pub mod keyframe;
+pub mod magic_mask;
 pub mod mask;
 pub mod mixer;
 pub mod multicam;
 pub mod narration;
+pub mod paint;
+pub mod qual3d;
+pub mod roto;
 pub mod still;
 pub mod tnr;
 pub mod transcript;
 pub mod vtransition;
+pub mod warper;
 
 use std::collections::BTreeMap;
 
@@ -42,7 +49,7 @@ pub use essential::{AudioType, EssentialSound};
 pub use find::{FindOp, FindQuery, FindRow, SearchBin};
 pub use graphic_design::{CharStyle, GraphicMeta, LayerExtra, Pin, PinTarget, Roll, RollMode, SourceGraphic, StyleRun};
 pub use keyframe::{Interpolation, Keyframe, Param, ParamValue};
-pub use mask::{Mask, MaskMode, MaskPath, MaskShape, MaskVertex, TrackMethod};
+pub use mask::{Mask, MaskMode, MaskPath, MaskShape, MaskVertex, PlanarKey, PlanarTrack, TrackMethod};
 pub use mixer::{AutomationMode, InputMap, MixerStrip, TrackSend};
 pub use multicam::{Camera, MergedClip, MulticamAudio, MulticamSel, MulticamSource};
 pub use narration::{Narration, VocalPitch};
@@ -1096,6 +1103,28 @@ impl SplitMarks {
 }
 
 impl Sequence {
+    /// A sequence with these settings and nothing in it (no tracks).
+    pub fn blank(settings: SequenceSettings) -> Sequence {
+        Sequence {
+            settings,
+            video_tracks: Vec::new(),
+            audio_tracks: Vec::new(),
+            markers: Vec::new(),
+            mark_in: None,
+            mark_out: None,
+            work_area: None,
+            start_timecode: 0,
+            master_volume_db: 0.0,
+            master_effects: Vec::new(),
+            master_mixer: MixerStrip::default(),
+            submix_tracks: Vec::new(),
+            caption_tracks: Vec::new(),
+            multicam: None,
+            merged: None,
+            split: SplitMarks::default(),
+        }
+    }
+
     pub fn duration(&self) -> Tick {
         let media = self.video_tracks.iter().chain(&self.audio_tracks).map(Track::end).max().unwrap_or(Tick::ZERO);
         media.max(self.caption_tracks.iter().map(CaptionTrack::end).max().unwrap_or(Tick::ZERO))
@@ -1590,24 +1619,7 @@ impl Project {
 
     /// Create an empty sequence with `v` video and `a` audio tracks.
     pub fn new_sequence(&mut self, name: &str, settings: SequenceSettings, v: usize, a: usize, bin: Option<BinId>) -> ItemId {
-        let mut seq = Sequence {
-            settings,
-            video_tracks: Vec::new(),
-            audio_tracks: Vec::new(),
-            markers: Vec::new(),
-            mark_in: None,
-            mark_out: None,
-            work_area: None,
-            start_timecode: 0,
-            master_volume_db: 0.0,
-            master_effects: Vec::new(),
-            master_mixer: MixerStrip::default(),
-            submix_tracks: Vec::new(),
-            caption_tracks: Vec::new(),
-            multicam: None,
-            merged: None,
-            split: SplitMarks::default(),
-        };
+        let mut seq = Sequence::blank(settings);
         for i in 0..v {
             let id = TrackId(self.alloc_id());
             seq.video_tracks.push(Track::new(id, TrackKind::Video, format!("Video {}", i + 1)));

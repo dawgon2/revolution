@@ -797,6 +797,8 @@ struct CacheJob {
     ended: bool,
     /// The worker's id of this job (set by [`submit`] before the job can run; 0 = not yet).
     id: Arc<AtomicU64>,
+    /// The session's Magic Mask mattes (fork G3.2; frames tracked by the time a frame renders).
+    mattes: filmcraft_render::matte::MatteToken,
 }
 
 impl CacheJob {
@@ -814,7 +816,9 @@ impl CacheJob {
         let range = TimeRange::from_bounds(self.rate.tick_of(first), self.rate.tick_of(first.saturating_add(self.todo.len)));
         let path = self.partial().to_string_lossy().to_string();
         self.progress.done.store(0, Ordering::Relaxed);
-        match Exporter::new(self.project.clone(), self.seq, &part_settings(self.format, &path, range, self.todo.len), &self.progress) {
+        let mut first_try = part_settings(self.format, &path, range, self.todo.len);
+        first_try.mattes = self.mattes;
+        match Exporter::new(self.project.clone(), self.seq, &first_try, &self.progress) {
             Ok(e) => self.exporter = Some(e),
             Err(e) if is_cancel(&e) => return Err(CANCELLED.into()),
             Err(e) if self.format == Format::Hevc => {
@@ -822,7 +826,8 @@ impl CacheJob {
                 self.store.cache.hevc_result(false);
                 let _ = std::fs::remove_file(self.partial());
                 self.format = Format::ProRes;
-                let s = part_settings(Format::ProRes, &path, range, self.todo.len);
+                let mut s = part_settings(Format::ProRes, &path, range, self.todo.len);
+                s.mattes = self.mattes;
                 self.exporter = Some(Exporter::new(self.project.clone(), self.seq, &s, &self.progress).map_err(|e| e.to_string())?);
             }
             Err(e) => return Err(e.to_string()),
@@ -951,6 +956,7 @@ fn submit(s: &Session, seq: ItemId, todo: PartTodo, dir: &Path) -> std::result::
         format,
         exporter: None,
         progress: Progress::default(),
+        mattes: s.magic_mask.token(),
         ended: false,
         id: job_id.clone(),
     };

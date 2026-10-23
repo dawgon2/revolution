@@ -29,9 +29,10 @@ Reduction/Restoration ▸ Voice Isolation**. Drop it on a clip like any audio ef
   changed, so the result sounds more natural on mildly noisy recordings. Lower it when the cleaned
   voice sounds dry or "underwater"; leave it at 100 dB for loud noise (traffic, wind).
   Essential Sound ▸ Repair shows the same setting under Voice Isolation as **Attenuation Limit**
-  (`repair.isolateLimitDb`); Clean Up Voice sets it for you: 12 dB for mild noise, no limit for
-  moderate or loud noise (measured on recorded speech: on mild noise the limit sounds more natural
-  and scores better; with loud clicks such as typing, a limit lets them through).
+  (`repair.isolateLimitDb`); Clean Up Voice sets it for you by the clip's noise level (see "Noise
+  level" below): no limit for loud noise, 18 dB down to 6 dB for mild noise (measured on recorded
+  speech: on mild noise the limit sounds more natural and scores better; with loud clicks such as
+  typing, a limit lets them through).
 - **Delay:** the effect looks 20 ms ahead and works in 10 ms steps, 40 ms in all; playback and
   export compensate for it, so the clip stays in sync.
 
@@ -73,6 +74,43 @@ DeepFilterNet3 checkpoint is refused.
 
 Commands (also for the control channel and agents): `audio.voiceIsolate.status`, `.download`,
 `.cancelDownload`, `.installFile`, `.remove`.
+
+### Two voice models: live or rendered (options and trade-offs)
+
+**[Fork]**
+
+| Model | How it runs | Choose it when | Trade-offs |
+|---|---|---|---|
+| **Faster** (`"model": "faster"`): DeepFilterNet3, 8 MB | live, inside the Voice Isolation effect | editing: you hear the result at once and can change it any time | a small model made for real time |
+| **Better** (`"model": "better"`): MossFormer2_SE_48K, 222 MB, Apache-2.0, from Alibaba's ClearerVoice-Studio | rendered once into a new audio file | the final dialogue, especially over traffic, typing or wind | not live: a 6-core desktop (i5-11600K) needs about 0.35 s per second of mono audio, so a 10-minute interview takes 3–4 minutes, and any change means rendering again |
+
+How much cleaner is Better? **[Fork, measured 2026-10-22]** With five kinds of noise added to
+recorded speech, Better beat Faster on average at every level, most of all on typing and wind;
+Faster is slightly better on steady fan noise. On 824 clean studio recordings (VoiceBank-DEMAND)
+both left the voice as it was. So Better is the default for rendering.
+
+To use Better:
+
+1. Install its model once: get `last_best_checkpoint.pt` from the model's official page
+   (huggingface.co/alibabasglab/MossFormer2_SE_48K; Revolution never downloads it for you) and run
+   `audio.voiceIsolate.installFile` with its `path` and `"model": "better"`.
+2. Save the project, select the voice clips and run `audio.voiceIsolate.render` (Better is the
+   default). A job (you can stop it) writes `<clip name> Voice Isolated.wav` in the
+   project's folder, adds it to the clip's bin and switches the clips to it at the same point of
+   the recording, as one step you can take back; taking it back leaves the new files on disk until
+   you delete them. A stopped job changes nothing and deletes what it wrote.
+3. Remove the live Voice Isolation effect from those clips yourself; otherwise both run and the
+   voice is cleaned twice.
+
+If the Better model is missing or broken, the render uses Faster and says why.
+
+**Noise level [Fork]:** on a clean recording a model's small changes are all you would get, so a
+render first measures how far the voice sits above the noise: full strength up to 25 dB, lighter
+from 25 to 40 dB, the original sound from 40 dB (Clean Up Voice uses the same levels;
+`"gate": false` always gives full strength). The job's status says what it did for each clip.
+
+- **Beginner:** edit with the live effect; render Better only for the clips you deliver.
+- **Pro:** render Better on the dialogue before the mix; the originals stay in the bin.
 
 ### Voice Isolation, DeNoise or Essential Sound? (options and trade-offs)
 

@@ -94,6 +94,17 @@ pub fn manifest() -> Vec<(String, Vec<usize>)> {
 /// `df_dec.df_convp.1.weight` channels-last, so the values are gathered here, every offset
 /// bounds-checked against the storage actually present.
 fn read_tensors(path: &Path) -> Result<Vec<(String, Tensor)>, ModelError> {
+    let wanted: HashMap<String, usize> = manifest().into_iter().map(|(n, d)| (n, d.iter().product())).collect();
+    read_pth(path, &wanted, MAX_FILE_BYTES, "DeepFilterNet3")?
+        .into_iter()
+        .map(|(name, dims, values)| Ok((name, Tensor::from_vec(values, dims, &candle_core::Device::Cpu).map_err(err)?)))
+        .collect()
+}
+
+/// The f32 tensors named in `wanted` (name → element count) of a PyTorch zip checkpoint, as
+/// (name, shape, row-major values); `max_bytes` caps the storage read, `model` names the model in
+/// errors. Shared by DeepFilterNet3 and MossFormer2 (fork AUDIO-PLAN A3.7).
+pub(crate) fn read_pth(path: &Path, wanted: &HashMap<String, usize>, max_bytes: u64, model: &str) -> Result<Vec<(String, Vec<usize>, Vec<f32>)>, ModelError> {
     use std::io::Read;
     let infos = candle_core::pickle::read_pth_tensor_info(path, false, None).map_err(err)?;
     let file = std::fs::File::open(path).map_err(err)?;
@@ -101,13 +112,12 @@ fn read_tensors(path: &Path) -> Result<Vec<(String, Tensor)>, ModelError> {
     // Only the manifest's tensors are read, each name once, each storage file decompressed once
     // and all of them together capped: a hostile file with thousands of entries over one
     // deflate-bomb storage would otherwise keep a full copy per entry (A2 review, 2026-10-15).
-    let wanted: HashMap<String, usize> = manifest().into_iter().map(|(n, d)| (n, d.iter().product())).collect();
     let mut storages: HashMap<String, Arc<Vec<f32>>> = HashMap::new();
     let mut storage_bytes = 0u64;
-    let mut out: Vec<(String, Tensor)> = Vec::with_capacity(wanted.len());
+    let mut out: Vec<(String, Vec<usize>, Vec<f32>)> = Vec::with_capacity(wanted.len());
     for info in infos {
         // `num_batches_tracked` (i64) isn't used.
-        if info.dtype != DType::F32 || out.iter().any(|(n, _)| *n == info.name) {
+        if info.dtype != DType::F32 || out.iter().any(|(n, _, _)| *n == info.name) {
             continue;
         }
         let Some(&expected) = wanted.get(&info.name) else { continue };
@@ -115,7 +125,7 @@ fn read_tensors(path: &Path) -> Result<Vec<(String, Tensor)>, ModelError> {
             Some(s) => s.clone(),
             None => {
                 let entry = zip.by_name(&info.path).map_err(|e| err(format!("`{}`: {e}", info.name)))?;
-                let left = MAX_FILE_BYTES.saturating_sub(storage_bytes);
+                let left = max_bytes.saturating_sub(storage_bytes);
                 if entry.size() > left {
                     return Err(err(format!("`{}`: storage too large", info.name)));
                 }
@@ -132,11 +142,23 @@ fn read_tensors(path: &Path) -> Result<Vec<(String, Tensor)>, ModelError> {
             .iter()
             .try_fold(1usize, |a, d| a.checked_mul(*d))
             .filter(|c| *c <= storage.len() && *c == expected)
-            .ok_or_else(|| err(format!("`{}`: shape {dims:?} doesn't fit DeepFilterNet3 or its storage", info.name)))?;
+            .ok_or_else(|| err(format!("`{}`: shape {dims:?} doesn't fit {model} or its storage", info.name)))?;
         // candle's pickle reader reports the storage offset in bytes (it skips that many bytes
         // itself); GRU weights are views into one shared storage, so it matters here.
         let start =
             Some(info.layout.start_offset()).filter(|b| b % 4 == 0).map(|b| b / 4).ok_or_else(|| err(format!("`{}`: misaligned storage offset", info.name)))?;
+        // contiguous row-major (every MossFormer2 tensor): one bounds-checked copy
+        let mut contiguous = vec![1usize; dims.len()];
+        let mut acc = 1usize;
+        for (c, d) in contiguous.iter_mut().zip(&dims).rev() {
+            *c = acc;
+            acc = acc.saturating_mul(*d);
+        }
+        if contiguous == strides {
+            let src = start.checked_add(count).and_then(|end| storage.get(start..end)).ok_or_else(|| err(format!("`{}`: outside its storage", info.name)))?;
+            out.push((info.name, dims, src.to_vec()));
+            continue;
+        }
         let mut values = Vec::with_capacity(count);
         let mut idx = vec![0usize; dims.len()];
         for _ in 0..count {
@@ -154,7 +176,7 @@ fn read_tensors(path: &Path) -> Result<Vec<(String, Tensor)>, ModelError> {
                 *i = 0;
             }
         }
-        out.push((info.name, Tensor::from_vec(values, dims, &candle_core::Device::Cpu).map_err(err)?));
+        out.push((info.name, dims, values));
     }
     Ok(out)
 }

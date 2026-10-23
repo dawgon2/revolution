@@ -458,3 +458,26 @@ fn monitor_duration_never_covers_the_timecode() {
         }
     }
 }
+
+/// Owner 2026-10-21: Save Layout on the Color page keeps the Clips tab showing when it was picked
+/// over the sequence's tab (it came back as the sequence).
+#[test]
+fn save_layout_keeps_the_chosen_tab_of_a_group() {
+    use filmcraft_ui_egui::dock::PanelKind;
+    let mut d = Driver::demo(Workflow::Resolve);
+    d.click("page.color");
+    assert!(d.harness.state_mut().ui.dock.activate(PanelKind::ColorClips));
+    d.frames(3);
+    assert!(d.harness.state().ui.dock.is_visible(PanelKind::ColorClips));
+    d.click("pageBar.saveLayout");
+    d.frames(3);
+    assert!(d.harness.state().ui.dock.is_visible(PanelKind::ColorClips), "Clips still showing after Save Layout");
+    d.click("page.edit");
+    d.click("page.color");
+    assert!(d.harness.state().ui.dock.is_visible(PanelKind::ColorClips), "the saved layout keeps Clips");
+    // opening a project shows its active sequence: Clips already does, so it stays in front
+    let seq = d.harness.state().session.state.active_sequence.expect("the demo has a sequence");
+    d.harness.state_mut().session.events.push(filmcraft_engine::Event::OpenSequence(seq));
+    d.frames(3);
+    assert!(d.harness.state().ui.dock.is_visible(PanelKind::ColorClips), "Clips stays in front when the project opens");
+}

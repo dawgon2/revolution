@@ -116,6 +116,8 @@ struct Job {
     scale: f32,
     project: Arc<Project>,
     prio: u32,
+    /// The session's Magic Mask mattes when the job was queued (fork G3.3, `RenderOptions::mattes`).
+    mattes: filmcraft_render::matte::MatteToken,
 }
 
 struct Shared {
@@ -142,6 +144,8 @@ struct Shared {
     inject_panics: std::sync::atomic::AtomicU32,
     /// Which frames playback faster than real time shows ([`FrameServer::playback_frame`]).
     skim: Mutex<HashMap<Target, SkimControl>>,
+    /// The session's Magic Mask token ([`FrameServer::set_mattes`]; 0: none).
+    mattes: std::sync::atomic::AtomicU64,
 }
 
 /// Display steps (timeline frames between shown frames) playback faster than real time may use.
@@ -687,6 +691,7 @@ impl FrameServer {
             stats: Mutex::new(FrameStats::default()),
             stop: AtomicBool::new(false),
             inject_panics: std::sync::atomic::AtomicU32::new(0),
+            mattes: std::sync::atomic::AtomicU64::new(0),
         });
         let repaint: Arc<Mutex<Option<Box<dyn Fn() + Send + Sync>>>> = Arc::new(Mutex::new(None));
         #[cfg(not(target_arch = "wasm32"))]
@@ -701,6 +706,13 @@ impl FrameServer {
         #[cfg(target_arch = "wasm32")]
         let _ = workers;
         Self { shared, pool, services, previews, repaint }
+    }
+
+    /// The session's Magic Mask mattes (`Session::magic_mask.token()`, fork G3.3): sequence
+    /// frames queued from now on show the nodes' tracked mattes. The frames' cache keys carry the
+    /// mattes' state through their revision (`FilmcraftApp::seq_revision`).
+    pub fn set_mattes(&self, token: filmcraft_render::matte::MatteToken) {
+        self.shared.mattes.store(token.0, Ordering::Relaxed);
     }
 
     /// The default number of frame workers for this machine.
@@ -866,6 +878,7 @@ impl FrameServer {
             scale,
             project: project.clone(),
             prio,
+            mattes: filmcraft_render::matte::MatteToken(self.shared.mattes.load(Ordering::Relaxed)),
         });
         drop(q);
         self.shared.cv.notify_one();
@@ -1336,7 +1349,7 @@ fn provider(job: &Job, pool: &Arc<MediaPool>, services: &Arc<dyn Services>) -> J
 }
 
 fn plan_job(job: &Job, seq: ItemId, pool: &Arc<MediaPool>, services: &Arc<dyn Services>, previews: &PreviewStore) -> (filmcraft_render::plan::FramePlan, bool) {
-    let opts = filmcraft_render::RenderOptions { scale: job.scale, captions: true, temporal: job_temporal(job), ..Default::default() };
+    let opts = filmcraft_render::RenderOptions { scale: job.scale, captions: true, temporal: job_temporal(job), mattes: job.mattes, ..Default::default() };
     if let Some(frame) = preview_frame(job, seq, pool, previews)
         && let Some(q) = job.project.sequence(seq)
     {
@@ -1383,7 +1396,7 @@ fn render_job(job: &Job, pool: &Arc<MediaPool>, services: &Arc<dyn Services>, pr
         return (Rgba { w: img.w, h: img.h, px: img.over_black_rgba8() }, true);
     }
     let provider = provider(job, pool, services);
-    let opts = filmcraft_render::RenderOptions { scale: job.scale, captions: true, temporal: job_temporal(job), ..Default::default() };
+    let opts = filmcraft_render::RenderOptions { scale: job.scale, captions: true, temporal: job_temporal(job), mattes: job.mattes, ..Default::default() };
     let img = match job.key.target {
         Target::Sequence(seq) | Target::SequencePlan(seq) => Some(filmcraft_render::render_sequence(&job.project, seq, job.time, opts, &provider)),
         Target::Item(item) => filmcraft_render::render_item(&job.project, item, job.time, job.scale, &provider),

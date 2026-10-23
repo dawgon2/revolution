@@ -773,7 +773,7 @@ fn transform_shutter_override_blurs_moving_position() {
     let a = Keyframe::new(Tick::ZERO, ParamValue::Vec2(filmcraft_geom::Vec2::new(8.0, 16.0)));
     let mut b = Keyframe::new(Tick::from_seconds_f64(1.0), ParamValue::Vec2(filmcraft_geom::Vec2::new(40.0, 16.0)));
     b.interp = Interpolation::Linear;
-    e.params.insert("position".into(), Param { value: ParamValue::Vec2(filmcraft_geom::Vec2::new(8.0, 16.0)), keyframes: vec![a, b] });
+    e.params.insert("position".into(), Param { value: ParamValue::Vec2(filmcraft_geom::Vec2::new(8.0, 16.0)), keyframes: vec![a, b], expression: None });
     let img = picture(32, 32);
     let cx = FxCtx { t: Tick::from_seconds_f64(0.5), seconds: 0.5, ..cx() };
     let sharp = {

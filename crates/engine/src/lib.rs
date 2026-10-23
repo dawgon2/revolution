@@ -28,6 +28,10 @@ pub mod color;
 pub mod commands;
 pub mod comp;
 pub mod comp_explain;
+pub mod comp_group;
+pub mod comp_roto_track;
+pub mod comp_template;
+pub mod comp_track;
 pub mod demo;
 pub mod dirs;
 pub mod essential_sound;
@@ -40,13 +44,19 @@ pub mod fork_resolve;
 pub mod fork_update;
 pub mod grade;
 pub mod grade_graph;
+pub mod grade_qual3d;
 pub mod grade_tools;
+pub mod grade_warper;
 pub mod graphic_templates;
 pub mod graphics;
 pub mod interchange;
 pub mod keyboard;
+pub mod magic_mask;
+#[cfg(feature = "magic-mask")]
+mod magic_mask_sam2;
 mod marker_export;
 pub mod masks;
+pub mod masks_planar;
 pub mod media_browser;
 pub mod media_pool;
 pub mod media_watch;
@@ -96,6 +106,7 @@ pub mod update_install;
 pub mod user_effects;
 pub mod voice_cleanup;
 pub mod voice_isolation;
+pub mod voice_isolation_render;
 pub mod voiceover;
 pub mod voiceover_takes;
 pub mod window_state;
@@ -498,16 +509,24 @@ pub struct Session {
     pub media_jobs: Vec<proxies::PendingJob>,
     /// Mask tracking jobs whose keyframes are still being written.
     pub mask_jobs: Vec<masks::PendingTrack>,
+    /// Planar mask / window tracking jobs (fork G4.4, `masks.trackPlanar`).
+    pub planar_jobs: Vec<masks_planar::Pending>,
     /// Running Corner Pin tracking jobs (fork Y3.3, `tracking.cornerPin`).
     pub pin_jobs: Vec<tracking::PendingPin>,
     /// Running attach-to-track jobs (fork Y3.2, `tracking.attach`).
     pub attach_jobs: Vec<tracking::PendingAttach>,
+    /// Running Tracker / Planar Tracker comp node analyses (fork C3.5a, `comp.track.analyse`).
+    pub comp_track_jobs: Vec<comp_track::Pending>,
+    /// Track-assisted roto shape tracks still running (fork C3.7), written when they end.
+    pub roto_track_jobs: Vec<comp_roto_track::Pending>,
     /// User shader effect files and their outcome (fork Y3.4, `user_effects::reload`).
     pub user_effects: Vec<user_effects::UserEffectStatus>,
     /// Scene Edit Detection jobs whose results are applied when they finish.
     pub scene_jobs: Vec<scene_detect::PendingScene>,
     /// Clean Up Voice jobs whose settings are applied when they finish.
     pub cleanup_jobs: Vec<voice_cleanup::Pending>,
+    /// Rendered voice isolation jobs whose files are imported when they finish (A3.7).
+    pub isolate_jobs: Vec<voice_isolation_render::Pending>,
     /// Card offloads whose copies are imported when they finish (LINUX-PLAN L2.4).
     pub card_jobs: Vec<card_offload::PendingOffload>,
     /// Effect presets (built-in + the user's, persisted in the data directory).
@@ -552,6 +571,8 @@ pub struct Session {
     /// The background media worker (fork 6.2 / 6.3: automatic proxies, render cache). Its thread
     /// starts with the first job; the frontend reports playing / scrubbing / exporting to it.
     pub background: background::BackgroundWorker,
+    /// Magic Mask (fork G3.2): the matte cache, the segmenter and the tracks.
+    pub magic_mask: magic_mask::MagicMasks,
     /// Automatic proxies (fork 6.2): the proxy jobs queued on [`Self::background`] and each clip's
     /// proxy state (`media.proxyStatus`, the Project panel's badges).
     pub auto_proxies: proxy_jobs::AutoProxies,
@@ -646,11 +667,15 @@ impl Session {
             offline: Default::default(),
             media_jobs: Vec::new(),
             mask_jobs: Vec::new(),
+            planar_jobs: Vec::new(),
             pin_jobs: Vec::new(),
             attach_jobs: Vec::new(),
+            comp_track_jobs: Vec::new(),
+            roto_track_jobs: Vec::new(),
             user_effects: Vec::new(),
             scene_jobs: Vec::new(),
             cleanup_jobs: Vec::new(),
+            isolate_jobs: Vec::new(),
             card_jobs: Vec::new(),
             presets: Default::default(),
             export_presets: Default::default(),
@@ -665,6 +690,7 @@ impl Session {
             ai: Default::default(),
             assist: Default::default(),
             background: Default::default(),
+            magic_mask: Default::default(),
             auto_proxies: Default::default(),
             media_stamps: Default::default(),
             media_scan: None,
@@ -763,9 +789,13 @@ impl Session {
     pub fn poll_persistence(&mut self) {
         proxies::poll(self);
         masks::poll(self);
+        masks_planar::poll(self);
         tracking::poll(self);
+        comp_track::poll(self);
+        comp_roto_track::poll(self);
         scene_detect::poll(self);
         voice_cleanup::poll(self);
+        voice_isolation_render::poll(self);
         card_offload::poll(self);
         export_tools::pump_queue(self, false);
         panels::log_jobs(self);
@@ -1213,7 +1243,7 @@ impl Session {
     pub fn render_program_working(&self, scale: f32) -> Option<filmcraft_render::Image> {
         let seq = self.renderable_sequence(scale).ok()?;
         let provider = self.media.provider(self.project.clone(), self.services.clone());
-        let opts = filmcraft_render::RenderOptions { scale, working_output: true, ..Default::default() };
+        let opts = filmcraft_render::RenderOptions { scale, working_output: true, mattes: self.magic_mask.token(), ..Default::default() };
         Some(filmcraft_render::render_sequence(&self.project, seq, self.playhead(), opts, &provider))
     }
 
@@ -1234,7 +1264,7 @@ impl Session {
         let seq = self.renderable_sequence(scale)?;
         let t = self.sequence_rate().snap(t.max(Tick::ZERO));
         let provider = self.media.provider(self.project.clone(), self.services.clone());
-        let opts = filmcraft_render::RenderOptions { scale, captions: true, ..Default::default() };
+        let opts = filmcraft_render::RenderOptions { scale, captions: true, mattes: self.magic_mask.token(), ..Default::default() };
         Ok(filmcraft_render::render_sequence(&self.project, seq, t, opts, &provider))
     }
 
@@ -1318,7 +1348,17 @@ mod coach_tests;
 #[cfg(test)]
 mod color_tests;
 #[cfg(test)]
+mod comp_expr_tests;
+#[cfg(test)]
+mod comp_group_path_tests;
+#[cfg(test)]
+mod comp_group_tests;
+#[cfg(test)]
+mod comp_roto_track_tests;
+#[cfg(test)]
 mod comp_tests;
+#[cfg(test)]
+mod comp_track_tests;
 #[cfg(test)]
 mod dirs_tests;
 #[cfg(test)]
@@ -1336,7 +1376,11 @@ mod gap_selection_tests;
 #[cfg(test)]
 mod grade_graph_tests;
 #[cfg(test)]
+mod grade_qual3d_tests;
+#[cfg(test)]
 mod grade_tests;
+#[cfg(test)]
+mod grade_warper_tests;
 #[cfg(test)]
 mod image_sequence_tests;
 #[cfg(test)]
@@ -1345,6 +1389,8 @@ mod interchange_auto_points_tests;
 mod keyboard_tests;
 #[cfg(test)]
 mod linked_speed_tests;
+#[cfg(test)]
+mod magic_mask_tests;
 #[cfg(test)]
 mod masks_tests;
 #[cfg(test)]

@@ -32,6 +32,12 @@ use crate::keyframe::{Param, ParamValue};
 pub const KAPPA: f64 = 0.552_284_749_830_793_4;
 
 /// One path vertex with its incoming/outgoing Bézier tangents (relative to `p`; zero = corner).
+///
+/// `feather_in` / `feather_out` are a per-point feather (path pixels, >= 0: the distance inside
+/// the outline where coverage reaches 1 / outside where it reaches 0) used by roto shapes
+/// ([`crate::roto`]); effect masks ignore them. Unset (0) they are not serialized, so mask JSON
+/// is unchanged. They interpolate with the vertex, and [`MaskPath::transformed`] scales them by
+/// the transform's mean scale (never translates them).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MaskVertex {
     pub p: Vec2,
@@ -39,19 +45,44 @@ pub struct MaskVertex {
     pub t_in: Vec2,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub t_out: Vec2,
+    #[serde(default, skip_serializing_if = "is_zero_f")]
+    pub feather_in: f64,
+    #[serde(default, skip_serializing_if = "is_zero_f")]
+    pub feather_out: f64,
 }
 
 fn is_zero(v: &Vec2) -> bool {
     v.x == 0.0 && v.y == 0.0
 }
 
+fn is_zero_f(v: &f64) -> bool {
+    *v == 0.0
+}
+
+/// Largest per-point feather a cleaned vertex keeps (path pixels).
+pub const MAX_POINT_FEATHER: f64 = 10_000.0;
+/// Largest |coordinate| a cleaned vertex keeps (path pixels).
+pub const MAX_VERTEX_COORD: f64 = 1e7;
+
 impl MaskVertex {
     pub fn corner(p: Vec2) -> Self {
-        Self { p, t_in: Vec2::ZERO, t_out: Vec2::ZERO }
+        Self { p, ..Self::default() }
     }
     /// A smooth vertex with mirrored tangents (`t_out = t`, `t_in = -t`).
     pub fn smooth(p: Vec2, t: Vec2) -> Self {
-        Self { p, t_in: t * -1.0, t_out: t }
+        Self { p, t_in: t * -1.0, t_out: t, ..Self::default() }
+    }
+    /// The vertex with per-point feather distances `inner` / `outer`.
+    pub fn with_feather(self, inner: f64, outer: f64) -> Self {
+        Self { feather_in: inner, feather_out: outer, ..self }
+    }
+    /// The vertex with every value finite and within the caps (non-finite -> 0; coordinates within
+    /// ± [`MAX_VERTEX_COORD`], feathers 0 ..= [`MAX_POINT_FEATHER`]).
+    pub fn cleaned(self) -> Self {
+        let c = |v: f64| if v.is_finite() { v.clamp(-MAX_VERTEX_COORD, MAX_VERTEX_COORD) } else { 0.0 };
+        let f = |v: f64| if v.is_finite() { v.clamp(0.0, MAX_POINT_FEATHER) } else { 0.0 };
+        let v = |q: Vec2| Vec2::new(c(q.x), c(q.y));
+        Self { p: v(self.p), t_in: v(self.t_in), t_out: v(self.t_out), feather_in: f(self.feather_in), feather_out: f(self.feather_out) }
     }
     pub fn is_corner(&self) -> bool {
         is_zero(&self.t_in) && is_zero(&self.t_out)
@@ -104,7 +135,8 @@ impl MaskPath {
             return false;
         };
         let Some(v) = self.vertices.get_mut(i) else { return false };
-        *v = if v.is_corner() { MaskVertex::smooth(v.p, (next - prev) * (1.0 / 6.0)) } else { MaskVertex::corner(v.p) };
+        let (fi, fo) = (v.feather_in, v.feather_out);
+        *v = if v.is_corner() { MaskVertex::smooth(v.p, (next - prev) * (1.0 / 6.0)) } else { MaskVertex::corner(v.p) }.with_feather(fi, fo);
         true
     }
     /// A polygon through `points` (corner vertices).
@@ -189,12 +221,12 @@ impl MaskPath {
             });
             match fillet {
                 Some((u, w, d, h)) => {
-                    vertices.push(MaskVertex { p: v.p - u * d, t_in: Vec2::ZERO, t_out: u * h });
-                    vertices.push(MaskVertex { p: v.p + w * d, t_in: w * -h, t_out: Vec2::ZERO });
+                    vertices.push(MaskVertex { p: v.p - u * d, t_in: Vec2::ZERO, t_out: u * h, ..*v });
+                    vertices.push(MaskVertex { p: v.p + w * d, t_in: w * -h, t_out: Vec2::ZERO, ..*v });
                 }
                 None => {
-                    vertices.push(MaskVertex::corner(v.p));
-                    vertices.push(MaskVertex::corner(v.p));
+                    vertices.push(MaskVertex { t_in: Vec2::ZERO, t_out: Vec2::ZERO, ..*v });
+                    vertices.push(MaskVertex { t_in: Vec2::ZERO, t_out: Vec2::ZERO, ..*v });
                 }
             }
         }
@@ -208,13 +240,31 @@ impl MaskPath {
         self.vertices.is_empty()
     }
 
-    /// The path with every point and tangent mapped by `m` (tangents by its linear part).
+    /// The path with every point and tangent mapped by `m` (tangents by its linear part) and
+    /// per-point feathers scaled by its mean scale `sqrt|det|` (distances never translate).
     pub fn transformed(&self, m: &Affine) -> Self {
         let lin = Affine { e: 0.0, f: 0.0, ..*m };
+        let k = m.determinant().abs().sqrt();
+        let k = if k.is_finite() { k } else { 1.0 };
         Self {
-            vertices: self.vertices.iter().map(|v| MaskVertex { p: m.apply(v.p), t_in: lin.apply(v.t_in), t_out: lin.apply(v.t_out) }).collect(),
+            vertices: self
+                .vertices
+                .iter()
+                .map(|v| MaskVertex {
+                    p: m.apply(v.p),
+                    t_in: lin.apply(v.t_in),
+                    t_out: lin.apply(v.t_out),
+                    feather_in: v.feather_in * k,
+                    feather_out: v.feather_out * k,
+                })
+                .collect(),
             closed: self.closed,
         }
+    }
+
+    /// The path with every vertex cleaned ([`MaskVertex::cleaned`]) and at most `max` vertices.
+    pub fn cleaned(&self, max: usize) -> Self {
+        Self { vertices: self.vertices.iter().take(max).map(|v| v.cleaned()).collect(), closed: self.closed }
     }
 
     /// Mean of the vertex positions.
@@ -295,18 +345,25 @@ impl MaskPath {
         out
     }
 
-    /// Flattened components for keyframe interpolation: `[x, y, in.x, in.y, out.x, out.y]` per vertex.
+    /// Flattened components for keyframe interpolation:
+    /// `[x, y, in.x, in.y, out.x, out.y, feather_in, feather_out]` per vertex.
     pub fn components(&self) -> Vec<f64> {
-        self.vertices.iter().flat_map(|v| [v.p.x, v.p.y, v.t_in.x, v.t_in.y, v.t_out.x, v.t_out.y]).collect()
+        self.vertices.iter().flat_map(|v| [v.p.x, v.p.y, v.t_in.x, v.t_in.y, v.t_out.x, v.t_out.y, v.feather_in, v.feather_out]).collect()
     }
     /// Inverse of [`MaskPath::components`] (`closed` is taken from `self`).
     pub fn with_components(&self, c: &[f64]) -> Self {
         Self {
             vertices: c
-                .as_chunks::<6>()
+                .as_chunks::<8>()
                 .0
                 .iter()
-                .map(|k| MaskVertex { p: Vec2::new(k[0], k[1]), t_in: Vec2::new(k[2], k[3]), t_out: Vec2::new(k[4], k[5]) })
+                .map(|k| MaskVertex {
+                    p: Vec2::new(k[0], k[1]),
+                    t_in: Vec2::new(k[2], k[3]),
+                    t_out: Vec2::new(k[4], k[5]),
+                    feather_in: k[6],
+                    feather_out: k[7],
+                })
                 .collect(),
             closed: self.closed,
         }
@@ -450,6 +507,12 @@ pub struct Mask {
     pub mode: MaskMode,
     #[serde(default)]
     pub track_method: TrackMethod,
+    /// A planar track the mask follows (fork G4.4): the path (keyframes included) is stored in
+    /// the track's reference-frame pixels and drawn through the track's homography at each time
+    /// ([`PlanarTrack::homography_at`]). Absent in older projects and in masks never tracked
+    /// planar, so their saves are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planar: Option<PlanarTrack>,
 }
 
 /// Mask parameter ids (keyframe commands address them with `"mask": n`).
@@ -467,6 +530,7 @@ impl Mask {
             inverted: false,
             mode: MaskMode::Add,
             track_method: TrackMethod::default(),
+            planar: None,
         }
     }
     /// A linear (gradient) mask from `start` (coverage 1) to `end` (coverage 0). Its feather starts
@@ -596,6 +660,209 @@ pub fn mask_param_defs() -> &'static [ParamDef] {
     })
 }
 
+// ---- planar track (fork G4.4) ----------------------------------------------------------------
+
+/// Most keys one [`PlanarTrack`] keeps (≈ 2.3 h at 24 fps, 16 MB in memory).
+pub const MAX_PLANAR_KEYS: usize = 200_000;
+/// Largest |entry| of a stored homography (after normalising `h[8]` to 1): pixel offsets up to a
+/// few 10⁴ and perspective terms far below 1 stay well inside it.
+const MAX_PLANAR_ENTRY: f64 = 1e9;
+
+/// One frame of a planar track: the homography (row-major 3×3, `h[8]` = 1) mapping the track's
+/// reference-frame pixels to the clip's pixels at `time` (clip media time, like mask keyframes).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct PlanarKey {
+    pub time: filmcraft_time::Tick,
+    pub h: [f64; 9],
+}
+
+/// The per-frame plane motion a mask follows (fork G4.4, `masks.trackPlanar`).
+///
+/// **Design.** The planar tracker (`filmcraft_render::track_run::PlanarTracker`, fork C3) gives a
+/// homography per frame. Rather than baking it into Mask Path keyframes (a projected Bézier is
+/// not a Bézier: a curved window on a tilting sign would lose its shape), the mask keeps the
+/// motion itself and the renderer maps the *flattened* outline through it, which is exact for any
+/// curve, on the CPU and the GPU alike (both consume the same flattened polygon,
+/// `filmcraft_render::mask::prepare`). The stored path and its keyframes stay in the reference
+/// frame's pixels, so reshaping the window later never fights the track (the on-monitor handles
+/// are drawn and dragged where the window is seen; the engine maps the drag back). Between keys
+/// the homography is interpolated entry by entry (keys are one frame apart); before the first and
+/// after the last key it holds.
+///
+/// Every number is hostile: loading runs [`PlanarTrack::cleaned`] (drops keys that are not
+/// finite, singular or absurd, sorts and dedups them by time, caps their count), and
+/// [`PlanarTrack::homography_at`] only returns maps that pass the same check.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", from = "RawPlanarTrack")]
+pub struct PlanarTrack {
+    /// The frame (clip media time) the stored path was drawn on: the motion is identity there.
+    pub reference: filmcraft_time::Tick,
+    pub keys: Vec<PlanarKey>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct RawPlanarTrack {
+    reference: filmcraft_time::Tick,
+    keys: Vec<RawPlanarKey>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawPlanarKey {
+    time: filmcraft_time::Tick,
+    /// (`null` entries: NaN / ∞ as a damaged file writes them; the key is dropped)
+    h: Vec<Option<f64>>,
+}
+
+impl From<RawPlanarTrack> for PlanarTrack {
+    fn from(r: RawPlanarTrack) -> Self {
+        let keys = r
+            .keys
+            .into_iter()
+            .filter_map(|k| {
+                let v: Option<Vec<f64>> = k.h.into_iter().collect();
+                let h: [f64; 9] = v?.try_into().ok()?;
+                Some(PlanarKey { time: k.time, h })
+            })
+            .collect();
+        PlanarTrack { reference: r.reference, keys }.cleaned()
+    }
+}
+
+/// `h` normalised to `h[8]` = 1, or None when it is not a usable map: non-finite, absurdly large,
+/// singular (relative to its rows' lengths) or with `h[8]` ≈ 0 (the origin sent to infinity).
+pub fn clean_homography(h: [f64; 9]) -> Option<[f64; 9]> {
+    if !h.iter().all(|v| v.is_finite()) || h[8].abs() < 1e-12 {
+        return None;
+    }
+    let n = h.map(|v| v / h[8]);
+    if !n.iter().all(|v| v.is_finite() && v.abs() <= MAX_PLANAR_ENTRY) {
+        return None;
+    }
+    let det = n[0] * (n[4] * n[8] - n[5] * n[7]) - n[1] * (n[3] * n[8] - n[5] * n[6]) + n[2] * (n[3] * n[7] - n[4] * n[6]);
+    let row = |r: usize| n.get(r * 3..r * 3 + 3).map_or(f64::NAN, |v| v.iter().map(|x| x * x).sum::<f64>().sqrt());
+    let scale = row(0) * row(1) * row(2);
+    (det.is_finite() && scale.is_finite() && det.abs() > 1e-10 * scale.max(1e-300)).then_some(n)
+}
+
+/// `p` mapped through the (row-major) homography `h`; None at or near the line sent to infinity.
+pub fn apply_homography(h: &[f64; 9], p: Vec2) -> Option<Vec2> {
+    let w = h[6] * p.x + h[7] * p.y + h[8];
+    if !w.is_finite() || w.abs() < 1e-12 {
+        return None;
+    }
+    let q = Vec2::new((h[0] * p.x + h[1] * p.y + h[2]) / w, (h[3] * p.x + h[4] * p.y + h[5]) / w);
+    (q.x.is_finite() && q.y.is_finite()).then_some(q)
+}
+
+impl PlanarTrack {
+    /// Within the caps: usable maps only (normalised), sorted by time, one per time (the last
+    /// written wins), at most [`MAX_PLANAR_KEYS`] (the earliest).
+    pub fn cleaned(mut self) -> Self {
+        self.keys = self.keys.into_iter().filter_map(|k| clean_homography(k.h).map(|h| PlanarKey { time: k.time, h })).collect();
+        // (stable: of equal times the last written comes last)
+        self.keys.sort_by_key(|k| k.time);
+        let mut out: Vec<PlanarKey> = Vec::with_capacity(self.keys.len().min(MAX_PLANAR_KEYS));
+        for k in self.keys {
+            let full = out.len() >= MAX_PLANAR_KEYS;
+            match out.last_mut() {
+                Some(l) if l.time == k.time => *l = k,
+                _ if full => break,
+                _ => out.push(k),
+            }
+        }
+        self.keys = out;
+        self
+    }
+
+    /// The map from reference pixels to clip pixels at `t` (`h[8]` = 1): interpolated between
+    /// the two keys around `t`, held before the first and after the last. None without keys.
+    pub fn homography_at(&self, t: filmcraft_time::Tick) -> Option<[f64; 9]> {
+        let i = self.keys.partition_point(|k| k.time <= t);
+        let (a, b) = match (i.checked_sub(1).and_then(|j| self.keys.get(j)), self.keys.get(i)) {
+            (Some(a), Some(b)) => (a, b),
+            (Some(k), None) | (None, Some(k)) => return clean_homography(k.h),
+            (None, None) => return None,
+        };
+        let span = (b.time.0 as f64) - (a.time.0 as f64);
+        let u = if span > 0.0 { ((t.0 as f64 - a.time.0 as f64) / span).clamp(0.0, 1.0) } else { 0.0 };
+        let mut m = [0.0; 9];
+        for ((o, x), y) in m.iter_mut().zip(&a.h).zip(&b.h) {
+            *o = x + (y - x) * u;
+        }
+        clean_homography(m).or_else(|| clean_homography(if u < 0.5 { a.h } else { b.h }))
+    }
+}
+
+#[cfg(test)]
+mod planar_tests {
+    use super::*;
+    use filmcraft_time::Tick;
+
+    const ID: [f64; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+
+    #[test]
+    fn old_masks_load_and_save_unchanged() {
+        let m = Mask::new("w", MaskPath::rect(0.0, 0.0, 10.0, 10.0));
+        let j = serde_json::to_string(&m).unwrap();
+        assert!(!j.contains("planar"), "{j}");
+        let back: Mask = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, m);
+        assert_eq!(serde_json::to_string(&back).unwrap(), j, "byte-identical");
+    }
+
+    #[test]
+    fn planar_track_round_trips_and_interpolates() {
+        let mut m = Mask::new("w", MaskPath::rect(0.0, 0.0, 10.0, 10.0));
+        let shift = |dx: f64| [1.0, 0.0, dx, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        m.planar = Some(PlanarTrack { reference: Tick(0), keys: vec![PlanarKey { time: Tick(0), h: ID }, PlanarKey { time: Tick(100), h: shift(10.0) }] });
+        let j = serde_json::to_string(&m).unwrap();
+        let back: Mask = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, m);
+        let p = back.planar.unwrap();
+        let at = |t: i64| apply_homography(&p.homography_at(Tick(t)).unwrap(), Vec2::new(1.0, 2.0)).unwrap();
+        assert_eq!(at(-50), Vec2::new(1.0, 2.0), "held before");
+        assert!((at(50).x - 6.0).abs() < 1e-12);
+        assert!((at(500).x - 11.0).abs() < 1e-12, "held after");
+        assert_eq!(PlanarTrack::default().homography_at(Tick(0)), None);
+    }
+
+    #[test]
+    fn hostile_planar_tracks_are_cleaned_never_panic() {
+        // NaN (written as null), wrong lengths, singular, h8 = 0, huge, unsorted duplicates
+        let j = r#"{"reference": 5, "keys": [
+            {"time": 30, "h": [1,0,0, 0,1,0, 0,0,1]},
+            {"time": 10, "h": [null,0,0, 0,1,0, 0,0,1]},
+            {"time": 11, "h": [1,0,0]},
+            {"time": 12, "h": [1,2,3, 2,4,6, 0,0,1]},
+            {"time": 13, "h": [1,0,0, 0,1,0, 0,0,0]},
+            {"time": 14, "h": [1e300,0,0, 0,1,0, 0,0,1]},
+            {"time": 20, "h": [2,0,0, 0,2,0, 0,0,2]},
+            {"time": 20, "h": [1,0,4, 0,1,0, 0,0,1]},
+            {"time": 7},
+            {}
+        ]}"#;
+        let p: PlanarTrack = serde_json::from_str(j).unwrap();
+        assert_eq!(p.reference, Tick(5));
+        assert_eq!(p.keys.iter().map(|k| k.time.0).collect::<Vec<_>>(), vec![20, 30], "{p:?}");
+        assert_eq!(p.keys[0].h[2], 4.0, "the last written of equal times wins");
+        // a hostile mid-way blend falls back to a key; absurd times never panic
+        let flip = PlanarTrack {
+            reference: Tick(0),
+            keys: vec![PlanarKey { time: Tick(0), h: ID }, PlanarKey { time: Tick(10), h: [-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0] }],
+        };
+        assert!(flip.homography_at(Tick(5)).is_some());
+        for t in [i64::MIN, -1, 0, 5, 10, i64::MAX] {
+            let _ = flip.homography_at(Tick(t));
+        }
+        // the key cap
+        let many = PlanarTrack { reference: Tick(0), keys: (0..MAX_PLANAR_KEYS as i64 + 10).map(|t| PlanarKey { time: Tick(t), h: ID }).collect() }.cleaned();
+        assert_eq!(many.keys.len(), MAX_PLANAR_KEYS);
+        assert_eq!(apply_homography(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], Vec2::ZERO), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -696,6 +963,40 @@ mod tests {
         let mut e = l.clone();
         e.path = Param::new(ParamValue::Path(MaskPath::default()));
         assert_eq!(e.linear_points_at(Tick(0)), None);
+    }
+
+    #[test]
+    fn per_point_feather_is_optional_interpolates_and_scales() {
+        // mask JSON without feathers is byte-identical after a round trip
+        let json = r#"{"vertices":[{"p":{"x":1.0,"y":2.0}},{"p":{"x":5.0,"y":2.0},"t_in":{"x":-1.0,"y":0.0},"t_out":{"x":1.0,"y":0.0}},{"p":{"x":3.0,"y":6.0}}],"closed":true}"#;
+        let p: MaskPath = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_string(&p).unwrap(), json);
+        let old = Mask::new("Mask (1)", p);
+        let s = serde_json::to_string(&old).unwrap();
+        assert!(!s.contains("feather_"), "{s}");
+        assert_eq!(serde_json::from_str::<Mask>(&s).unwrap(), old);
+        // feathers interpolate with the vertex
+        let a = MaskPath::rect(0.0, 0.0, 10.0, 10.0);
+        let mut b = a.clone();
+        b.vertices[1] = b.vertices[1].with_feather(4.0, 8.0);
+        let mut m = Mask::new("m", a.clone());
+        m.path.put_keyframe(Tick(0), ParamValue::Path(a));
+        m.path.put_keyframe(Tick(100), ParamValue::Path(b.clone()));
+        let mid = m.path_at(Tick(50));
+        assert_eq!((mid.vertices[1].feather_in, mid.vertices[1].feather_out), (2.0, 4.0));
+        // a transform scales feathers by its mean scale and never translates them
+        let t = b.transformed(&Affine { a: 2.0, b: 0.0, c: 0.0, d: 8.0, e: 100.0, f: 50.0 });
+        assert_eq!((t.vertices[1].feather_in, t.vertices[1].feather_out), (16.0, 32.0));
+        let t = b.transformed(&Affine::translate(100.0, 50.0));
+        assert_eq!((t.vertices[1].feather_in, t.vertices[1].feather_out), (4.0, 8.0));
+        // smooth toggling and rounding keep them
+        let mut c = b.clone();
+        assert!(c.toggle_smooth(1) && c.vertices[1].feather_out == 8.0);
+        let r = b.with_rounded_corners(2.0, &[1]);
+        assert_eq!((r.vertices[1].feather_out, r.vertices[2].feather_out), (8.0, 8.0));
+        // cleaning
+        let v = MaskVertex::corner(Vec2::new(f64::NAN, 1e300)).with_feather(-1.0, f64::INFINITY).cleaned();
+        assert_eq!(v, MaskVertex::corner(Vec2::new(0.0, MAX_VERTEX_COORD)));
     }
 
     #[test]

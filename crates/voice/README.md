@@ -30,6 +30,21 @@ are never bundled or committed; they are downloaded on first use (a later A2 ste
   registers it with `filmcraft_audio_dsp::register_external`; without it, or at sample rates other
   than 48 kHz, `voice_isolate` is audio-dsp's DeNoise fallback.
 
+- `kaldi` (fork AUDIO-PLAN A3.7, no feature): the MossFormer2_SE_48K front end and STFT: Kaldi
+  60-bin log-mel filterbank (40 ms Hamming frames every 8 ms, pre-emphasis 0.97, FFT 2048, seeded
+  dither 1.0), torchaudio's `compute_deltas` (Δ, ΔΔ → 180 channels), 1920 / 384 symmetric-Hamming
+  STFT / iSTFT without centring. Parity with an independent numpy implementation of the Kaldi /
+  torchaudio definitions (`fbank_oracle_dump`, ignored): max abs error 1.2e-5 (fbank), 3.4e-6 (Δ).
+
+- `mossformer` (feature `dfn`): MossFormer2_SE_48K (ClearerVoice-Studio, Apache-2.0, 55 M
+  parameters): `MossFormer2::load` reads the official `last_best_checkpoint.pt` (929 tensors, shape
+  and finite checks, ≤ 512 MB), `enhance` runs whole channels offline (≤ 20 s in one pass, longer in
+  4 s windows every 3 s; the mask of the channels' mean applies to each). candle does the matrix
+  products, the rest is plain Rust. Parity with a numpy implementation of the PyTorch modules
+  (`mask_oracle_dump`, ignored): max abs mask error 6.8e-6. About 0.2–0.45 s of CPU per second of
+  audio on the i5-11600K (all cores). Used by the engine's rendered "Better" voice isolation
+  (`audio.voiceIsolate.render`); `effect::isolate_offline` is the DeepFilterNet3 equivalent.
+
 Every function checks its lengths and returns `None` / `false` instead of panicking; Inf / NaN
 input never latches into the running normalisation state. No `unsafe`; without `dfn` no dependencies.
 Plan and step map: [`docs/fork/PREP-A2.md`](../../docs/fork/PREP-A2.md).

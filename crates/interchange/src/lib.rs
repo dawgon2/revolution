@@ -476,15 +476,15 @@ pub fn merge_into(target: &mut Project, fragment: Imported, bin: Option<BinId>) 
                 }
             }
             ItemKind::Comp(comp) => {
-                // Media In nodes point at pasted items by their old ids.
+                // Media In nodes (groups' inner ones too, C4.3) point at pasted items by their old ids.
                 let comp = std::sync::Arc::make_mut(comp);
-                for n in &mut comp.nodes {
+                comp.for_each_node_mut(&mut |n| {
                     if let filmcraft_project::comp::CompKind::MediaIn { source: filmcraft_project::comp::MediaInSource::Item { item }, .. } = &mut n.kind
                         && let Some(i) = items.get(item)
                     {
                         *item = *i;
                     }
-                }
+                });
             }
             ItemKind::AdjustmentLayer { .. } | ItemKind::Graphic { .. } => {}
         }

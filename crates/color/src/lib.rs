@@ -11,11 +11,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 pub mod grade;
+pub mod key3d;
 pub mod log;
 pub mod lut;
 pub mod ops;
 pub mod spaces;
 pub mod transform;
+pub mod warp;
 pub mod wb;
 
 pub use grade::GradeSpace;

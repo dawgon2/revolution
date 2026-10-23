@@ -3,7 +3,7 @@
 //! **One worker, one job at a time.** Jobs are *stepped* ([`BackgroundJob::step`] does one batch,
 //! e.g. one `Exporter::step`), and the worker picks the job to step next from a priority queue
 //! every time:
-//! 1. proxies before render-cache parts ([`JobKind`]);
+//! 1. Magic Mask tracks, then proxies, then render-cache parts ([`JobKind`]);
 //! 2. 4:2:2 sources first ([`JobSpec::chroma_422`]: they are what playback cannot decode fast);
 //! 3. a job already started before one that has not (no pile of half-written files);
 //! 4. the caller's [`JobSpec::rank`] (smaller first: the cache uses the distance to the playhead);
@@ -47,6 +47,8 @@ use web_time::Instant;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JobKind {
+    /// Magic Mask tracking (fork G3.2): the user is waiting on it.
+    Mask,
     /// A proxy transcode (6.2).
     Proxy,
     /// A render-cache part (6.3).

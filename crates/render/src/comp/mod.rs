@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use filmcraft_geom::{Affine, Vec2};
-use filmcraft_project::comp::{Comp, CompKind, CompNode, MediaInSource};
+use filmcraft_project::comp::{Comp, CompKind, CompNode, MediaInSource, RotoOutput};
 use filmcraft_project::dag::{DagError, NodeId, Port};
 use filmcraft_project::grade::Grade;
 use filmcraft_project::{EffectInstance, ParamValue, Project, find_effect};
@@ -25,6 +25,15 @@ use crate::image::Image;
 pub const MAX_LIVE_TEXTURES: u16 = 8;
 /// Longest side of a generated gradient; larger comps upscale it (a gradient upscales exactly).
 pub const GRADIENT_MAX_SIDE: usize = 2048;
+/// How deep clone-from-another-frame sources nest (C3.10): a Paint node's input rendered at
+/// another time may itself hold Paint nodes cloning from other times this many levels down;
+/// deeper ones clone from the same time.
+pub const MAX_CLONE_DEPTH: u8 = 2;
+/// Most input sub-graphs one compile renders at other times for clone sources (C3.10, all
+/// levels together) for a comp on the timeline, a quarter of that per level a comp is nested in
+/// another comp or sequence ([`CompSources::nest_depth`]); Clone strokes past it clone from the
+/// same time.
+pub const MAX_CLONE_COMPILES: u32 = 16;
 
 /// A texture slot of a program (comp-sized, premultiplied linear light).
 pub type Tex = u16;
@@ -73,6 +82,21 @@ pub enum Pass {
     Draw { src: Tex, dst: Tex, xform: Affine, hq: bool },
     /// `src` composited over `dst` (Merge).
     Over { src: Tex, dst: Tex, mode: Blend, opacity: f32 },
+    /// Paint strokes (C3.5b) on `tex` in place ([`crate::paint::apply`]: `tex` is also the clone
+    /// and erase source, `reveal` the Reveal tools' source, `clones` the node's input rendered at
+    /// other times for Clone strokes with a clone time offset, C3.10: (offset, slot), at most
+    /// [`crate::paint::MAX_CLONE_TIMES`]). `paint` holds only the strokes active at `at`. The GPU
+    /// lays the same dabs ([`crate::paint::plan`]) in a WGSL kernel (C3.6).
+    Paint { tex: Tex, reveal: Option<Tex>, clones: Vec<(Tick, Tex)>, paint: Arc<filmcraft_project::paint::Paint>, at: Tick, frame: Tick, px_scale: f32 },
+    /// `dst` = `src` drawn through the projective map `h` (source pixels → destination pixels) on
+    /// transparency (Tracker / Planar Tracker corner pins; the GPU runs the same inverse map and
+    /// bilinear rule in a kernel, C3.8).
+    Warp { src: Tex, dst: Tex, h: crate::track::Homography },
+    /// A Roto node's coverage (C3.6; `w·h` f32 values in 0..1, row-major, rasterised on the CPU
+    /// by [`crate::roto::rasterize`]): `matte` sets `tex` to `(c, c, c, 1)` (the Matte output),
+    /// otherwise `tex` is multiplied by `c` in place (the Alpha output). A coverage of another
+    /// length than the program's pixels leaves `tex` unchanged (matte: black).
+    Coverage { tex: Tex, coverage: Arc<[f32]>, matte: bool },
 }
 
 /// A comp ready to run: passes on `textures` slots of `size`, the result in `out`.
@@ -91,6 +115,7 @@ impl Program {
         let size = |p: &Pass| match p {
             Pass::Image { image, .. } => image.px.len().saturating_mul(4),
             Pass::Layers { layers, .. } => layers.iter().map(|l| l.frame.byte_size()).fold(0, usize::saturating_add),
+            Pass::Coverage { coverage, .. } => coverage.len().saturating_mul(4),
             _ => 0,
         };
         self.passes.iter().map(size).fold(0, usize::saturating_add)
@@ -106,6 +131,12 @@ pub trait CompSources {
     /// them (the GPU then draws the frames itself); None: use [`media_in`](Self::media_in).
     fn media_in_layers(&self, _source: &MediaInSource, _t: Tick, _w: usize, _h: usize) -> Option<Vec<crate::plan::PlanLayer>> {
         None
+    }
+    /// How many comps or sequences deep this comp is nested (0: drawn by the timeline itself).
+    /// Clone-from-another-frame sources (C3.10) shrink with it, so that comps nested inside comps
+    /// can't multiply each other's renders.
+    fn nest_depth(&self) -> u32 {
+        0
     }
     /// A text node's layer rasterised on a transparent `w`×`h` canvas (`px_scale` image pixels per
     /// comp pixel), exactly as a graphic clip draws it (layer rasters are cached by
@@ -142,6 +173,7 @@ pub struct CompCtx<'a> {
 }
 
 /// Texture slots handed out by liveness: a node's slot is reused once its last consumer ran.
+#[derive(Clone)]
 struct Slots {
     free: Vec<Tex>,
     next: Tex,
@@ -161,6 +193,10 @@ impl Slots {
         self.peak = self.peak.max(self.next);
         Ok(t)
     }
+    /// Slots that can still be taken.
+    fn available(&self) -> usize {
+        self.free.len().saturating_add(usize::from(MAX_LIVE_TEXTURES.saturating_sub(self.next)))
+    }
     fn give(&mut self, t: Tex) {
         if !self.free.contains(&t) {
             self.free.push(t);
@@ -170,7 +206,23 @@ impl Slots {
 
 /// Compiles `comp` at `ctx.t` into a program of `ctx.size` (validating the graph first).
 pub fn compile(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources) -> Result<Program, CompError> {
-    compile_inner(comp, ctx, sources, &Prerendered::default())
+    compile_inner(comp, comp, ctx, sources, &Prerendered::default(), &mut CloneBudget::new(sources))
+}
+
+/// What a compile may still spend on clone-from-another-frame sources (C3.10).
+struct CloneBudget {
+    depth: u8,
+    compiles: u32,
+}
+
+impl CloneBudget {
+    /// [`MAX_CLONE_COMPILES`] for a comp on the timeline, a quarter of that per level it is nested
+    /// (16, 4, 1, then none): each nested comp's renders are multiplied by its parents' clone
+    /// sources, so this keeps the whole tree's work bounded.
+    fn new(sources: &dyn CompSources) -> Self {
+        let compiles = MAX_CLONE_COMPILES.checked_shr(sources.nest_depth().saturating_mul(2)).unwrap_or(0);
+        CloneBudget { depth: 0, compiles }
+    }
 }
 
 /// Static-subgraph pictures a compile takes instead of their nodes: `images` stand in for their
@@ -181,15 +233,77 @@ struct Prerendered {
     skip: BTreeSet<NodeId>,
 }
 
-fn compile_inner(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources, pre: &Prerendered) -> Result<Program, CompError> {
+/// `scope` is the whole comp `comp` is part of (itself, or the comp a subgraph was cut from):
+/// expressions read their references there.
+fn compile_inner(
+    comp: &Comp,
+    scope: &Comp,
+    ctx: CompCtx,
+    sources: &dyn CompSources,
+    pre: &Prerendered,
+    budget: &mut CloneBudget,
+) -> Result<Program, CompError> {
+    compile_program(comp, scope, ctx, sources, pre, budget, Group { inputs: &[], depth: 0, frame: None })
+}
+
+/// [`compile_inner`] of a comp inside `group` (C4.3).
+fn compile_program(
+    comp: &Comp,
+    scope: &Comp,
+    ctx: CompCtx,
+    sources: &dyn CompSources,
+    pre: &Prerendered,
+    budget: &mut CloneBudget,
+    group: Group,
+) -> Result<Program, CompError> {
+    let (w, h) = (ctx.size.0.max(1), ctx.size.1.max(1));
+    let mut slots = Slots { free: Vec::new(), next: 0, peak: 0 };
+    let mut passes = Vec::new();
+    let out = compile_into(comp, scope, ctx, sources, pre, budget, group, &mut slots, &mut passes)?;
+    Ok(Program { size: (w, h), textures: slots.peak, passes, out })
+}
+
+/// Where a comp being compiled sits (C4.3): the slots holding its Group node's inputs (empty
+/// outside a group), how many groups deep it is, and the parent comp's expressions at this time
+/// (an inner expression's `node()` names the group's own nodes first, then the parent's).
+#[derive(Clone, Copy)]
+struct Group<'a> {
+    inputs: &'a [Option<Tex>],
+    depth: usize,
+    frame: Option<&'a filmcraft_project::comp::ExprFrame<'a>>,
+}
+
+/// Appends the passes of `comp` to `passes` in slots of `slots` and returns the slot holding its
+/// result (every other slot it took given back). A group's inside is compiled into its parent's
+/// program this way, so the GPU runs groups with the same passes.
+#[allow(clippy::too_many_arguments)]
+fn compile_into(
+    comp: &Comp,
+    scope: &Comp,
+    ctx: CompCtx,
+    sources: &dyn CompSources,
+    pre: &Prerendered,
+    budget: &mut CloneBudget,
+    group: Group,
+    slots: &mut Slots,
+    passes: &mut Vec<Pass>,
+) -> Result<Tex, CompError> {
     let order = comp.validate()?;
     let (w, h) = (ctx.size.0.max(1), ctx.size.1.max(1));
     let px_scale = (w as f64 / f64::from(comp.width.max(1))) as f32;
-    let nodes: BTreeMap<NodeId, &CompNode> = comp.nodes.iter().map(|n| (n.id, n)).collect();
+    // C4.2: nodes with expressions are read as copies with those parameters evaluated at `t`
+    // against the whole comp, all through one frame (each parameter evaluated once; parses come
+    // from expr::parse_cached) (ADR 0009 §1.6)
+    // (C4.3: inside a group, through the parent's frame for names the group doesn't have)
+    let frame = scope.expr_frame_in(ctx.t, group.frame);
+    let evaluated: BTreeMap<NodeId, CompNode> = if scope.nodes.iter().any(|n| n.params.values().any(|p| p.expression.is_some())) {
+        scope.nodes.iter().filter_map(|n| Some((n.id, frame.node(n.id)?))).collect()
+    } else {
+        BTreeMap::new()
+    };
+    let nodes: BTreeMap<NodeId, &CompNode> = comp.nodes.iter().map(|n| (n.id, evaluated.get(&n.id).unwrap_or(n))).collect();
     let last_use = order.last_use();
-    let mut slots = Slots { free: Vec::new(), next: 0, peak: 0 };
     let mut result: BTreeMap<NodeId, Tex> = BTreeMap::new();
-    let mut passes = Vec::new();
     let mut out = None;
 
     for (pos, step) in order.steps.iter().enumerate() {
@@ -227,10 +341,19 @@ fn compile_inner(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources, pre: &Pre
                 passes.push(Pass::Fill { dst, color: [0.0; 4] });
                 dst
             } else {
-                writable(0, &mut slots, &mut passes)?
+                writable(0, slots, passes)?
             }
         } else {
             match &node.kind {
+                // C4.3: a group's input (a copy: the parent still owns its slot)
+                CompKind::MediaIn { source: MediaInSource::GroupInput { index }, .. } => {
+                    let dst = slots.take()?;
+                    match usize::try_from(*index).ok().and_then(|i| group.inputs.get(i).copied().flatten()) {
+                        Some(src) => passes.push(Pass::Copy { src, dst }),
+                        None => passes.push(Pass::Fill { dst, color: [0.0; 4] }),
+                    }
+                    dst
+                }
                 CompKind::MediaIn { source, offset } => {
                     let dst = slots.take()?;
                     let at = Tick(t.0.saturating_add(offset.0));
@@ -262,9 +385,9 @@ fn compile_inner(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources, pre: &Pre
                     passes.push(Pass::Image { dst, image: Arc::new(gradient(node, t, w, h)) });
                     dst
                 }
-                CompKind::MediaOut => writable(0, &mut slots, &mut passes)?,
+                CompKind::MediaOut => writable(0, slots, passes)?,
                 CompKind::Merge => {
-                    let dst = writable(0, &mut slots, &mut passes)?;
+                    let dst = writable(0, slots, passes)?;
                     if let Some(src) = input(1) {
                         let opacity = (num(node, "opacity", t, 100.0) / 100.0).clamp(0.0, 1.0) as f32;
                         let mode = Blend::from_index(choice(node, "blend", t));
@@ -280,8 +403,124 @@ fn compile_inner(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources, pre: &Pre
                     }
                     dst
                 }
+                // C3.5b: roto coverage rasterised on the CPU (both paths), paint strokes
+                CompKind::Roto { roto, output } => {
+                    // C3.7: shapes linked to a Tracker / Planar Tracker move with it
+                    let size = (f64::from(comp.width.max(1)), f64::from(comp.height.max(1)));
+                    let roto = track::linked_roto(roto, |id| nodes.get(&id).copied().map(|n| &n.kind), comp.rate, t, size);
+                    let prepared = crate::roto::prepare(&roto, t, w, h, px_scale);
+                    match output {
+                        RotoOutput::Matte => {
+                            let dst = slots.take()?;
+                            match roto_coverage(&prepared, w, h) {
+                                Some(coverage) => passes.push(Pass::Coverage { tex: dst, coverage, matte: true }),
+                                None => passes.push(Pass::Fill { dst, color: [0.0, 0.0, 0.0, 1.0] }),
+                            }
+                            dst
+                        }
+                        RotoOutput::Alpha => {
+                            let tex = writable(0, slots, passes)?;
+                            if !prepared.shapes.is_empty()
+                                && let Some(coverage) = roto_coverage(&prepared, w, h)
+                            {
+                                passes.push(Pass::Coverage { tex, coverage, matte: false });
+                            }
+                            tex
+                        }
+                    }
+                }
+                CompKind::Paint { paint } => {
+                    let frame = comp.rate.frame_duration();
+                    let strokes: Vec<_> = paint.active_at(t, frame).cloned().collect();
+                    // C3.10: the input rendered at each clone time offset, into slots of its own
+                    let mut clones = Vec::new();
+                    if !strokes.is_empty()
+                        && budget.depth < MAX_CLONE_DEPTH
+                        && let Some(src) = step.inputs.first().copied().flatten().map(|p| p.node)
+                    {
+                        for dt in crate::paint::clone_times(paint, t, frame).0 {
+                            if budget.compiles == 0 {
+                                break;
+                            }
+                            budget.compiles -= 1;
+                            let at = CompCtx { t: Tick(t.0.saturating_add(dt.0)), ..ctx };
+                            if let Some(slot) = shifted_input(comp, scope, src, at, sources, pre, budget, group.depth, slots, passes) {
+                                clones.push((dt, slot));
+                            }
+                        }
+                    }
+                    let tex = writable(0, slots, passes)?;
+                    for (_, c) in &clones {
+                        slots.give(*c);
+                    }
+                    if !strokes.is_empty() {
+                        let paint = Arc::new(filmcraft_project::paint::Paint { strokes });
+                        passes.push(Pass::Paint { tex, reveal: input(1), clones, paint, at: t, frame, px_scale });
+                    }
+                    tex
+                }
+                CompKind::Tracker { .. } | CompKind::PlanarTracker { .. } => {
+                    let fg = input(1);
+                    let size = (f64::from(comp.width.max(1)), f64::from(comp.height.max(1)));
+                    let plan = track::plan(&node.kind, comp.rate, t, size, fg.is_some());
+                    let warp = plan.map_or(track::TrackWarp::Affine(Affine::IDENTITY), |p| p.warp.scaled(f64::from(px_scale)));
+                    let draw = |src: Tex, dst: Tex| match warp {
+                        track::TrackWarp::Affine(xform) => Pass::Draw { src, dst, xform, hq: ctx.high_quality },
+                        track::TrackWarp::Projective(h) => Pass::Warp { src, dst, h },
+                    };
+                    match (plan.is_some_and(|p| p.foreground), fg) {
+                        // the foreground moved, then merged over input 0
+                        (true, Some(src)) => {
+                            let dst = writable(0, slots, passes)?;
+                            let moved = slots.take()?;
+                            passes.push(draw(src, moved));
+                            passes.push(Pass::Over { src: moved, dst, mode: Blend::Normal, opacity: 1.0 });
+                            slots.give(moved);
+                            dst
+                        }
+                        _ => {
+                            let dst = slots.take()?;
+                            match input(0) {
+                                Some(src) => passes.push(draw(src, dst)),
+                                None => passes.push(Pass::Fill { dst, color: [0.0; 4] }),
+                            }
+                            dst
+                        }
+                    }
+                }
+                // C4.3: the inside compiled into this program, reading this node's inputs, its
+                // exposed parameters overriding the inner ones; too deep or not valid: transparent
+                CompKind::Group { .. } => {
+                    let ins: Vec<Option<Tex>> = (0..usize::from(node.kind.inputs())).map(input).collect();
+                    let inner = filmcraft_project::comp::group::inner_with_overrides(node);
+                    let compiled = match &inner {
+                        Some(inner) if group.depth < filmcraft_project::comp::MAX_GROUP_DEPTH => {
+                            let at = Group { inputs: &ins, depth: group.depth.saturating_add(1), frame: Some(&frame) };
+                            // (an inside that fails part way leaves no passes and holds no slots)
+                            let (kept, held) = (passes.len(), slots.clone());
+                            match compile_into(inner, inner, ctx, sources, &Prerendered::default(), budget, at, slots, passes) {
+                                Err(CompError::TooManyTextures) => return Err(CompError::TooManyTextures),
+                                Ok(tex) => Some(tex),
+                                Err(_) => {
+                                    passes.truncate(kept);
+                                    *slots = held;
+                                    None
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
+                    match compiled {
+                        Some(tex) => tex,
+                        None => {
+                            let dst = slots.take()?;
+                            passes.push(Pass::Fill { dst, color: [0.0; 4] });
+                            dst
+                        }
+                    }
+                }
                 CompKind::Key { .. } | CompKind::Mask { .. } | CompKind::Blur | CompKind::Color { .. } => {
-                    let tex = writable(0, &mut slots, &mut passes)?;
+                    let tex = writable(0, slots, passes)?;
                     let ops = node_ops(node, &ctx, comp.color.working, w, h, px_scale);
                     if !ops.is_empty() {
                         passes.push(Pass::Fx { tex, ops });
@@ -302,8 +541,105 @@ fn compile_inner(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources, pre: &Pre
             }
         }
     }
-    let out = out.ok_or(CompError::Empty)?;
-    Ok(Program { size: (w, h), textures: slots.peak, passes, out })
+    out.ok_or(CompError::Empty)
+}
+
+/// `node`'s picture (with everything it reads) compiled at `ctx` (another time, C3.10) and its
+/// passes appended to `passes` in free slots of `slots`: the slot holding it, the others given
+/// back. None (nothing appended, no slot held) when it can't be: a graph error, or not enough
+/// free slots.
+#[allow(clippy::too_many_arguments)]
+fn shifted_input(
+    comp: &Comp,
+    scope: &Comp,
+    node: NodeId,
+    ctx: CompCtx,
+    sources: &dyn CompSources,
+    pre: &Prerendered,
+    budget: &mut CloneBudget,
+    group_depth: usize,
+    slots: &mut Slots,
+    passes: &mut Vec<Pass>,
+) -> Option<Tex> {
+    // (no room for even one more slot beside the Paint step's own: don't render it at all)
+    if slots.available() < 2 {
+        return None;
+    }
+    // the node and everything upstream of it
+    let mut sub = BTreeSet::from([node]);
+    let mut stack = vec![node];
+    while let Some(x) = stack.pop() {
+        for e in comp.edges.iter().filter(|e| e.to.node == x) {
+            if sub.insert(e.from.node) {
+                stack.push(e.from.node);
+            }
+        }
+    }
+    // (C4.3: a group's inputs exist only at the group's own time: clone from the same time)
+    if comp.nodes.iter().any(|n| sub.contains(&n.id) && matches!(n.kind, CompKind::MediaIn { source: MediaInSource::GroupInput { .. }, .. })) {
+        return None;
+    }
+    let part = Comp {
+        width: comp.width,
+        height: comp.height,
+        rate: comp.rate,
+        duration: comp.duration,
+        nodes: comp.nodes.iter().filter(|n| sub.contains(&n.id)).cloned().collect(),
+        edges: comp.edges.iter().filter(|e| sub.contains(&e.from.node) && sub.contains(&e.to.node)).cloned().collect(),
+        output: Some(node),
+        color: comp.color,
+    };
+    budget.depth = budget.depth.saturating_add(1);
+    // (another time: the parent's frame is at this one, so a group's subgraph reads only its own)
+    let program = compile_program(&part, scope, ctx, sources, pre, budget, Group { inputs: &[], depth: group_depth, frame: None });
+    budget.depth = budget.depth.saturating_sub(1);
+    let program = program.ok()?;
+    // (one slot stays free for the Paint step's own copy of its input)
+    if slots.available() <= usize::from(program.textures) {
+        return None;
+    }
+    let mut map: Vec<Tex> = Vec::with_capacity(usize::from(program.textures));
+    for _ in 0..program.textures {
+        match slots.take() {
+            Ok(s) => map.push(s),
+            Err(_) => {
+                map.into_iter().for_each(|s| slots.give(s));
+                return None;
+            }
+        }
+    }
+    let remapped: Option<Vec<Pass>> = program.passes.into_iter().map(|p| remap_pass(p, &map)).collect();
+    let (Some(out), Some(remapped)) = (map.get(usize::from(program.out)).copied(), remapped) else {
+        map.into_iter().for_each(|s| slots.give(s));
+        return None;
+    };
+    passes.extend(remapped);
+    map.into_iter().filter(|s| *s != out).for_each(|s| slots.give(s));
+    Some(out)
+}
+
+/// `p` with its slots renamed through `map` (slot `i` becomes `map[i]`); None for a slot outside it.
+fn remap_pass(p: Pass, map: &[Tex]) -> Option<Pass> {
+    let m = |t: Tex| map.get(usize::from(t)).copied();
+    Some(match p {
+        Pass::Image { dst, image } => Pass::Image { dst: m(dst)?, image },
+        Pass::Layers { dst, layers } => Pass::Layers { dst: m(dst)?, layers },
+        Pass::Fill { dst, color } => Pass::Fill { dst: m(dst)?, color },
+        Pass::Copy { src, dst } => Pass::Copy { src: m(src)?, dst: m(dst)? },
+        Pass::Fx { tex, ops } => Pass::Fx { tex: m(tex)?, ops },
+        Pass::Draw { src, dst, xform, hq } => Pass::Draw { src: m(src)?, dst: m(dst)?, xform, hq },
+        Pass::Over { src, dst, mode, opacity } => Pass::Over { src: m(src)?, dst: m(dst)?, mode, opacity },
+        Pass::Paint { tex, reveal, clones, paint, at, frame, px_scale } => {
+            let reveal = match reveal {
+                Some(r) => Some(m(r)?),
+                None => None,
+            };
+            let clones = clones.into_iter().map(|(dt, c)| Some((dt, m(c)?))).collect::<Option<Vec<_>>>()?;
+            Pass::Paint { tex: m(tex)?, reveal, clones, paint, at, frame, px_scale }
+        }
+        Pass::Warp { src, dst, h } => Pass::Warp { src: m(src)?, dst: m(dst)?, h },
+        Pass::Coverage { tex, coverage, matte } => Pass::Coverage { tex: m(tex)?, coverage, matte },
+    })
 }
 
 /// Whether `node` feeds more than one input port of the same step (a Merge of a picture with
@@ -342,6 +678,39 @@ pub fn execute_cpu(p: &Program) -> Image {
                     None => blank(),
                 };
                 put(&mut tex, *dst, img);
+            }
+            Pass::Paint { tex: t, reveal, clones, paint, at, frame, px_scale } => {
+                let Some(img) = tex.get_mut(usize::from(*t)).and_then(Option::take) else { continue };
+                let same = |r: &&Image| (r.w, r.h) == (img.w, img.h);
+                let rv = reveal.and_then(|r| get(&tex, r)).filter(same).map(|r| r.px.as_slice());
+                let cl: Vec<(Tick, &[f32])> = clones.iter().filter_map(|(dt, c)| get(&tex, *c).filter(same).map(|i| (*dt, i.px.as_slice()))).collect();
+                let px = crate::paint::apply(paint, *at, *frame, *px_scale, &img.px, &cl, rv, img.w, img.h);
+                let img = if px.len() == img.px.len() { Image { px, ..img } } else { img };
+                put(&mut tex, *t, img);
+            }
+            Pass::Warp { src, dst, h: hm } => {
+                let img = match get(&tex, *src) {
+                    Some(s) => track::warp_projective(s, w, h, hm),
+                    None => blank(),
+                };
+                put(&mut tex, *dst, img);
+            }
+            Pass::Coverage { tex: t, coverage, matte } => {
+                let n = w.saturating_mul(h);
+                if *matte {
+                    let img = if coverage.len() == n {
+                        Image { w, h, px: coverage.iter().flat_map(|c| [*c, *c, *c, 1.0]).collect() }
+                    } else {
+                        Image::filled(w, h, [0.0, 0.0, 0.0, 1.0])
+                    };
+                    put(&mut tex, *t, img);
+                } else if let Some(img) = tex.get_mut(usize::from(*t)).and_then(Option::as_mut)
+                    && coverage.len() == img.w.saturating_mul(img.h)
+                {
+                    for (p, c) in img.px.as_chunks_mut::<4>().0.iter_mut().zip(coverage.iter()) {
+                        p.iter_mut().for_each(|v| *v *= c);
+                    }
+                }
             }
             Pass::Over { src, dst, mode, opacity } => {
                 let Some(s) = get(&tex, *src).cloned() else { continue };
@@ -429,9 +798,21 @@ fn static_cache() -> &'static Mutex<StaticCache> {
 }
 
 /// Whether a node's own picture never changes with time or footage: not a Media In, not a Color
-/// node (its LUTs live outside the comp) and no keyframe anywhere in it (masks, text layer).
-fn static_kind(n: &CompNode) -> bool {
-    !matches!(n.kind, CompKind::MediaIn { .. } | CompKind::Color { .. }) && serde_json::to_string(n).is_ok_and(|j| !j.contains("\"keyframes\""))
+/// node (its LUTs live outside the comp), no keyframe anywhere in it (masks, text layer) and no
+/// expression on time or another node.
+fn static_kind(comp: &Comp, n: &CompNode) -> bool {
+    // (Paint: strokes show by time without a keyframe; a roto shape following a tracker moves
+    // with the tracker's keyframes, which are not in this node)
+    if let CompKind::Roto { roto, .. } = &n.kind
+        && roto.shapes.iter().any(|s| s.track_link.is_some())
+    {
+        return false;
+    }
+    // (C4.2: an expression on time or on another node changes the picture without changing this node;
+    // C4.3: a Group isn't cached as one picture: its inside reads its inputs)
+    !matches!(n.kind, CompKind::MediaIn { .. } | CompKind::Color { .. } | CompKind::Paint { .. } | CompKind::Group { .. })
+        && serde_json::to_string(n).is_ok_and(|j| !j.contains("\"keyframes\""))
+        && comp.node_expressions_static(n.id)
 }
 
 /// The static subgraphs worth caching, by their top node: each top node is static (its whole
@@ -442,7 +823,7 @@ fn static_tops(comp: &Comp, order: &filmcraft_project::dag::Order) -> Vec<(NodeI
     let nodes: BTreeMap<NodeId, &CompNode> = comp.nodes.iter().map(|n| (n.id, n)).collect();
     let mut fixed: BTreeMap<NodeId, bool> = BTreeMap::new();
     for step in &order.steps {
-        let own = nodes.get(&step.node).is_some_and(|n| static_kind(n));
+        let own = nodes.get(&step.node).is_some_and(|n| static_kind(comp, n));
         let ins = step.inputs.iter().flatten().all(|p| fixed.get(&p.node).copied().unwrap_or(false));
         fixed.insert(step.node, own && ins);
     }
@@ -467,10 +848,9 @@ fn static_tops(comp: &Comp, order: &filmcraft_project::dag::Order) -> Vec<(NodeI
                 }
             }
         }
-        let worth = sub
-            .iter()
-            .filter_map(|id| nodes.get(id))
-            .any(|x| !x.bypass && matches!(x.kind, CompKind::Text { .. } | CompKind::Blur | CompKind::Key { .. } | CompKind::Mask { .. }));
+        let worth = sub.iter().filter_map(|id| nodes.get(id)).any(|x| {
+            !x.bypass && matches!(x.kind, CompKind::Text { .. } | CompKind::Blur | CompKind::Key { .. } | CompKind::Mask { .. } | CompKind::Roto { .. })
+        });
         if worth {
             tops.push((n, sub));
         }
@@ -500,7 +880,7 @@ pub fn compile_cached(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources) -> R
         let image = match hit {
             Some(img) => img,
             None => {
-                let img = Arc::new(execute_cpu(&compile(&part, ctx, sources)?));
+                let img = Arc::new(execute_cpu(&compile_inner(&part, comp, ctx, sources, &Prerendered::default(), &mut CloneBudget::new(sources))?));
                 static_cache().lock().unwrap_or_else(PoisonError::into_inner).put(key, Arc::clone(&img), STATIC_CACHE_BYTES);
                 img
             }
@@ -527,7 +907,7 @@ pub fn compile_cached(comp: &Comp, ctx: CompCtx, sources: &dyn CompSources) -> R
     for (top, _) in &tops {
         pre.skip.remove(top);
     }
-    compile_inner(comp, ctx, sources, &pre)
+    compile_inner(comp, comp, ctx, sources, &pre, &mut CloneBudget::new(sources))
 }
 
 fn num(n: &CompNode, key: &str, t: Tick, default: f64) -> f64 {
@@ -590,11 +970,22 @@ fn node_ops(n: &CompNode, ctx: &CompCtx, working: filmcraft_color::WorkingSpace,
         }
         CompKind::Color { node } => {
             let grade = Grade { nodes: vec![node.clone()], ..Default::default() };
-            let gctx = crate::grade::GradeCtx { px_scale, seq_time: ctx.t, clip: 0, project: ctx.project };
+            let gctx = crate::grade::GradeCtx { px_scale, seq_time: ctx.t, clip: 0, project: ctx.project, mattes: None };
             crate::grade::compile_fx(&grade, ctx.t, working, gctx, w, h)
         }
         _ => Vec::new(),
     }
+}
+
+/// A Roto node's coverage as a `w × h` f32 buffer (clamped to 0..1; None: a frame too large to
+/// rasterise, e.g. over [`crate::roto::MAX_PIXELS`]).
+fn roto_coverage(prepared: &crate::roto::PreparedRoto, w: usize, h: usize) -> Option<Arc<[f32]>> {
+    let mut cov = crate::roto::rasterize(prepared, w, h);
+    if cov.len() != w.checked_mul(h)? || cov.is_empty() {
+        return None;
+    }
+    cov.iter_mut().for_each(|c| *c = if c.is_finite() { c.clamp(0.0, 1.0) } else { 0.0 });
+    Some(cov.into())
 }
 
 /// The Gradient node's picture: linear (along start → end) or radial (around start, reaching end),
@@ -629,6 +1020,10 @@ fn gradient(n: &CompNode, t: Tick, w: usize, h: usize) -> Image {
 }
 
 pub(crate) mod project;
+pub mod track;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod group_tests;

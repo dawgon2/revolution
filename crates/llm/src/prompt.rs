@@ -42,6 +42,8 @@ const BRANCH_KINDS: &[&str] = &[
     "text",
     "solid",
     "gradient",
+    "roto",
+    "paint",
     "bypassed",
     "unused",
 ];

@@ -820,6 +820,7 @@ pub(crate) fn param_row(
                 // (one armed picker at a time: the Color page's qualifier picker disarms)
                 app.ui.grade_picker = None;
                 app.ui.wb_picker = None;
+                app.ui.qual3d_tool = None;
             }
         }
         (ParamKind::Path, _) => {
@@ -1616,7 +1617,12 @@ mod graph_drag_tests {
             let mut b = Keyframe::new(it.source_in + Tick(it.duration.0 * 3 / 4), to);
             a.interp = Interpolation::Bezier;
             b.interp = Interpolation::Bezier;
-            it.effects.iter_mut().find(|e| e.effect == "motion").unwrap().params.insert(param.into(), Param { value: from, keyframes: vec![a, b] });
+            it.effects
+                .iter_mut()
+                .find(|e| e.effect == "motion")
+                .unwrap()
+                .params
+                .insert(param.into(), Param { value: from, keyframes: vec![a, b], expression: None });
             let app = FilmcraftApp::new(session);
             let ctx = egui::Context::default();
             crate::theme::install(&ctx, &app.tokens);

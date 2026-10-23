@@ -111,6 +111,11 @@ fn canonical(grade: &Grade) -> Vec<u8> {
             let live = match *key {
                 "nr.size" => nr_on,
                 "lut.mix" => lut_on,
+                // an HDR zone's range / falloff only matter when that zone does something
+                k if k.starts_with("hdr.") && (k.ends_with(".range") || k.ends_with(".falloff")) => {
+                    let zone = k.rsplit_once('.').map_or(k, |(z, _)| z);
+                    ["exposure", "sat", "balance"].iter().any(|w| present(&format!("{zone}.{w}")))
+                }
                 k => controlling_key(k).is_none_or(present),
             };
             if live {
@@ -163,6 +168,11 @@ fn canon_value(key: &str, kind: NodeParamKind, v: &ParamValue) -> [f32; 4] {
         NodeParamKind::Wheel { range } => match v {
             ParamValue::Color(c) => {
                 let c = c.map(|v| if v.is_finite() { v.clamp(-range, range) } else { 0.0 });
+                if key.starts_with("hdr.") {
+                    // an HDR balance: only the differences render (no master, a grey is none)
+                    let m = (c[0] + c[1] + c[2]) / 3.0;
+                    return [c[0] - m, c[1] - m, c[2] - m, 0.0];
+                }
                 [c[0] + c[3], c[1] + c[3], c[2] + c[3], 0.0]
             }
             _ => [0.0; 4],
@@ -770,6 +780,30 @@ mod tests {
         assert_same(&x, &y, true);
         // NaN is the identity
         assert_same(&g(vec![node(1, &[("saturation", ParamValue::Float(f64::NAN))])]), &Grade::default(), true);
+    }
+
+    /// Review fix (G4.2): HDR range / falloff without that zone acting, a balance's master and a
+    /// grey balance change nothing; a real HDR change is seen.
+    #[test]
+    fn hdr_wheels_compare_by_what_renders() {
+        let base = g(vec![node(1, &[("saturation", ParamValue::Float(1.2))])]);
+        let idle = g(vec![node(
+            1,
+            &[
+                ("saturation", ParamValue::Float(1.2)),
+                ("hdr.light.range", ParamValue::Float(3.0)),
+                ("hdr.black.falloff", ParamValue::Float(4.0)),
+                ("hdr.dark.balance", ParamValue::Color([0.2, 0.2, 0.2, 0.7])),
+            ],
+        )]);
+        assert_same(&base, &idle, true);
+        let a = g(vec![node(1, &[("hdr.light.exposure", ParamValue::Float(0.5)), ("hdr.light.balance", ParamValue::Color([0.1, 0.0, 0.0, 0.0]))])]);
+        let b = g(vec![node(1, &[("hdr.light.exposure", ParamValue::Float(0.5)), ("hdr.light.balance", ParamValue::Color([0.1, 0.0, 0.0, 0.9]))])]);
+        assert_same(&a, &b, true);
+        assert_same(&base, &a, false);
+        let mut c = a.clone();
+        c.nodes[0].params.insert("hdr.light.range".into(), Param::new(ParamValue::Float(2.0)));
+        assert_same(&a, &c, false);
     }
 
     #[test]

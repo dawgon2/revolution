@@ -12,6 +12,11 @@
 //! A colour grade node's **windows** (fork G2.2) are masks too: pass `"node": id` instead of
 //! `effect` (the selected mask remembers which), and every command here (add, edit, select,
 //! list, track) works on that node's windows.
+//!
+//! A mask that follows a planar track (fork G4.4, [`crate::masks_planar`]) stores its path in the
+//! track's reference frame: `path` in `masks.set` / `masks.list` is that stored path, while the
+//! on-screen gestures `masks.translate`, `masks.moveVertex` and `masks.addVertex` take positions
+//! (and deltas) where the mask is seen at the edit time and map them back.
 
 use filmcraft_geom::{Affine, Vec2};
 use filmcraft_project::{ClipId, EffectInstance, Mask, MaskMode, MaskPath, MaskShape, MaskVertex, ParamValue, TrackItem, TrackKind, TrackMethod};
@@ -81,7 +86,7 @@ pub fn masks_of_mut(it: &mut TrackItem, o: Owner) -> Option<&mut Vec<Mask>> {
 /// The owner a command addresses on `it`: `node` (a grade node id), else `effect`, else (with
 /// `sel`) the selected mask's owner when it is on this clip, else the Opacity effect. None: the
 /// node / effect doesn't exist (or `node` isn't an id).
-fn owner_for(it: &TrackItem, p: &Value, sel: Option<MaskSel>, clip: ClipId) -> Option<Owner> {
+pub(crate) fn owner_for(it: &TrackItem, p: &Value, sel: Option<MaskSel>, clip: ClipId) -> Option<Owner> {
     let node = |n: u64| it.grade.as_ref()?.node(n).map(|_| Owner::Node(n));
     if let Some(v) = p.get("node").filter(|v| !v.is_null()) {
         return node(v.as_u64()?);
@@ -154,12 +159,13 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
     ]
 }
 
-/// A mask path from JSON: the serialized [`MaskPath`] object, an array of vertices
-/// (`{"p":[x,y],"in":[x,y]?,"out":[x,y]?}`), or an array of `[x, y]` / `{"x","y"}` points.
+/// A mask path from JSON: the serialized [`MaskPath`] object (`t_in` / `t_out`), the
+/// [`path_to_json`] form (`{"p":[x,y],"in":[x,y]?,"out":[x,y]?}` vertices), or an array of
+/// `[x, y]` / `{"x","y"}` points. Every form keeps its tangents and per-point feather (fork C3.9
+/// review fix: the `in` / `out` form used to be read by serde as a MaskPath, which takes `[x, y]`
+/// for a point and ignores the unknown `in` / `out` keys, so every tangent was dropped, e.g. the
+/// curves of a pen mask drawn on the monitor).
 pub fn path_from_json(v: &Value) -> Option<MaskPath> {
-    if let Ok(p) = serde_json::from_value::<MaskPath>(v.clone()) {
-        return Some(p);
-    }
     let arr = v.as_array().or_else(|| v.get("vertices").and_then(Value::as_array))?;
     let closed = v.get("closed").and_then(Value::as_bool).unwrap_or(true);
     let mut vertices = Vec::new();
@@ -167,7 +173,10 @@ pub fn path_from_json(v: &Value) -> Option<MaskPath> {
         if let Some(p) = e.get("p") {
             let t_in = e.get("in").or_else(|| e.get("t_in")).and_then(pt).unwrap_or_default();
             let t_out = e.get("out").or_else(|| e.get("t_out")).and_then(pt).unwrap_or_default();
-            vertices.push(MaskVertex { p: pt(p)?, t_in, t_out });
+            // the per-point feather (C3.3 roto): `feather_in` / `featherIn`, `feather_out` / `featherOut`
+            let f = |a: &str, b: &str| e.get(a).or_else(|| e.get(b)).and_then(Value::as_f64).unwrap_or(0.0);
+            let v = MaskVertex { p: pt(p)?, t_in, t_out, ..MaskVertex::default() };
+            vertices.push(v.with_feather(f("feather_in", "featherIn"), f("feather_out", "featherOut")));
         } else {
             vertices.push(MaskVertex::corner(pt(e)?));
         }
@@ -185,12 +194,23 @@ fn pt(v: &Value) -> Option<Vec2> {
 pub fn path_to_json(p: &MaskPath) -> Value {
     json!({
         "closed": p.closed,
-        "vertices": p.vertices.iter().map(|v| json!({"p": [v.p.x, v.p.y], "in": [v.t_in.x, v.t_in.y], "out": [v.t_out.x, v.t_out.y]})).collect::<Vec<_>>(),
+        "vertices": p
+            .vertices
+            .iter()
+            .map(|v| {
+                let mut j = json!({"p": [v.p.x, v.p.y], "in": [v.t_in.x, v.t_in.y], "out": [v.t_out.x, v.t_out.y]});
+                if v.feather_in != 0.0 || v.feather_out != 0.0 {
+                    j["feather_in"] = json!(v.feather_in);
+                    j["feather_out"] = json!(v.feather_out);
+                }
+                j
+            })
+            .collect::<Vec<_>>(),
     })
 }
 
 /// Resolve the target clip (and its source size in pixels).
-fn target_clip(s: &Session, p: &Value) -> Result<ClipId> {
+pub(crate) fn target_clip(s: &Session, p: &Value) -> Result<ClipId> {
     if let Some(c) = clip_p(p, "clip") {
         return Ok(c);
     }
@@ -434,8 +454,35 @@ fn move_vertex(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("masks.moveVertex", "need `to` or `delta`"));
     }
     edit_mask(s, p, "Move Mask Vertex", move |m, t| {
+        let maps = crate::masks_planar::screen_maps(m, t);
         let mut path = m.path_at(t);
         let v = path.vertices.get_mut(vi).ok_or_else(|| bad("masks.moveVertex", format!("no vertex {vi}")))?;
+        // a planar-tracked mask's handles are where it is seen: map the target back
+        if let Some((h, inv)) = maps {
+            let beyond = || bad("masks.moveVertex", "that point is beyond the tracked plane's horizon");
+            let shown = |q: Vec2| filmcraft_render::mask::ahead(&h, q).ok_or_else(beyond);
+            let back = |q: Vec2| crate::masks_planar::to_reference(&h, &inv, q).ok_or_else(beyond);
+            match handle.as_str() {
+                "in" | "out" => {
+                    let tan = if handle == "in" { v.t_in } else { v.t_out };
+                    let target = match to {
+                        Some(q) => q,
+                        None => shown(v.p + tan)? + delta.unwrap_or_default(),
+                    };
+                    let b = back(target)?;
+                    v.set_tangent(handle == "out", b - v.p, broken);
+                }
+                _ => {
+                    let target = match to {
+                        Some(q) => q,
+                        None => shown(v.p)? + delta.unwrap_or_default(),
+                    };
+                    v.p = back(target)?;
+                }
+            }
+            set_path_at(m, t, path);
+            return Ok(());
+        }
         match handle.as_str() {
             "in" | "out" => {
                 let cur = if handle == "in" { v.p + v.t_in } else { v.p + v.t_out };
@@ -455,7 +502,20 @@ fn move_vertex(s: &mut Session, p: &Value) -> Result<Value> {
 fn translate(s: &mut Session, p: &Value) -> Result<Value> {
     let d = p.get("delta").and_then(pt).ok_or_else(|| bad("masks.translate", "need `delta`"))?;
     edit_mask(s, p, "Move Mask", move |m, t| {
-        let path = m.path_at(t).transformed(&Affine::translate(d.x, d.y));
+        let path = match crate::masks_planar::screen_maps(m, t) {
+            // (a planar-tracked mask moves on screen: reference → screen, shift, back)
+            Some((h, inv)) => {
+                // (every vertex must stay in front of the plane's horizon, seen and mapped back)
+                let beyond = || bad("masks.translate", "that would move the mask beyond the tracked plane's horizon");
+                for v in &m.path_at(t).vertices {
+                    let q = filmcraft_render::mask::ahead(&h, v.p).ok_or_else(beyond)?;
+                    crate::masks_planar::to_reference(&h, &inv, q + d).ok_or_else(beyond)?;
+                }
+                let shift = filmcraft_render::track::Homography { m: [1.0, 0.0, d.x, 0.0, 1.0, d.y, 0.0, 0.0, 1.0] };
+                filmcraft_render::comp::track::path_through(&m.path_at(t), filmcraft_render::comp::track::TrackWarp::Projective(inv.after(&shift).after(&h)))
+            }
+            None => m.path_at(t).transformed(&Affine::translate(d.x, d.y)),
+        };
         set_path_at(m, t, path);
         Ok(())
     })?;
@@ -465,7 +525,16 @@ fn translate(s: &mut Session, p: &Value) -> Result<Value> {
 fn add_vertex(s: &mut Session, p: &Value) -> Result<Value> {
     let after = u64_p(p, "after").ok_or_else(|| bad("masks.addVertex", "need `after`"))? as usize;
     let at = p.get("at").and_then(pt).ok_or_else(|| bad("masks.addVertex", "need `at`"))?;
-    edit_mask(s, p, "Add Mask Vertex", move |m, t| m.add_vertex(after, at, t).map_err(|e| bad("masks.addVertex", e)))?;
+    edit_mask(s, p, "Add Mask Vertex", move |m, t| {
+        // (on screen for a planar-tracked mask)
+        let at = match crate::masks_planar::screen_maps(m, t) {
+            Some((h, inv)) => {
+                crate::masks_planar::to_reference(&h, &inv, at).ok_or_else(|| bad("masks.addVertex", "that point is beyond the tracked plane's horizon"))?
+            }
+            None => at,
+        };
+        m.add_vertex(after, at, t).map_err(|e| bad("masks.addVertex", e))
+    })?;
     Ok(Value::Null)
 }
 
@@ -585,6 +654,7 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
                         "pathKeyframes": m.path.keyframes.iter().map(|k| k.time.0).collect::<Vec<_>>(),
                         "selected": s.state.selected_mask == Some(Owner::Effect(ei).sel(it.id, mi)),
                     }));
+                    planar_fields(out.last_mut(), m, mt);
                 }
             }
             for n in it.grade.iter().flat_map(|g| &g.nodes) {
@@ -605,11 +675,21 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
                         "pathKeyframes": m.path.keyframes.iter().map(|k| k.time.0).collect::<Vec<_>>(),
                         "selected": s.state.selected_mask == Some(Owner::Node(n.id).sel(it.id, mi)),
                     }));
+                    planar_fields(out.last_mut(), m, mt);
                 }
             }
         }
     }
     Ok(json!({"masks": out}))
+}
+
+/// A planar-tracked mask's list entry also has `planar` (its track) and `shownPath` (the path
+/// where it is seen at `t`; `path` stays in the track's reference frame).
+fn planar_fields(entry: Option<&mut Value>, m: &Mask, t: Tick) {
+    if let (Some(e), Some(pl)) = (entry, crate::masks_planar::planar_json(m)) {
+        e["planar"] = pl;
+        e["shownPath"] = path_to_json(&filmcraft_render::mask::shown_path(m, t));
+    }
 }
 
 /// The parameter a keyframe / setParam command addresses: a mask parameter when `mask` is given.
@@ -651,7 +731,7 @@ fn track(s: &mut Session, p: &Value) -> Result<Value> {
         .ok_or_else(|| bad("masks.track", "need `mask`"))?;
     let mask = masks_of(&it, o).and_then(|v| v.get(mi)).cloned().ok_or_else(|| bad("masks.track", format!("no mask {mi}")))?;
     let target = o.sel(clip, mi);
-    if s.mask_jobs.iter().any(|j| j.target == target) {
+    if s.mask_jobs.iter().any(|j| j.target == target) || s.planar_jobs.iter().any(|j| j.target == target) {
         return Err(bad("masks.track", "this mask is already being tracked"));
     }
     let method = match str_p(p, "method") {

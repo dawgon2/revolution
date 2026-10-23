@@ -3332,6 +3332,8 @@
 	Track Select Backward Tool	轨道选择向后工具
 	Track Select Forward Tool	轨道选择向前工具
 	Track Selected Mask	跟踪所选遮罩
+	Track Window (Planar)	跟踪窗口（平面）
+	Clear Planar Track	清除平面跟踪
 	Trim Next Edit to Playhead	将下一个编辑点修剪至播放头
 	Trim Previous Edit to Playhead	将上一个编辑点修剪至播放头
 	Trimming	修剪中
@@ -3602,6 +3604,11 @@
 	No windows: the node acts on the whole picture.	没有窗口：节点作用于整个画面。
 	Track backward	向后跟踪
 	Track forward	向前跟踪
+	Planar	平面
+	Stop planar tracking (keeps what was tracked)	停止平面跟踪（保留已跟踪的部分）
+	Track the window as a plane (a sign, a screen, a wall), both ways from the playhead	将窗口作为平面跟踪（标牌、屏幕、墙面），从播放头向前后两个方向
+	Clear the planar track (the window stays where it is seen)	清除平面跟踪（窗口保持在当前看到的位置）
+	✕ planar	✕ 平面
 	Delete window	删除窗口
 	Select a window to drag its shape on the Program monitor.	选择一个窗口即可在节目监视器上拖动其形状。
 	NR luma	亮度降噪
@@ -4031,7 +4038,30 @@
 	Mask Feather	遮罩羽化
 	Mask Opacity	遮罩不透明度
 	Mask Expansion	遮罩扩展
+	Tracker	跟踪器
+	Planar Tracker	平面跟踪器
+	Operation	操作
+	Match Move	匹配移动
+	Stabilise	稳定
+	Smooth radius	平滑半径
+	Set to playhead	设为播放头位置
+	Analyse forward	向前分析
+	Analyse backward	向后分析
+	Clear track	清除跟踪
+	Add point	添加点
+	Plane corners	平面角点
 	View Node	查看节点
+	Roto	动态遮罩
+	Paint	绘画
+	Add shape	添加形状
+	Strokes	笔触
+	Reveal	显露
+	Erase	擦除
+	Move up	上移
+	Move down	下移
+	Single frame	单帧
+	Follow tracker	跟随跟踪器
+	Missing tracker	跟踪器已丢失
 	Also ask the assistant (runs on this computer)	同时询问 AI 助手（在本机运行）
 	The assistant is reading the guide…	AI 助手正在阅读指南…
 	Assistant	AI 助手
@@ -4319,3 +4349,156 @@
 	Send to	发送到
 	New Bus	新建总线
 	Attenuation Limit	衰减上限
+# Color page ▸ Magic Mask (fork G3.3)
+	Magic Mask	魔法遮罩
+	Add Magic Mask	添加魔法遮罩
+	Remove Magic Mask	移除魔法遮罩
+	Remove the Magic Mask from this node	从此节点移除魔法遮罩
+	A whole person: the strokes pick which one	整个人物：由笔画选择是哪一个
+	Whatever the strokes cover	笔画覆盖的任何内容
+	Object	物体
+	Person	人物
+	Clean Black	清理黑色
+	Clean White	清理白色
+	Clear Frame	清除本帧
+	Remove the strokes drawn on this frame	移除在此帧上绘制的笔画
+	Remove every stroke of this mask	移除此遮罩的所有笔画
+	click or drag on the Program picture · Esc ends	在节目画面上单击或拖动 · Esc 结束
+	Click the subject in the Program picture, or drag a box round it (Alt-click: leave out)	在节目画面中单击主体，或在其周围拖出方框（Alt+单击：排除）
+	Click what the mask should leave out	单击遮罩应排除的部分
+	Follow the subject both ways from the strokes	从笔画处向两个方向跟随主体
+	Follow the subject from the strokes towards the end of the clip	从笔画处向片段结尾跟随主体
+	Follow the subject from the strokes towards the start of the clip	从笔画处向片段开头跟随主体
+	Grow / Shrink	扩展 / 收缩
+	Magic Mask finds the subject you mark with a few strokes and follows it through the shot, so this node only changes that.	魔法遮罩会找到你用几笔标记的主体，并在整个镜头中跟随它，使此节点只改变该主体。
+	{n} strokes, {here} on this frame	{n} 个笔画，本帧 {here} 个
+	Show matte	显示遮罩
+	Tint the tracked matte over the Program picture (frames not tracked yet show none)	在节目画面上为已跟踪的遮罩着色（尚未跟踪的帧不显示）
+	Stop tracking (the frames done so far are kept)	停止跟踪（保留已完成的帧）
+	Stroke +	笔画 +
+	Stroke −	笔画 −
+	The strokes changed while tracking: track again	跟踪期间笔画已更改：请重新跟踪
+	Track	跟踪
+	Track Backward	向后跟踪
+	Track Forward	向前跟踪
+	Tracked {frames} frames ({segmented} by the model, {reused} already done)	已跟踪 {frames} 帧（模型处理 {segmented} 帧，{reused} 帧已完成）
+	Tracking… {done} of {frames} frames	正在跟踪… {done} / {frames} 帧
+	Tracking failed	跟踪失败
+	Tracking progress	跟踪进度
+	Tracking stopped	跟踪已停止
+	Waiting to track…	等待跟踪…
+	Clear Magic Mask Strokes	清除魔法遮罩笔画
+	Magic Mask Stroke	魔法遮罩笔画
+	Refine Magic Mask	细化魔法遮罩
+	Track Magic Mask	跟踪魔法遮罩
+	Better	更好
+	Faster	更快
+	Auto ({model})	自动（{model}）
+	Model: {model}	模型：{model}
+	Better on a discrete GPU when SAM 2.1 Large is installed, else MobileSAM	已安装 SAM 2.1 Large 且有独立显卡时用“更好”，否则用 MobileSAM
+	SAM 2.1 Large on the GPU: the most accurate, about 0.9 s a frame	SAM 2.1 Large（GPU）：最准确，每帧约 0.9 秒
+	SAM 2.1 Base+ on the GPU: a little less accurate, a little quicker	SAM 2.1 Base+（GPU）：稍欠准确，稍快一些
+	MobileSAM, frame by frame: quickest and needs no discrete GPU, but weaker when similar objects touch	MobileSAM，逐帧处理：最快，无需独立显卡，但相似物体相互接触时效果较差
+	Render Voice Isolation	渲染人声分离
+# Compositor viewer tools (fork C3.9)
+	Bézier	贝塞尔
+	B-Spline	B 样条
+	Click to add control points. Click the first point (or press Enter) to close.	单击添加控制点。单击第一个点（或按 Enter）闭合。
+	Click to add points, drag to curve them. Click the first point (or press Enter) to close.	单击添加点，拖动使其弯曲。单击第一个点（或按 Enter）闭合。
+	Click to add region points around the flat area. Click the first point (or press Enter) to close.	单击在平面区域周围添加区域点。单击第一个点（或按 Enter）闭合。
+	Drag a point, its pattern box corner or its search box corner. Ctrl-click (Cmd-click) adds a point.	拖动点、其图案框角或搜索框角。Ctrl 单击（Cmd 单击）添加点。
+	Drag points, handles or a shape. Alt-drag a point moves its shape; Alt-click makes it smooth or sharp.	拖动点、手柄或形状。Alt 拖动点会移动其形状；Alt 单击使其平滑或尖锐。
+	Drag the region's points, or the plane's four corners at the reference frame.	拖动区域的点，或参考帧上平面的四个角。
+	Drag to paint; each drag is one stroke.	拖动进行绘制；每次拖动是一个笔触。
+	Drag to paint; each drag is one stroke. Alt-click picks where Clone copies from.	拖动进行绘制；每次拖动是一个笔触。Alt 单击选择克隆的来源位置。
+	Draw region	绘制区域
+	Hardness	硬度
+	This frame only	仅此帧
+	The tracker this shape follows has no usable motion at this frame, so the shape can't be edited here.	此形状跟随的跟踪器在此帧没有可用的运动，因此无法在此编辑该形状。
+	Open Group	打开编组
+	Expose	公开
+	Exposed	已公开
+	That node is not a group.	该节点不是编组。
+	No settings on this group yet: open it and expose an inner node's setting.	此编组还没有设置：打开它并公开内部节点的设置。
+	Group Input	编组输入
+	Put on the group	放到编组上
+	This node has no settings that can be exposed.	此节点没有可公开的设置。
+	Expression	表达式
+	e.g. time * 10	例如 time * 10
+	Save Selection as Template…	将所选内容存储为模板…
+	Insert Template	插入模板
+	Reading templates…	正在读取模板…
+	No saved templates	没有已存储的模板
+	Delete Template…	删除模板…
+	Delete Template	删除模板
+	Inserted template “{name}” ({count} nodes)	已插入模板“{name}”（{count} 个节点）
+	{count} Media In node(s) that read a clip will be left out; templates can't hold your clips.	将省略 {count} 个读取剪辑的 Media In 节点；模板不能包含你的剪辑。
+	Media Out is never saved in a template.	Media Out 不会存储在模板中。
+	{count} selected node(s)	已选择 {count} 个节点
+	Replace a template with this name	替换同名模板
+	Delete the template “{name}”? Comps that used it keep their nodes.	删除模板“{name}”？使用过它的合成会保留其节点。
+	Deleted template “{name}”	已删除模板“{name}”
+
+# Color page ▸ HDR zone wheels (fork G4.2); zone names in the `hdr` context
+	HDR zone wheels: exposure in stops from mid grey, per tonal zone	HDR 分区色轮：按色调分区，以相对中灰的档数调整曝光
+	Reset All	全部重置
+	Reset every HDR wheel	重置所有 HDR 色轮
+	Where the zone ends, in stops from mid grey	分区的边界，以相对中灰的档数表示
+	How soft the zone's edge is, in stops	分区边缘的柔和程度，以档数表示
+	Exposure in stops	曝光（档）
+	How much each zone acts at each brightness (stops from mid grey)	各分区在各亮度上的作用程度（相对中灰的档数）
+hdr	Global	全局
+hdr	Black	黑色
+hdr	Dark	暗部
+hdr	Shadow	阴影
+hdr	Light	亮部
+hdr	Highlight	高光
+hdr	Specular	镜面高光
+	Reset HDR Wheels	重置 HDR 色轮
+
+# Color page ▸ Warper (fork G4.1)
+	Warper	色彩变形器
+	Hue-Sat	色相-饱和度
+	Chroma-Luma	色度-亮度
+	Move colours round the hue circle and in or out in saturation	沿色相环移动颜色，并向内或向外调整饱和度
+	Change the saturation and brightness of colours by how saturated and bright they are	按颜色的饱和度和亮度来改变它们的饱和度和亮度
+	Remove the colour warper from this node	从此节点移除色彩变形器
+	Remove Colour Warper	移除色彩变形器
+	Colour warper	色彩变形器
+	Point	点
+	Pin	固定
+	A pinned point stays put when its neighbours move	固定的点在相邻点移动时保持不动
+	Reset Point	重置点
+	Reset Mesh	重置网格
+	Sat	饱和度
+	Falloff range	衰减范围
+	Preserve luma	保持亮度
+	Hue-Sat moves keep each colour's brightness	色相-饱和度的移动保持每种颜色的亮度
+	Hue columns	色相列数
+	Saturation rings	饱和度环数
+	Chroma columns	色度列数
+	Luma rows	亮度行数
+	A new grid size starts this mesh afresh	新的网格尺寸会让此网格重新开始
+	Set Colour Warper	设置色彩变形器
+	Move Warper Point	移动变形器点
+	Pin Warper Point	固定变形器点
+	Reset Colour Warper	重置色彩变形器
+# Color page ▸ Qualifier ▸ 3D (fork G4.3)
+	HSL	HSL
+	3D	3D
+	Select by hue, saturation and luminance ranges	按色相、饱和度和亮度范围选择
+	Select the colours you paint strokes over in the Program picture	选择你在节目画面中用笔触涂过的颜色
+	Include	包含
+	Exclude	排除
+	Drag over colours in the Program picture to select them (Alt: exclude)	在节目画面中拖过颜色以选择它们（Alt：排除）
+	Drag over colours in the Program picture to leave them out	在节目画面中拖过颜色以将其排除
+	drag over the Program picture · Esc cancels	在节目画面上拖动 · Esc 取消
+	colours picked	个已选颜色
+	left out	个已排除
+	Despill	去溢色
+	Clear Include	清除包含
+	Clear Exclude	清除排除
+	Add 3D Qualifier Stroke	添加 3D 限定器笔触
+	Set 3D Qualifier	设置 3D 限定器
+	Clear 3D Qualifier	清除 3D 限定器
+	Pulls the picked colour's tint out of what the node corrects; use with Invert for green or blue screen spill	从节点校正的部分中去除所选颜色的色调；配合“反转”用于绿幕或蓝幕溢色

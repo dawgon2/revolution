@@ -700,11 +700,32 @@ fn walked() -> (Driver, BTreeSet<String>) {
     d.click("coach.hint.off");
     d.click("grade.addNode");
     snap(&mut d, &mut seen);
-    for tab in ["primaries", "curves", "qualifier", "windows", "noise", "match"] {
+    for tab in ["primaries", "hdr", "curves", "warper", "qualifier", "windows", "magicMask", "noise", "match"] {
         d.click(&format!("grade.tab.{tab}"));
         snap(&mut d, &mut seen);
+        if tab == "warper" {
+            // (G4.1) the settings under the plane scrolled into view
+            d.call("ui.scroll", json!({"id": "grade.warper.plane", "dy": -400.0}));
+            snap(&mut d, &mut seen);
+        }
+        if tab == "qualifier" {
+            // (G4.3) the 3D key's controls, scrolled into view, then back to the HSL ranges
+            d.click("grade.qual3d.mode.3d");
+            snap(&mut d, &mut seen);
+            d.call("ui.scroll", json!({"id": "grade.qual3d.include", "dy": -400.0}));
+            snap(&mut d, &mut seen);
+            d.click("grade.qual3d.mode.hsl");
+            snap(&mut d, &mut seen);
+        }
         if tab == "windows" {
             d.click("grade.window.add.ellipse");
+            snap(&mut d, &mut seen);
+        }
+        if tab == "magicMask" {
+            // (G3.3) a mask's controls, the Refine rows scrolled into view
+            d.click("grade.magicMask.add");
+            snap(&mut d, &mut seen);
+            d.call("ui.scroll", json!({"id": "grade.magicMask.refine.grow", "dy": -400.0}));
             snap(&mut d, &mut seen);
         }
         if tab == "curves" {
@@ -867,6 +888,9 @@ fn walked() -> (Driver, BTreeSet<String>) {
 /// Guide ids the walk doesn't reach, each with the reason. Each must still be known to the app's
 /// check (a dynamic id) or a literal automation id in the UI source.
 const NOT_WALKED: &[(&str, &str)] = &[
+    ("grade.window.0.track.clearPlanar", "shown only on a window that follows a planar track (grade_ui covers it)"),
+    ("comp.canvas.saveTemplate", "the comp canvas's right-click menu (comp_templates_ui covers it)"),
+    ("comp.canvas.insertTemplate", "the comp canvas's right-click menu (comp_templates_ui covers it)"),
     ("pageBar.saveLayout.reset", "Save Layout's right-click menu (pages_ui covers it)"),
     ("pageBar.saveLayout.original", "Save Layout's right-click menu (pages_ui covers it)"),
     ("pageBar.saveLayout.preset", "Save Layout's right-click menu (pages_ui covers it)"),

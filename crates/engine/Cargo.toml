@@ -28,6 +28,9 @@ llm = ["filmcraft-llm/infer", "filmcraft-llm/gpu"]
 llm-download = ["filmcraft-llm/download"]
 # Voice isolation (fork AUDIO-PLAN A2): DeepFilterNet3 on the CPU (crates/voice) and its download.
 voice-isolation = ["filmcraft-voice/dfn", "speech-download"]
+# Magic Mask (fork GRADE-PLAN G3): MobileSAM (crates/mask); its image encoder on the GPU when
+# there is one (filmcraft-gpu::tinyvit, FORK-PLAN §1a.122), else on the CPU via candle.
+magic-mask = ["filmcraft-mask/sam", "dep:filmcraft-gpu"]
 
 # Fork RS1 (FORK-ONLY): Resolve is the default workflow, with a one-time preferences migration.
 # Enabled by apps/filmcraft; upstream builds leave it off and keep Premiere.
@@ -61,6 +64,8 @@ filmcraft-tts = { workspace = true }
 filmcraft-llm = { workspace = true }
 filmcraft-isobmff = { workspace = true }
 filmcraft-voice = { workspace = true }
+filmcraft-mask = { workspace = true }
+filmcraft-gpu = { workspace = true, optional = true }
 filmcraft-usershader = { workspace = true }
 sha2 = "0.10"
 serde = { workspace = true }
@@ -83,7 +88,8 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 filmcraft-testkit = { workspace = true }
 
 # The real-model tests (`--features llm`, ignored) run the assistant as the app does: the app gets
-# wgpu's Vulkan backend through filmcraft-gpu on Linux, which the engine doesn't depend on.
+# wgpu's Vulkan backend through filmcraft-gpu on Linux, which the engine depends on only with
+# `magic-mask`.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan"] }
 
