@@ -2408,6 +2408,7 @@ dependencies = [
  "candle-transformers",
  "filmcraft-gpu",
  "filmcraft-ml",
+ "log",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ written for AI-PLAN AI3-PREP (feature pages)
 
 ## The Audio Track Mixer
 
-> id: mixing.track-mixer | does: one strip per audio track, submix and the master Mix: fader, pan, mute, solo, record arm | cmd: mixer.inspect, mixer.setStrip, mixer.setValue | resolve: Fairlight mixer | premiere: Audio Track Mixer | when: balancing whole tracks rather than single clips | see: mixing.clip-or-track, mixing.automation
+> id: mixing.track-mixer | does: one strip per audio track, submix and the master Mix: fader, pan, mute, solo, record arm | cmd: mixer.inspect, mixer.setStrip, mixer.setValue | resolve: Fairlight mixer | premiere: Audio Track Mixer | when: balancing whole tracks rather than single clips; turning a whole track up or down | see: mixing.clip-or-track, mixing.automation
 
 **[Revolution]**
 
@@ -102,7 +102,7 @@ add a submix and send to it. Submixes the track sends to are greyed out. Sends s
 
 ## Automation: recording mixer moves while playing
 
-> id: mixing.automation | does: records fader, pan, mute, send and effect moves during playback as track keyframes | cmd: mixer.recordStart, mixer.recordStop, mixer.touch, mixer.release, mixer.setStrip | resolve: Fairlight automation (Latch, Touch, Write) | premiere: track automation modes | when: riding music under dialogue, fades and swells by ear | see: mixing.keyframes
+> id: mixing.automation | does: records fader, pan, mute, send and effect moves while the timeline plays, as track keyframes | cmd: mixer.recordStart, mixer.recordStop, mixer.touch, mixer.release, mixer.setStrip | resolve: Fairlight automation (Latch, Touch, Write) | premiere: track automation modes | when: riding music under dialogue, fades and swells by ear | see: mixing.keyframes
 
 **[Revolution]**
 

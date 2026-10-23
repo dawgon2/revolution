@@ -181,6 +181,51 @@ pub(crate) fn edit_grade_merged<R>(
     r
 }
 
+/// Fork LO.3: of the keyframable warper / 3D qualifier settings in `vals` ([`KEYED_PARAMS`] key,
+/// value), those the addressed node already has as node parameters are set there (at `p`'s
+/// `time`, else the playhead; a keyframe when animated) as one undo step merged by `p`'s
+/// `merge`, and taken out of `vals` (set to None). The rest stay for the caller to store on
+/// the warper / 3D qualifier. Returns whether anything was set.
+///
+/// [`KEYED_PARAMS`]: filmcraft_project::grade::KEYED_PARAMS
+pub(crate) fn set_keyed(s: &mut Session, p: &Value, cmd: &'static str, vals: &mut [(&'static str, Option<f32>)]) -> Result<bool> {
+    let want = node_arg(p, cmd)?;
+    let (c, current) = current_for(s, p, cmd)?;
+    let present: Vec<&'static str> = {
+        let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+        let n = q.find_item(c).and_then(|(_, it)| it.grade.as_ref()).and_then(|g| pick(g, want, current, cmd).ok().and_then(|id| g.node(id)));
+        vals.iter().filter(|(k, v)| v.is_some() && n.is_some_and(|n| n.params.contains_key(*k))).map(|(k, _)| *k).collect()
+    };
+    if present.is_empty() {
+        return Ok(false);
+    }
+    let mut todo: Vec<(&'static str, f32)> = Vec::new();
+    for (k, v) in vals.iter_mut() {
+        if present.contains(k)
+            && let Some(x) = v.take()
+        {
+            todo.push((k, x));
+        }
+    }
+    let mt = media_time(s, p, c);
+    let merge = str_p(p, "merge").map(str::to_string);
+    let mut q = p.clone();
+    if let Some(o) = q.as_object_mut() {
+        o.insert("clip".into(), json!(c.0));
+    }
+    edit_grade_merged(s, &q, cmd, "Change Node Parameter", false, merge.as_deref(), |g| {
+        let id = pick(g, want, current, cmd)?;
+        let n = node_mut(g, id, cmd)?;
+        for (k, x) in &todo {
+            if let Some(prm) = n.params.get_mut(*k) {
+                prm.set_at(mt, ParamValue::Float(f64::from(*x)));
+            }
+        }
+        Ok(())
+    })?;
+    Ok(true)
+}
+
 fn node_mut<'a>(g: &'a mut Grade, id: u64, cmd: &str) -> Result<&'a mut GradeNode> {
     g.node_mut(id).ok_or_else(|| bad(cmd, format!("no node {id}")))
 }
@@ -201,6 +246,7 @@ pub(crate) fn params(_: &mut Session, _: &Value) -> Result<Value> {
         .iter()
         // (then the graph parameters of keys and mixers, fork C2)
         .chain(filmcraft_project::grade::GRAPH_PARAMS)
+        .chain(filmcraft_project::grade::KEYED_PARAMS)
         .map(|p| match p.kind {
             NodeParamKind::Float { identity, min, max } => {
                 json!({"key": p.key, "label": p.label, "kind": "float", "identity": identity, "min": min, "max": max})
@@ -862,7 +908,9 @@ fn toggle_animation(s: &mut Session, p: &Value) -> Result<Value> {
     let animated = edit_grade(s, p, CMD, "Toggle Animation", false, |g| {
         let id = pick(g, want, current, CMD)?;
         let n = node_mut(g, id, CMD)?;
-        let prm = n.params.entry(def.key.to_string()).or_insert_with(|| Param::new(identity(def.kind)));
+        // (a warper / 3D qualifier setting starts from its static value, fork LO.3)
+        let start = n.keyed_base(def.key).map_or_else(|| identity(def.kind), |v| ParamValue::Float(f64::from(v)));
+        let prm = n.params.entry(def.key.to_string()).or_insert_with(|| Param::new(start));
         prm.toggle_animation(mt);
         Ok(prm.is_animated())
     })?;

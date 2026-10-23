@@ -342,7 +342,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         // Color page ▸ Magic Mask (fork G3.3): its matte / strokes, and the stroke tool
         crate::panels::magic_mask::monitor_overlay(app, ui, pic);
         crate::panels::magic_mask::monitor_tool(app, ui, &pic_resp, pic);
-        // Color page ▸ Qualifier ▸ 3D (fork G4.3): the stroke tool
+        // Color page ▸ Qualifier ▸ 3D (fork G4.3): the strokes made (LO.3) and the stroke tool
+        crate::panels::grade_qual3d::monitor_overlay(app, ui, pic);
         crate::panels::grade_qual3d::monitor_tool(app, ui, &pic_resp, pic);
         // (while a picker is armed, a click on the picture belongs to it, not to a layer or mask)
         if app.ui.wb_picker.is_none()
@@ -1145,9 +1146,9 @@ fn source_nav(app: &mut FilmcraftApp, cmd: &str) {
     let cur = app.session.state.source_playhead;
     let t = match cmd {
         "src.goIn" => v.mark_in.unwrap_or(v.start),
-        "src.goOut" => v.mark_out.unwrap_or(v.end - rate.frame_duration()),
+        "src.goOut" => v.mark_out.unwrap_or_else(|| filmcraft_engine::clip_ops::source_last_frame(&app.session, &v)),
         "src.goStart" => v.start,
-        "src.goEnd" => (v.end - rate.frame_duration()).max(v.start),
+        "src.goEnd" => filmcraft_engine::clip_ops::source_last_frame(&app.session, &v),
         _ if rate.frame_duration() == Tick::ZERO => cur,
         "src.stepBack" => filmcraft_engine::clip_ops::source_step(&app.session, &v, cur, -1),
         _ => filmcraft_engine::clip_ops::source_step(&app.session, &v, cur, 1),

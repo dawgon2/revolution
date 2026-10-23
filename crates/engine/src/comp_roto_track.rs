@@ -43,7 +43,7 @@ use filmcraft_time::Tick;
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, always, bad, bool_p, str_p, u64_p};
-use crate::comp::{comp_at, comp_of, edit_comp, target, top_level_only};
+use crate::comp::{comp_at, comp_of, edit_comp, group_p, target};
 use crate::comp_track::{lock, ticks_p};
 use crate::magic_mask::MaskModel;
 use crate::{EngineError, Result, Session};
@@ -83,10 +83,10 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             TRACK,
             "Track Roto Shape",
-            r#"{"comp":id?,"node":id (Roto),"shape":n,"from":ticks? (comp time; default the shape's first keyframe, else 0),"to":ticks? (default the comp's last frame, or 0 backward),"direction":"forward"|"backward"?,"every":frames? (keyframe spacing, 1..=1000, default 1),"model":"auto"|"better"|"faster"|"mobileSam"?,"clip":id?,"wait":bool?}"#,
+            r#"{"comp":id?,"group":[id]?,"node":id (Roto),"shape":n,"from":ticks? (comp time; default the shape's first keyframe, else 0),"to":ticks? (default the comp's last frame, or 0 backward),"direction":"forward"|"backward"?,"every":frames? (keyframe spacing, 1..=1000, default 1),"model":"auto"|"better"|"faster"|"mobileSam"?,"clip":id?,"wait":bool?}"#,
             track_shape,
         ),
-        CommandSpec { journal: false, ..spec(STOP, "Stop Roto Shape Track", r#"{"comp":id?,"node":id?}"#, stop) },
+        CommandSpec { journal: false, ..spec(STOP, "Stop Roto Shape Track", r#"{"comp":id?,"group":[id]?,"node":id?}"#, stop) },
     ]
 }
 
@@ -94,6 +94,8 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
 pub struct Pending {
     pub job: u64,
     pub comp: ItemId,
+    /// The group path the node is inside (LO.4; empty: the comp's own nodes).
+    pub group: Vec<NodeId>,
     pub node: NodeId,
     pub shape: usize,
     /// The tracked span (comp time, low ..= high): shape keyframes in it are replaced.
@@ -226,6 +228,15 @@ impl Follow {
     }
 }
 
+/// LO.5: `path` as seen on screen at comp time `t`, in the coordinates a shape following
+/// `link` stores (the tracker's reference frame): through the inverse of the tracker's motion at
+/// `t`. None when the link dangles or the motion is unknown or singular there.
+pub(crate) fn screen_to_stored(c: &Comp, link: &TrackLink, t: Tick, path: &MaskPath) -> Option<MaskPath> {
+    let inverse = Follow::of(c, link)?.warp(t)?.inverse()?;
+    let moved = path_through(path, inverse);
+    Some(MaskPath { vertices: moved.vertices.iter().map(|v| v.cleaned()).collect(), closed: moved.closed })
+}
+
 /// Re-expresses a shape's outlines through `warp_at(t)` so that what is on screen does not jump
 /// when the shape starts or stops following a tracker: each keyframe at its own time; the static
 /// outline (no keyframes) at `at` only (None: left alone). Outlines whose map is unknown there
@@ -260,8 +271,11 @@ fn rebase(sh: &mut RotoShape, at: Option<Tick>, warp_at: impl Fn(Tick) -> Option
 fn stop(s: &mut Session, p: &Value) -> Result<Value> {
     let comp = if p.get("comp").is_some() || p.get("node").is_some() { Some(target(s, p, STOP)?) } else { None };
     let node = u64_p(p, "node");
+    // (a node is named with its group path, LO.4)
+    let group = group_p(p, STOP)?;
+    let same_group = |j: &Pending| (node.is_none() && p.get("group").is_none()) || j.group == group;
     let mut stopped = 0u64;
-    for pj in s.roto_track_jobs.iter().filter(|j| comp.is_none_or(|c| c == j.comp) && node.is_none_or(|n| n == j.node)) {
+    for pj in s.roto_track_jobs.iter().filter(|j| comp.is_none_or(|c| c == j.comp) && node.is_none_or(|n| n == j.node) && same_group(j)) {
         if let Some(j) = s.jobs.iter().find(|j| j.id == pj.job) {
             j.progress.cancel.store(true, Ordering::Relaxed);
             stopped += 1;
@@ -377,7 +391,7 @@ pub(crate) fn prompt_of(cov: &[f32], w: usize, h: usize) -> Option<Prompt> {
     let (fw, fh) = (w as f32, h as f32);
     let points = chosen.iter().map(|(x, y)| Point { x: (*x as f32 + 0.5) / fw, y: (*y as f32 + 0.5) / fh, positive: true }).collect();
     let rect = Rect { x0: x0 as f32 / fw, y0: y0 as f32 / fh, x1: (x1 as f32 + 1.0) / fw, y1: (y1 as f32 + 1.0) / fh };
-    Some(Prompt { points, rect: Some(rect), prior: None })
+    Some(Prompt { points, rect: Some(rect), prior: None, prefer_whole: false })
 }
 
 /// An analysis-size coverage of `path` alone (no feather, expansion or opacity).
@@ -397,11 +411,12 @@ fn with_feathers(mut fitted: MaskPath, start: &MaskPath) -> MaskPath {
 }
 
 fn track_shape(s: &mut Session, p: &Value) -> Result<Value> {
-    top_level_only(p, TRACK, "Tracking a shape")?;
-    let comp_id = target(s, p, TRACK)?;
+    // LO.4: inside a group (`group`), the node's input as it is evaluated in place
+    let group = group_p(p, TRACK)?;
+    let (comp_id, c) = comp_at(s, p, TRACK)?;
+    let c = c.clone();
     let node = node_p(p, TRACK)?;
     let i = shape_p(p, TRACK)?;
-    let c = comp_of(&s.project, comp_id).ok_or_else(|| bad(TRACK, "the comp is gone"))?.clone();
     let shape = roto_in(&c, node, TRACK)?.shapes.get(i).cloned().ok_or_else(|| bad(TRACK, format!("no shape {i}")))?;
     if shape.track_link.is_some() {
         return Err(bad(TRACK, "the shape follows a tracker: stop following it first (comp.roto.unlinkTracker), or track the tracker instead"));
@@ -409,7 +424,7 @@ fn track_shape(s: &mut Session, p: &Value) -> Result<Value> {
     if shape.kind != RotoKind::Bezier {
         return Err(bad(TRACK, "only Bézier shapes can be tracked (a B-spline's points are not on its outline)"));
     }
-    if s.roto_track_jobs.iter().any(|j| j.comp == comp_id && j.node == node) {
+    if s.roto_track_jobs.iter().any(|j| j.comp == comp_id && j.group == group && j.node == node) {
         return Err(bad(TRACK, "a shape of this node is already being tracked"));
     }
     let input = c
@@ -485,10 +500,11 @@ fn track_shape(s: &mut Session, p: &Value) -> Result<Value> {
     // SAM 2.1's frame numbers run in time order: backward tracks count down from the last
     let index = move |k: i64| usize::try_from(if backward { steps.saturating_sub(k) } else { k }).unwrap_or(0);
     let direction = if backward { Direction::Backward } else { Direction::Forward };
+    let path = group.clone();
     let run = move || {
         let started = web_time::Instant::now();
         let picture = |t: Tick| -> Option<RgbImage> {
-            let img = filmcraft_render::render_comp_node_at(&project, comp_id, input, clip, t, (aw, ah), &provider)?;
+            let img = filmcraft_render::render_comp_group_node_at(&project, comp_id, &path, input, clip, t, (aw, ah), &provider)?;
             if (img.w, img.h) != (aw, ah) {
                 return None;
             }
@@ -608,7 +624,7 @@ fn track_shape(s: &mut Session, p: &Value) -> Result<Value> {
     let run = crate::export_tools::guard_job(job.progress.clone(), job.result.clone(), run);
     let setup = setup_of(&c, node, i, t_first);
     s.jobs.push(job);
-    s.roto_track_jobs.push(Pending { job: id, comp: comp_id, node, shape: i, span, setup, found });
+    s.roto_track_jobs.push(Pending { job: id, comp: comp_id, group, node, shape: i, span, setup, found });
     if bool_p(p, "wait").unwrap_or(false) || cfg!(target_arch = "wasm32") {
         run();
         poll(s);
@@ -657,12 +673,18 @@ pub fn poll(s: &mut Session) {
             continue;
         }
         let at = found.first().map_or(Tick::ZERO, |(t, _)| *t);
-        let now = comp_of(&s.project, pj.comp).map(|c| setup_of(c, pj.node, pj.shape, at));
+        // (LO.4: inside its group; a comp or group deleted meanwhile: nothing is written)
+        let now = comp_of(&s.project, pj.comp)
+            .and_then(|c| if pj.group.is_empty() { Some(c) } else { filmcraft_project::comp::group::inner(c, &pj.group).ok() })
+            .map(|c| setup_of(c, pj.node, pj.shape, at));
         if now.as_ref().is_none_or(|v| *v != pj.setup) {
             s.error_toast(TRACK, "the roto shape was changed (or deleted) while it was being tracked: nothing was written; track it again".to_string());
             continue;
         }
-        let p = json!({"comp": pj.comp.0});
+        let mut p = json!({"comp": pj.comp.0});
+        if !pj.group.is_empty() {
+            p["group"] = json!(pj.group);
+        }
         if let Err(e) = edit_comp(s, &p, TRACK, "Track Roto Shape", None, |c| write(c, pj.node, pj.shape, pj.span, &found)) {
             s.error_toast(TRACK, e.to_string());
         }

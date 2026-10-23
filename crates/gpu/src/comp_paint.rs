@@ -10,9 +10,10 @@
 //! pairs and buffers within the device's binding limits; anything larger, a device without the
 //! kernels or a GPU error falls back to the read-back CPU path.
 //!
-//! **Roto.** The coverage stays the CPU rasteriser's (see [`filmcraft_render::roto`]); it is
-//! uploaded as an `R32Float` texture (no 8-bit matte), and one full-screen draw writes the Matte
-//! output `(c, c, c, 1)` or the Alpha output `src · c`.
+//! **Roto.** The coverage is an `R32Float` texture (no 8-bit matte) filled by the roto kernel
+//! (LO.5, [`crate::comp_roto`]) or, when that can't run, uploaded from the CPU rasteriser (see
+//! [`filmcraft_render::roto`]); one full-screen draw writes the Matte output `(c, c, c, 1)` or
+//! the Alpha output `src · c`.
 
 use filmcraft_project::paint::PaintTool;
 use filmcraft_render::paint::PlannedStroke;

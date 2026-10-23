@@ -267,6 +267,10 @@ fn hostile_tracker_params_are_refused() {
     refused(&mut s, "comp.track.setPoints", json!({"comp": c, "node": t, "points": [{"track": "nope"}]}));
     refused(&mut s, "comp.track.setPoints", json!({"comp": c, "node": m, "points": []}));
     refused(&mut s, "comp.track.setOptions", json!({"comp": c, "node": t, "operation": "warp"}));
+    // LO.5 corner points: four distinct indices of existing points, or []
+    for bad in [json!([0, 1, 2]), json!([0, 1, 2, 3]), json!([-1, 0, 1, 2]), json!("0,1,2,3"), json!([0.5, 1, 2, 3])] {
+        refused(&mut s, "comp.track.setOptions", json!({"comp": c, "node": t, "cornerPoints": bad}));
+    }
     refused(&mut s, "comp.track.setOptions", json!({"comp": c, "node": t, "smoothRadius": 100_000}));
     refused(&mut s, "comp.track.setOptions", json!({"comp": c, "node": t, "smoothRadius": -1}));
     refused(&mut s, "comp.track.setOptions", json!({"comp": c, "node": t, "reference": i64::MAX}));
@@ -372,4 +376,89 @@ fn a_background_analysis_writes_once_and_never_into_a_changed_tracker() {
     finish_jobs(&mut s);
     assert!(s.comp_track_jobs.is_empty());
     assert_eq!(s.history.undo.len(), undo);
+}
+
+/// LO.5: Corner Pin's four points are chosen with `cornerPoints` (one undo step), cleared with
+/// [], refused on a Planar Tracker, and dropped when the points no longer fit them.
+#[test]
+fn corner_pin_points_are_chosen_and_follow_the_point_list() {
+    let (mut s, c, _m, t) = session(panning, "tracker");
+    let pts: Vec<_> = (0..5).map(|i| json!({"name": format!("P{i}"), "at": [10.0 + 10.0 * f64::from(i), 20.0]})).collect();
+    s.execute("comp.track.setPoints", json!({"comp": c, "node": t, "points": pts})).unwrap();
+    let undo = s.history.undo.len();
+    s.execute("comp.track.setOptions", json!({"comp": c, "node": t, "operation": "cornerPin", "cornerPoints": [4, 1, 2, 0]})).unwrap();
+    assert_eq!(s.history.undo.len(), undo + 1);
+    let corners = |s: &Session| match node_kind(s, c, t) {
+        CompKind::Tracker { corner_points, .. } => corner_points,
+        _ => panic!(),
+    };
+    assert_eq!(corners(&s), vec![4, 1, 2, 0]);
+    // fewer points: the choice no longer fits and is dropped
+    let three: Vec<_> = (0..3).map(|i| json!({"at": [10.0 * f64::from(i), 5.0]})).collect();
+    s.execute("comp.track.setPoints", json!({"comp": c, "node": t, "points": three})).unwrap();
+    assert!(corners(&s).is_empty());
+    s.execute("comp.track.setOptions", json!({"comp": c, "node": t, "cornerPoints": []})).unwrap();
+    let (mut s, c, _m, t) = session(panning, "planarTracker");
+    assert!(s.execute("comp.track.setOptions", json!({"comp": c, "node": t, "cornerPoints": [0, 1, 2, 3]})).is_err());
+}
+
+/// The kind of node `node` inside the group at `path` of comp `comp`.
+fn inner_kind(s: &Session, comp: u64, path: &[u64], node: u64) -> CompKind {
+    let Some(ItemKind::Comp(c)) = s.project.item(ItemId(comp)).map(|i| &i.kind) else { panic!("comp") };
+    filmcraft_project::comp::group::inner(c, path).unwrap().node(node).unwrap().kind.clone()
+}
+
+/// LO.4: a Tracker inside a group analyses its input as evaluated in place (its Group Input reads
+/// the group node's input from the comp's level): the same keyframes as the ungrouped tracker,
+/// written into the inner node in one undo step; job identity, cancel and write-back go by the
+/// group path; hostile paths are refused; a group deleted mid-analysis gets nothing written.
+#[test]
+fn analysis_inside_a_group_matches_the_ungrouped_one() {
+    let pts = json!([{"name": "A", "at": [100.3, 90.7], "pattern": 12, "search": 16}, {"name": "B", "at": [180.6, 120.2], "pattern": 12, "search": 16}]);
+    let to = RATE.tick_of(12).0;
+    let (mut flat, fc, _, ft) = session(panning, "tracker");
+    flat.execute("comp.track.setPoints", json!({"comp": fc, "node": ft, "points": pts})).unwrap();
+    flat.execute("comp.track.analyse", json!({"comp": fc, "node": ft, "to": to, "wait": true})).unwrap();
+    let CompKind::Tracker { points: want, .. } = node_kind(&flat, fc, ft) else { panic!() };
+    assert_eq!(want[0].track.keyframes.len(), 13);
+
+    let (mut s, c, m, t) = session(panning, "tracker");
+    s.execute("comp.track.setPoints", json!({"comp": c, "node": t, "points": pts})).unwrap();
+    let g = s.execute("comp.group", json!({"comp": c, "nodes": [t]})).unwrap()["node"].as_u64().unwrap();
+    // hostile / wrong group paths: refused, no job
+    for bad in [json!([999]), json!([m]), json!([g, g, g, g, g]), json!([g, g]), json!([]), json!("x"), json!([-1])] {
+        assert!(s.execute("comp.track.analyse", json!({"comp": c, "group": bad, "node": t, "to": to})).is_err(), "{bad}");
+    }
+    assert!(s.execute("comp.track.analyse", json!({"comp": c, "node": t, "to": to})).is_err(), "not a node of the comp's own level");
+    assert!(s.comp_track_jobs.is_empty() && s.jobs.is_empty());
+    let undo = s.history.undo.len();
+    s.execute("comp.track.analyse", json!({"comp": c, "group": [g], "node": t, "to": to, "wait": true})).unwrap();
+    assert!(s.comp_track_jobs.is_empty());
+    assert_eq!(s.history.undo.len(), undo + 1, "one undo step");
+    let CompKind::Tracker { points: got, .. } = inner_kind(&s, c, &[g], t) else { panic!() };
+    assert_eq!(got.len(), want.len());
+    for (a, b) in got.iter().zip(&want) {
+        assert_eq!(a.track.keyframes.len(), b.track.keyframes.len());
+        for (ka, kb) in a.track.keyframes.iter().zip(&b.track.keyframes) {
+            assert_eq!(ka.time, kb.time);
+            let d = (ka.value.as_vec2().unwrap() - kb.value.as_vec2().unwrap()).length();
+            assert!(d < 1e-6, "grouped and ungrouped tracks agree ({d} px)");
+        }
+    }
+    // in the background: one at a time per (group path, node); cancel names the group path
+    s.execute("comp.track.clear", json!({"comp": c, "group": [g], "node": t})).unwrap();
+    s.execute("comp.track.analyse", json!({"comp": c, "group": [g], "node": t, "to": to})).unwrap();
+    assert!(s.execute("comp.track.analyse", json!({"comp": c, "group": [g], "node": t, "to": to})).is_err(), "already being analysed");
+    assert!(s.execute("comp.track.cancel", json!({"comp": c, "node": t})).is_err(), "not the comp's own node {t}");
+    s.execute("comp.track.cancel", json!({"comp": c, "group": [g], "node": t})).unwrap();
+    finish_jobs(&mut s);
+    assert!(s.comp_track_jobs.is_empty());
+    // the group deleted mid-analysis: nothing written, no panic
+    s.execute("comp.track.clear", json!({"comp": c, "group": [g], "node": t})).unwrap();
+    s.execute("comp.track.analyse", json!({"comp": c, "group": [g], "node": t, "to": to})).unwrap();
+    s.execute("comp.removeNode", json!({"comp": c, "nodes": [g]})).unwrap();
+    let undo = s.history.undo.len();
+    finish_jobs(&mut s);
+    assert!(s.comp_track_jobs.is_empty());
+    assert_eq!(s.history.undo.len(), undo, "nothing written");
 }

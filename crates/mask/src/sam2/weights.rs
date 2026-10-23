@@ -332,6 +332,10 @@ impl Sam2Weights {
 /// can free them afterwards): image encoder, memory attention, memory encoder, `conv_s0/s1`.
 pub const HEAVY_PREFIXES: [&str; 5] = ["image_encoder.", "memory_attention.", "memory_encoder.", "sam_mask_decoder.conv_s0.", "sam_mask_decoder.conv_s1."];
 
+/// The tensors a GPU mask decoder uploads (the decoder and the prompt encoder's position
+/// encoding). The CPU keeps its copies: it is the decoder's fallback.
+pub const DECODER_PREFIXES: [&str; 2] = ["sam_mask_decoder.", "sam_prompt_encoder.pe_layer."];
+
 #[cfg(test)]
 mod tests {
     use super::*;

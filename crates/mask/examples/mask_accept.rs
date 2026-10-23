@@ -277,7 +277,7 @@ fn dump(scene: &str, i: usize, img: &RgbImage, truth: &Matte, seg: &filmcraft_ma
 /// drawn truth), and negative points on the nearest bystander's head and torso where the subject
 /// doesn't cover them.
 fn fix_prompt(torso: (f32, f32), rect: Rect, truth: &Matte) -> Prompt {
-    let mut prompt = Prompt { points: Vec::new(), rect: Some(rect), prior: None };
+    let mut prompt = Prompt { points: Vec::new(), rect: Some(rect), prior: None, prefer_whole: false };
     if let Some(b) = truth.bounds() {
         for f in [0.06f32, 0.25, 0.45, 0.65, 0.85] {
             let y = (((b.y0 + (b.y1 - b.y0) * f) * H as f32) as usize).min(H - 1);
@@ -349,7 +349,11 @@ fn run_sam2(size: Sam2Size, frames: usize) {
             let (img, truth, rect, torso) = render(scene, i as f32 / (frames - 1) as f32, i);
             let t = Instant::now();
             let r = if i == 0 {
-                tracker.add_prompt(0, &img, &Prompt { points: vec![Point { x: torso.0, y: torso.1, positive: true }], rect: Some(rect), prior: None })
+                tracker.add_prompt(
+                    0,
+                    &img,
+                    &Prompt { points: vec![Point { x: torso.0, y: torso.1, positive: true }], rect: Some(rect), prior: None, prefer_whole: false },
+                )
             } else if fixes.contains(&i) {
                 // the frame is tracked first (as in the editor), then the fix stroke enters the memory
                 tracker.propagate(i, &img, Direction::Forward).and_then(|_| tracker.add_prompt(i, &img, &fix_prompt(torso, rect, &truth)))
@@ -461,7 +465,7 @@ fn main() {
             // FC_FIX=12,40: a user fix stroke on these frames (the frame-0 click + box again)
             let fix = std::env::var("FC_FIX").is_ok_and(|l| l.split(',').any(|v| v.trim().parse() == Ok(i)));
             if i == 0 || fix {
-                prompt = Prompt { points: vec![Point { x: torso.0, y: torso.1, positive: true }], rect: Some(rect), prior: None };
+                prompt = Prompt { points: vec![Point { x: torso.0, y: torso.1, positive: true }], rect: Some(rect), prior: None, prefer_whole: false };
                 // the fix stroke also marks the nearest bystander's torso as "not this" (when
                 // it is not hidden behind the subject)
                 if fix {

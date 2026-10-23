@@ -1188,3 +1188,44 @@ without the tracker page. b is now 0.6 (both indexes), `compositor-trackers.md` 
 assistant's retrieval also follows the guide's `see:` links past its first five sections. Beginner questions 29 / 30
 (was 28, 27 on the merged corpus), coach eval 115, AI-POOL coach 149, recall@5 1055, creative coverage 581. No guide
 text was reworded; one pool label (`pool-k1k-planar`) gained the Planar Tracker node's own section as an `alt`.
+
+## Q68 (2026-10-22, §1a.128 publish 0.3.0): GitHub Actions is disabled on dawgon2/revolution, so the 0.3.0 installers weren't built (**answered / resolved 2026-10-23: Actions works again, 0.3.0 fully released**)
+
+G4 is accepted (`grade-4`) and Revolution 0.3.0 is half published: the sanitised snapshot `77b002d9` is on the
+public `fork` branch and the public tag `revolution-0.3.0` points at it (scan clean). But the tag push started no
+release run, and a manual dispatch of `revolution-release.yml` was refused with "HTTP 422: Actions has been
+disabled for this repository". Runs worked yesterday (0.2.2, run 39636236843), so Actions was turned off since
+(by you, or by GitHub, e.g. a billing / usage limit). Changing repository settings is yours, so the run didn't
+touch them.
+- **(a) Re-enable Actions** (repo Settings ▸ Actions ▸ General ▸ Allow all actions; or check Billing if GitHub
+  disabled it), then dispatch the release: `gh workflow run revolution-release.yml -R dawgon2/revolution --ref
+  revolution-0.3.0 -f tag=revolution-0.3.0 -f publish=true` (or tell a run to). Builds every platform as before.
+- **(b) Linux-only release by hand:** scrubbed tarball built on the Dell + `gh release create revolution-0.3.0`.
+  Windows users' updater would then see a release without their installer.
+- **(c) Leave 0.3.0 as source-only** until later.
+
+**Choice for now:** (c) until you answer; nothing else waits on it (AI2b continues). The next run checks whether
+Actions is back (`gh workflow run …` succeeds) and, if so, dispatches the release (a) itself.
+
+**Answered 2026-10-23 (owner, live, FORK-PLAN §1a.133): (a).** Actions works again; run 39894008609 published
+Revolution 0.3.0 with all 16 files + SHA256SUMS (03:47 UTC). Public-repo builds cost nothing, so every release
+carries every format again: LO.1 (2026-10-23) reverted §1a.132's patch-release skips in `revolution-release.yml`
+(the public-repo guard stays), and the updater (`update::newer_with`) offers only the newest release that carries
+this install's file.
+
+## Q69 (2026-10-23, AI2b.6): ship the retrained explainer smol360-v4b? It needs its release asset uploaded (FYI + one action from you, never blocks)
+
+AI2b retrained the node explainer on everything since AI2 (G4's HDR wheels / warper / 3D qualifier, C3's
+trackers / roto / paint, C4's groups). The first try (`smol360-v4`) stopped at the 90-minute cap after 0.8 epoch
+and lost 3 + 4 cases on sets 1–2, so it wasn't used. **`smol360-v4b`** (150 minutes, 1.3 epochs) ties v3 on the old
+held-out sets (138 / 141: two fewer on set 1, two more on sets 2–3) and passes all 21 new cases (v3: 18; v3 says
+three new comp lines ungrammatically). Details: docs/fork/TRAINING.md.
+- **(a) Publish v4b** as release `explainer-smol360-v4b` on dawgon2/filmcraft-cachyos (the command in TRAINING.md
+  "publish", files in `~/.local/share/filmcraft-fork/models/tuned/smol360-v4b/`), then a run switches its catalogue
+  entry to the release URL and puts it first in `TUNED_PREFERENCE`. Everyone gets the better coverage of new tools.
+- **(b) Keep v3 as the automatic choice** (v4b stays a local option on this PC).
+- **(c) Train longer / more set-1-like data first** (another ≈ 3 h of GPU, a few % of a week's tokens).
+
+**Choice for now:** v4b is installed on this PC and listed in Settings ▸ AI as "Built on this computer"; v3
+stays automatic (reversible: the catalogue entry and `TUNED_PREFERENCE` in `crates/llm/src/models.rs`). An
+unattended run doesn't upload release assets (publishing is refused without you). AI2b is otherwise closed.

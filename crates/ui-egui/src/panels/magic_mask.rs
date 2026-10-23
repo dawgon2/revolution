@@ -320,7 +320,15 @@ pub(crate) fn apply(app: &mut FilmcraftApp, clip: ClipId, node: u64, acts: Vec<A
         match a {
             Act::Tool(sub) => set_tool(app, sub.map(|subtract| MagicMaskTool { clip: clip.0, node, subtract })),
             Act::Overlay(on) => app.ui.magic_mask.overlay = on,
-            Act::Model(m) => app.session.magic_mask.model = m,
+            Act::Model(m) => {
+                // remembered in the preferences (LO.6): the next session tracks with it too
+                let mut next = app.session.prefs.clone();
+                next.color.magic_mask = m;
+                if let Err(e) = app.session.set_prefs(next) {
+                    log::warn!("saving the Magic Mask model: {e}");
+                }
+                app.session.magic_mask.model = m;
+            }
             Act::Run(cmd, mut p) => {
                 if p.get("atPlayhead").is_some() {
                     if let Some(o) = p.as_object_mut() {

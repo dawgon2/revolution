@@ -1840,3 +1840,273 @@ alt = [{ page = "compositor.md", heading = "Comps, nodes and connections" }, { p
 status = "covered"
 needs_clip = false
 facts = ["Fusion in the page bar, between Edit and Color"]
+
+# ---------------------------------------------------------------------------------------------
+# AI2b (2026-10-22): what shipped since AI2 (A3 mixer, Y2 VFR, A2 / A3.7 voice isolation, G3 Magic
+# Mask, C3 trackers / roto / paint, C4 expressions / groups / templates, G4 warper / HDR / 3D
+# qualifier / planar windows)
+# ---------------------------------------------------------------------------------------------
+
+[[question]]
+id = "mix-track-volume"
+q = "how do I turn a whole track down in the mixer"
+kind = "how"
+origin = "agent"
+context = "Edit page"
+page = "mixing.md"
+heading = "The Audio Track Mixer"
+status = "covered"
+needs_clip = false
+facts = ["fader per track in the Audio Track Mixer"]
+
+[[question]]
+id = "mix-clip-or-track"
+q = "should I change clip volume or track volume"
+kind = "why"
+origin = "agent"
+context = "Edit page"
+page = "mixing.md"
+heading = "Clip volume or track volume?"
+status = "covered"
+needs_clip = false
+facts = ["clip volume for one clip, track volume for the whole track"]
+
+[[question]]
+id = "mix-send"
+q = "how do I send dialogue and music to a submix bus"
+kind = "how"
+origin = "agent"
+context = "Edit page"
+page = "mixing.md"
+heading = "Submixes and sends"
+status = "covered"
+needs_clip = false
+facts = ["a submix track, sends from each track"]
+
+[[question]]
+id = "mix-automation"
+q = "record fader moves while the timeline plays"
+kind = "how"
+origin = "agent"
+context = "Edit page"
+page = "mixing.md"
+heading = "Automation: recording mixer moves while playing"
+status = "covered"
+needs_clip = false
+facts = ["automation mode (touch / latch / write), play, move the fader"]
+
+[[question]]
+id = "vfr-phone"
+q = "my phone clip drifts out of sync, its frame rate is variable"
+kind = "why"
+origin = "agent"
+context = "Edit page"
+page = "media.md"
+heading = "Variable frame rate clips (phones, screen recordings)"
+status = "covered"
+needs_clip = false
+facts = ["container timestamps, variable frame rate"]
+
+[[question]]
+id = "voice-isolation-how"
+q = "how do I remove background noise from dialogue with voice isolation"
+kind = "how"
+origin = "agent"
+context = "Edit page"
+page = "audio.md"
+heading = "Voice Isolation"
+status = "covered"
+needs_clip = false
+facts = ["Voice Isolation effect, model download, amount"]
+
+[[question]]
+id = "voice-isolation-manual"
+q = "what order should I fix a dialogue recording in by hand"
+kind = "order"
+origin = "agent"
+context = "Edit page"
+page = "audio.md"
+heading = "Cleaning up a voice by hand"
+status = "covered"
+needs_clip = false
+facts = ["noise reduction, EQ, de-ess by hand"]
+
+[[question]]
+id = "magic-mask-person"
+q = "how do I select a person and track them automatically for a grade"
+kind = "how"
+origin = "agent"
+context = "Color page"
+page = "color/secondaries.md"
+heading = "Magic Mask"
+status = "covered"
+needs_clip = false
+facts = ["Magic Mask strokes on the person, then track"]
+
+[[question]]
+id = "magic-mask-model"
+q = "which magic mask model should I use, better or faster"
+kind = "why"
+origin = "agent"
+context = "Color page"
+page = "color/secondaries.md"
+heading = "Magic Mask"
+status = "covered"
+needs_clip = false
+facts = ["Better = SAM 2.1 Large, Faster = Base+, MobileSAM fallback"]
+
+[[question]]
+id = "qual3d-how"
+q = "select a colour by painting strokes over it with the 3d qualifier"
+kind = "how"
+origin = "agent"
+context = "Color page"
+page = "color/secondaries.md"
+heading = "3D qualifier: select by painting over colours"
+status = "covered"
+needs_clip = false
+facts = ["include / exclude strokes, softness, despill"]
+
+[[question]]
+id = "qual3d-vs-hsl"
+q = "when should I use the 3D qualifier instead of the HSL qualifier"
+kind = "why"
+origin = "agent"
+context = "Color page"
+page = "color/secondaries.md"
+heading = "3D qualifier: select by painting over colours"
+status = "covered"
+needs_clip = false
+facts = ["colours that an HSL range can't separate"]
+
+[[question]]
+id = "planar-window"
+q = "make a grade window stick to a wall that moves in perspective"
+kind = "how"
+origin = "agent"
+context = "Color page"
+page = "color/secondaries.md"
+heading = "Planar-tracked windows"
+status = "covered"
+needs_clip = false
+facts = ["planar track on the window, masks.trackPlanar"]
+
+[[question]]
+id = "warper-skin"
+q = "use the colour warper to pull skin tones toward one hue"
+kind = "how"
+origin = "agent"
+context = "Color page"
+page = "color/secondaries.md"
+heading = "Colour warper"
+status = "covered"
+needs_clip = false
+facts = ["hue-sat mesh, drag points, range, preserve luma"]
+
+[[question]]
+id = "hdr-zones-sky"
+q = "bring a bright sky down with the hdr wheels"
+kind = "how"
+origin = "agent"
+context = "Color page"
+page = "color/primaries.md"
+heading = "Steps: bring a bright sky down with the HDR wheels"
+status = "covered"
+needs_clip = false
+facts = ["Highlight / Specular zone exposure down"]
+
+[[question]]
+id = "hdr-zones-what"
+q = "what are the HDR zone wheels"
+kind = "what-for"
+origin = "agent"
+context = "Color page"
+page = "color/primaries.md"
+heading = "HDR zone wheels"
+status = "covered"
+needs_clip = false
+facts = ["zones by stops: black, dark, shadow, light, highlight, specular, global"]
+
+[[question]]
+id = "comp-tracker"
+q = "how do I track a point in a comp and make a logo follow it"
+kind = "how"
+origin = "agent"
+context = "Fusion page"
+page = "compositor-trackers.md"
+heading = "Tracker and Planar Tracker nodes [Fork]"
+status = "covered"
+needs_clip = false
+facts = ["Tracker node, Match Move, foreground on input 2"]
+
+[[question]]
+id = "comp-planar-place"
+q = "where do I draw the planar tracker's region on the viewer"
+kind = "where"
+origin = "agent"
+context = "Fusion page"
+page = "compositor-trackers.md"
+heading = "Placing tracker points and the plane on the viewer [Fork] [Resolve-style]"
+status = "covered"
+needs_clip = false
+facts = ["draw the plane on the viewer, then Track"]
+
+[[question]]
+id = "comp-roto"
+q = "cut out an object by hand with roto shapes"
+kind = "how"
+origin = "agent"
+context = "Fusion page"
+page = "compositor.md"
+heading = "Roto and Paint nodes [Fork]"
+status = "covered"
+needs_clip = false
+facts = ["Roto node, Bézier / B-spline shapes, Alpha or Matte output"]
+
+[[question]]
+id = "comp-roto-follow"
+q = "make my roto shape follow a tracker"
+kind = "how"
+origin = "agent"
+context = "Fusion page"
+page = "compositor.md"
+heading = "Roto shapes that follow the object [Fork]"
+status = "covered"
+needs_clip = false
+facts = ["comp.roto.linkTracker"]
+
+[[question]]
+id = "comp-expression"
+q = "drive one node's setting from another with an expression"
+kind = "how"
+origin = "agent"
+context = "Fusion page"
+page = "compositor.md"
+heading = "Expressions: a setting worked out by a formula [Fork]"
+status = "covered"
+needs_clip = false
+facts = ["\"=\" field, node(...) references, time / frame"]
+
+[[question]]
+id = "comp-macro"
+q = "group nodes into a macro"
+kind = "how"
+origin = "agent"
+context = "Fusion page"
+page = "compositor.md"
+heading = "Grouping nodes into a macro [Fork] [Resolve-style]"
+status = "covered"
+needs_clip = false
+facts = ["select nodes, Group, expose controls"]
+
+[[question]]
+id = "comp-template"
+q = "save part of a comp to reuse in another comp"
+kind = "how"
+origin = "agent"
+context = "Fusion page"
+page = "compositor.md"
+heading = "Saving part of a comp as a template [Fork]"
+status = "covered"
+needs_clip = false
+facts = ["comp.template.save / insert"]

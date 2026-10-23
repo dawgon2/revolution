@@ -252,6 +252,13 @@ learned compositor nodes and branch nodes (parallel, layer, splitter / combiner,
 outside), where the older tunes mostly fall back to the built-in text. In tests 138 of 141 sample
 answers passed the check, at about 1.3 seconds each.
 
+A newer tune, **Revolution explainer, SmolLM2 360M tuned v4 (8-bit)** [Fork], also learned the HDR zone
+wheels, the colour warper, the 3D qualifier, the compositor's Tracker, Planar Tracker, Roto and Paint
+nodes, and node groups. In tests it passed as many of the older sample answers as v3 (138 of 141) and
+every one of the 21 new ones (v3: 18). Until it is published it is only on the computer it was built
+on: there it says "Built on this computer" in the **Model** list, and you pick it yourself; Revolution
+keeps choosing v3 automatically until v4 can be downloaded.
+
 On a slower computer, pick **Revolution explainer, SmolLM2 135M tuned (8-bit, fast)** in the
 **Model** list: it answers in about half the time (0.6 s instead of 1.3 s here) and passed nearly
 as many sample nodes (one fewer of 76). Revolution never picks it on its own: it is for when the

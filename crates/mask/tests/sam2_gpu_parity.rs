@@ -16,7 +16,7 @@ use std::sync::Arc;
 use common::sam2_gpu;
 use filmcraft_mask::RgbImage;
 use filmcraft_mask::sam2::cpu::Sam2Cpu;
-use filmcraft_mask::sam2::heads::{HeadPoint, Sam2Heads};
+use filmcraft_mask::sam2::heads::{HeadPoint, Pick, Sam2Heads};
 use filmcraft_mask::sam2::weights::Sam2Weights;
 use filmcraft_mask::sam2::{Sam2Compute, Sam2Config, Sam2Size, prepare_input, sine_position, tests_support};
 use filmcraft_mask::{Matte, Segment};
@@ -38,8 +38,10 @@ fn check(size: Sam2Size) {
             return;
         }
     };
+    let gpu = Arc::new(gpu);
     let cpu = Sam2Cpu::new(w.clone()).unwrap();
     let heads = Sam2Heads::new(w.clone()).unwrap();
+    let gheads = Sam2Heads::new(w.clone()).unwrap().with_decoder(gpu.clone());
     let (iw, ih) = (640, 360);
     let inside = |x: usize, y: usize| ((x as f32 - 320.0) / 70.0).powi(2) + ((y as f32 - 190.0) / 115.0).powi(2) <= 1.0;
     let rgb: Vec<u8> = (0..iw * ih)
@@ -78,7 +80,7 @@ fn check(size: Sam2Size) {
     // masks decoded from either side's features agree
     let click = [HeadPoint { x: 512.0, y: 540.0, label: 1 }];
     let seg = |f: &[(String, Vec<f32>)]| {
-        let o = heads.forward(&get(f, "feat"), &get(f, "s0"), &get(f, "s1"), &click, None, true, None).unwrap();
+        let o = heads.forward(&get(f, "feat"), &get(f, "s0"), &get(f, "s1"), &click, None, true, Pick::Best).unwrap();
         Segment { logits: o.mask, cover: (1.0, 1.0), score: o.iou }.matte(iw, ih).unwrap()
     };
     let (a, b) = (seg(&g), seg(&c));
@@ -86,6 +88,36 @@ fn check(size: Sam2Size) {
     assert!(iou >= 0.99, "mask IoU {iou}");
     let truth = Matte { width: iw, height: ih, alpha: (0..iw * ih).map(|i| if inside(i % iw, i / iw) { 255 } else { 0 }).collect() };
     eprintln!("{size:?}: mask IoU GPU vs CPU {iou:.4}, vs the ellipse {:.3}", a.iou(&truth).unwrap());
+
+    // the mask decoder on the GPU against the CPU's, on the GPU's features as a first frame
+    // sees them (+ no_mem_embed): 2e-4 of the largest logit / token value (absolute for IoUs).
+    // Same f32 rounding argument as `sam2_decoder_gpu.rs` (1e-4 there, measured 2e-6), with
+    // room for the real model's cancellation: a mask logit is a 32-term dot product of large
+    // terms (measured ≤ 4.7e-5 on Base+, AMD and Intel); 2e-4 of a ~25 peak logit is 0.005,
+    // which can only flip a pixel already on the 0 edge
+    let mut pix = get(&g, "feat");
+    let nm = heads.param("no_mem_embed").unwrap();
+    pix.chunks_mut(256).for_each(|r| r.iter_mut().zip(&nm).for_each(|(a, b)| *a += b));
+    let (s0, s1) = (get(&g, "s0"), get(&g, "s1"));
+    let prev = heads.decode_raw_cpu(&pix, &s0, &s1, &click, None).unwrap().masks[1].clone();
+    let boxed = [HeadPoint { x: 330.0, y: 150.0, label: 2 }, HeadPoint { x: 700.0, y: 930.0, label: 3 }, HeadPoint { x: 512.0, y: 540.0, label: 1 }];
+    let cases: [(&[HeadPoint], Option<&[f32]>); 3] = [(&click, None), (&boxed, None), (&click, Some(&prev))];
+    for (pts, m) in cases {
+        let a = gheads.decode_raw(&pix, &s0, &s1, pts, m).unwrap();
+        assert!(gheads.decoder_on_device(), "the GPU decoder failed");
+        let b = heads.decode_raw_cpu(&pix, &s0, &s1, pts, m).unwrap();
+        let masks = a.masks.iter().zip(&b.masks).map(|(x, y)| rel(x, y)).fold(0f32, f32::max);
+        let tokens = a.tokens.iter().zip(&b.tokens).map(|(x, y)| rel(x, y)).fold(0f32, f32::max);
+        let ious = a.ious.iter().zip(&b.ious).map(|(x, y)| (x - y).abs()).fold(0f32, f32::max);
+        let score = (a.object_score - b.object_score).abs() / b.object_score.abs().max(1.0);
+        let worst = masks.max(tokens).max(ious).max(score);
+        eprintln!(
+            "{size:?} decoder ({} points, mask prompt {}): masks {masks:.1e}, tokens {tokens:.1e}, IoUs {ious:.1e}, score {score:.1e}",
+            pts.len(),
+            m.is_some()
+        );
+        assert!(worst < 2e-4, "{size:?} decoder: {worst}");
+    }
 
     // hostile inputs are refused
     assert!(gpu.0.image(&input[1..]).is_err());

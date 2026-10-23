@@ -250,3 +250,41 @@ fn expressions_inside_a_group_read_the_group_first_then_the_parent() {
     // a name nobody has: the keyframed value (0)
     assert!(same(&run(&expr_chain("node(\"Nope\").blurriness", "Soft", true)), &rotated(0.0)));
 }
+
+/// LO.4: a Group whose inside is static is cached with its static inputs as one picture (same
+/// pixels as without the cache); a keyframe or Media In inside keeps it out.
+#[test]
+fn a_static_group_is_cached_with_its_inputs() {
+    use std::collections::BTreeSet;
+    let mut grouped = chain();
+    let g = group_nodes(&mut grouped, &[3, 4], "Soft move").unwrap();
+    let tops = static_tops(&grouped, &grouped.validate().unwrap());
+    // (the Output node reads only static nodes, so the whole graph is one cached picture)
+    assert!(tops.iter().any(|(_, sub)| sub.is_superset(&BTreeSet::from([2, g]))), "{tops:?}");
+    let cached = execute_cpu(&compile_cached(&grouped, ctx(), &NoSources).unwrap());
+    assert!(same(&cached, &run(&grouped)));
+    assert!(same(&cached, &run(&chain())));
+    // a keyframe inside: not static
+    let mut moving = grouped.clone();
+    if let Some(CompKind::Group { comp: inner, .. }) = moving.node_mut(g).map(|n| &mut n.kind)
+        && let Some(blur) = inner.node_mut(3)
+        && let Some(p) = blur.params.get_mut("blurriness")
+    {
+        p.keyframes.push(filmcraft_project::keyframe::Keyframe::new(Tick(0), ParamValue::Float(2.0)));
+        p.keyframes.push(filmcraft_project::keyframe::Keyframe::new(Tick(500), ParamValue::Float(9.0)));
+    }
+    assert!(static_tops(&moving, &moving.validate().unwrap()).iter().all(|(_, sub)| !sub.contains(&g)), "a keyframed inside isn't cached");
+    // footage inside: not static
+    let mut footage = chain();
+    footage.nodes.push(CompNode::new(7, CompKind::MediaIn { source: MediaInSource::Item { item: filmcraft_project::ItemId(3) }, offset: Tick::ZERO }));
+    footage.nodes.push(node(8, CompKind::Merge, &[]));
+    footage.edges = vec![
+        Edge::new(Port::new(2, 0), Port::new(3, 0)),
+        Edge::new(Port::new(3, 0), Port::new(8, 0)),
+        Edge::new(Port::new(7, 0), Port::new(8, 1)),
+        Edge::new(Port::new(8, 0), Port::new(4, 0)),
+        Edge::new(Port::new(4, 0), Port::new(1, 0)),
+    ];
+    let g = group_nodes(&mut footage, &[7, 8], "With footage").unwrap();
+    assert!(static_tops(&footage, &footage.validate().unwrap()).iter().all(|(t, s)| *t != g && !s.contains(&g)));
+}

@@ -254,6 +254,36 @@ pub fn inner_mut<'a>(c: &'a mut Comp, path: &[NodeId]) -> Result<&'a mut Comp, S
     Ok(cur)
 }
 
+/// A copy of `c` whose result is node `node` of the group at `path` (empty: of `c` itself) as it
+/// is evaluated in place (LO.4: what a Tracker or Roto node inside a group analyses): at each
+/// level along the path the comp's output is the next group (that group not bypassed), and the
+/// innermost level's output is `node`, so its Group Inputs read the group's inputs from the
+/// enclosing level and the groups' exposed parameters apply. The reason in plain words when the
+/// path or node leads nowhere.
+pub fn view_of(c: &Comp, path: &[NodeId], node: NodeId) -> Result<Comp, String> {
+    if !path.is_empty()
+        && let Some(e) = path_error(c, path)
+    {
+        return Err(e);
+    }
+    let mut view = c.clone();
+    let mut cur = &mut view;
+    for id in path {
+        cur.output = Some(*id);
+        let Some(n) = cur.node_mut(*id) else { return Err(format!("there is no node {id}")) };
+        n.bypass = false;
+        match &mut n.kind {
+            CompKind::Group { comp, .. } => cur = &mut **comp,
+            _ => return Err(format!("node {id} is not a group")),
+        }
+    }
+    if cur.node(node).is_none() {
+        return Err(format!("no node {node}"));
+    }
+    cur.output = Some(node);
+    Ok(view)
+}
+
 /// After an edit inside the group at `path`: connections into group inputs that no longer exist
 /// (a Group Input removed inside) are dropped at every level along the path.
 pub fn prune_group_inputs(c: &mut Comp, path: &[NodeId]) {

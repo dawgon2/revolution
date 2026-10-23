@@ -4,7 +4,7 @@
 //! cargo run --release -p filmcraft-render --example explain_score -- outputs.jsonl [more.jsonl ...]
 //!     [--summary summary.md] [--json summary.json] [--fails]
 //! cargo run --release -p filmcraft-render --example explain_score -- --dump-cases cases.jsonl
-//!     [--set 1|2|3|5|all] [--cases set4.jsonl] [--dedupe train.jsonl [--dedupe val.jsonl ...]]
+//!     [--set 1|2|3|5|6|all] [--cases set4.jsonl] [--dedupe train.jsonl [--dedupe val.jsonl ...]]
 //! ```
 //!
 //! `--dump-cases` writes the held-out cases as JSON lines `{label, facts, template}` (the input
@@ -12,7 +12,9 @@
 //! of [`eval_cases`], `2` the second set of [`eval_cases_v2`] (another frame and seed, labels
 //! `h2_…`), `3` the third ([`eval_cases_v3`], `h3_…`), `5` the branch set of
 //! [`branch_eval_cases`] (fork AI2: notes of parallel / layer / splitter / combiner / key-mixer /
-//! outside nodes, labels `b5_…`, checked with `check_branch_explanation`), `all` sets 1–3.
+//! outside nodes, labels `b5_…`, checked with `check_branch_explanation`), `6` G4's tools
+//! ([`eval_cases_v6`], fork AI2b: HDR zones, colour warper, 3D qualifier, `h6_…`), `all` sets 1–3
+//! and 6.
 //! `--cases <jsonl>` scores (or dedupes) a set dumped elsewhere instead, as lines `{label, facts,
 //! template, accept}` checked with `check_phrasings(accept, text)`: set 4, the comp lines
 //! (`filmcraft-engine`'s `comp_traindata --dump-cases`, labels `c4_…`). `--dedupe` reads training chat files (`explain_traindata`'s
@@ -37,7 +39,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::Write as _;
 
-use filmcraft_render::grade_explain::cases::{EvalCase, branch_eval_cases, eval_cases, eval_cases_v2, eval_cases_v3};
+use filmcraft_render::grade_explain::cases::{EvalCase, branch_eval_cases, eval_cases, eval_cases_v2, eval_cases_v3, eval_cases_v6};
 use filmcraft_render::grade_explain::{BranchFacts, FactMismatch, NodeFacts, check_branch_explanation, check_explanation_labeled, check_phrasings};
 
 /// The facts a held-out case is checked against.
@@ -134,14 +136,14 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
             "--json" => a.json = Some(it.next().ok_or("--json needs a path")?),
             "--fails" => a.fails = true,
             "--dump-cases" => a.dump = Some(it.next().ok_or("--dump-cases needs a path")?),
-            "--set" => a.set = it.next().ok_or("--set needs 1, 2, 3, 5 or all")?,
+            "--set" => a.set = it.next().ok_or("--set needs 1, 2, 3, 5, 6 or all")?,
             "--dedupe" => a.dedupe.push(it.next().ok_or("--dedupe needs a path")?),
             "--cases" => a.cases = Some(it.next().ok_or("--cases needs a path")?),
             _ => a.inputs.push(arg),
         }
     }
-    if !matches!(a.set.as_str(), "1" | "2" | "3" | "5" | "all") {
-        return Err(format!("--set {}: expected 1, 2, 3, 5 or all", a.set).into());
+    if !matches!(a.set.as_str(), "1" | "2" | "3" | "5" | "6" | "all") {
+        return Err(format!("--set {}: expected 1, 2, 3, 5, 6 or all", a.set).into());
     }
     if a.inputs.is_empty() && a.dump.is_none() {
         return Err("usage: explain_score <outputs.jsonl>... [--summary out.md] [--json out.json] [--fails]".into());
@@ -154,7 +156,8 @@ fn selected_cases(set: &str) -> Vec<Held> {
         "2" => eval_cases_v2(),
         "3" => eval_cases_v3(),
         "5" => Vec::new(),
-        "all" => eval_cases().into_iter().chain(eval_cases_v2()).chain(eval_cases_v3()).collect(),
+        "6" => eval_cases_v6(),
+        "all" => eval_cases().into_iter().chain(eval_cases_v2()).chain(eval_cases_v3()).chain(eval_cases_v6()).collect(),
         _ => eval_cases(),
     };
     let mut v: Vec<Held> = node.into_iter().map(node_held).collect();

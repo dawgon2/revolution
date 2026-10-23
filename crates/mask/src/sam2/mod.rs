@@ -14,8 +14,10 @@
 //!
 //! Parts 1, 2 and 4 are the heavy ones and sit behind [`Sam2Compute`] (the GPU passes in
 //! `filmcraft-gpu::sam2` implement it in the engine; [`cpu::Sam2Cpu`] is the CPU reference, used
-//! as the parity oracle and the fallback). Part 3 is small and runs on the CPU via candle
-//! ([`heads`]). [`tracker::Sam2Tracker`] is the video predictor's state machine.
+//! as the parity oracle and the fallback). Part 3's prompt encoder runs on the CPU via candle
+//! ([`heads`]); its mask decoder runs on the device when [`Sam2Compute::mask_decoder`] offers
+//! one (the GPU, fork LO.6), else on the CPU there too. [`tracker::Sam2Tracker`] is the video
+//! predictor's state machine.
 //!
 //! Ported from github.com/facebookresearch/sam2 (`sam2/modeling/**`, `sam2_video_predictor.py`),
 //! Copyright (c) Meta Platforms, Inc. and affiliates, Apache License 2.0 (see `NOTICE`). The
@@ -75,8 +77,55 @@ impl Sam2Features {
     }
 }
 
-/// The heavy parts of SAM 2 (image encoder, memory attention, memory encoder) on some device.
-/// Plain data in, plain data out (HWC), so a GPU implementation needs no candle.
+/// The mask decoder's inputs as plain data (HWC; see [`Sam2Compute::mask_decoder`]).
+#[derive(Clone, Copy, Debug)]
+pub struct DecoderInput<'a> {
+    /// The memory-conditioned image embedding, 4096 × 256.
+    pub pix: &'a [f32],
+    /// The high-resolution maps (see [`Sam2Features`]).
+    pub s0: &'a [f32],
+    pub s1: &'a [f32],
+    /// The transformer's input tokens, `t` × 256: the object-score token, the IoU token, the four
+    /// mask tokens, then the sparse prompt embeddings (points, box corners, the padding point).
+    pub tokens: &'a [f32],
+    /// The dense prompt embedding: 256 values (the same for every pixel: no mask prompt) or
+    /// 4096 × 256 (a mask prompt through `mask_downscaling`).
+    pub dense: &'a [f32],
+}
+
+/// The mask decoder's raw outputs (all four masks; `MaskDecoder.predict_masks`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecoderRaw {
+    /// Four 256 × 256 low-resolution mask logits.
+    pub masks: Vec<Vec<f32>>,
+    /// Their predicted IoUs (after the sigmoid).
+    pub ious: Vec<f32>,
+    /// The four mask tokens after the transformer (256 each; the object pointer's input).
+    pub tokens: Vec<Vec<f32>>,
+    pub object_score: f32,
+}
+
+impl DecoderRaw {
+    /// Refuses wrong counts / lengths and non-finite values (from a device that misbehaved).
+    pub fn check(&self) -> Result<(), MaskError> {
+        let ok = self.masks.len() == 4
+            && self.masks.iter().all(|m| m.len() == crate::LOW_RES * crate::LOW_RES)
+            && self.ious.len() == 4
+            && self.tokens.len() == 4
+            && self.tokens.iter().all(|t| t.len() == D_MODEL);
+        if !ok {
+            return Err(MaskError::Failed("the mask decoder gave outputs of the wrong size".into()));
+        }
+        if !self.object_score.is_finite() || self.masks.iter().chain(&self.tokens).flatten().chain(&self.ious).any(|v| !v.is_finite()) {
+            return Err(MaskError::Failed("the mask decoder produced non-finite values".into()));
+        }
+        Ok(())
+    }
+}
+
+/// The heavy parts of SAM 2 (image encoder, memory attention, memory encoder; optionally the
+/// mask decoder) on some device. Plain data in, plain data out (HWC), so a GPU implementation
+/// needs no candle.
 pub trait Sam2Compute: Send + Sync {
     /// For logs: where it runs.
     fn name(&self) -> String;
@@ -89,6 +138,11 @@ pub trait Sam2Compute: Send + Sync {
     /// Memory encoder: the embedding (`feat`, 4096 × 256) with the mask for memory
     /// (`mask`: 1024 × 1024, already `sigmoid · scale + bias`) → 4096 × 64 memory features.
     fn memory_encoder(&self, feat: &[f32], mask: &[f32]) -> Result<Vec<f32>, MaskError>;
+    /// The mask decoder (two-way transformer, upscaling, heads) on this device, when it has one
+    /// (`None`: the CPU decodes, see `heads::Sam2Heads::with_decoder`).
+    fn mask_decoder(&self, _input: &DecoderInput<'_>) -> Option<Result<DecoderRaw, MaskError>> {
+        None
+    }
 }
 
 /// The frame as SAM 2 sees it: squashed to 1024 × 1024 (SAM 2 does not keep the aspect ratio;

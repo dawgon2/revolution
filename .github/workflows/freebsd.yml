@@ -9,8 +9,7 @@ name: FreeBSD
 # dependency change: a drifted dependency still shows up within a day. PRs that change the
 # FreeBSD packaging itself still run it.
 on:
-  schedule:
-    - cron: "37 2 * * *"
+  # FORK-ONLY: no schedule here (owner 2026-10-22: GitHub paused the fork's workflows over inherited scheduled runs); run it by hand.
   pull_request:
     paths:
       - .github/workflows/freebsd.yml
@@ -27,6 +26,8 @@ permissions:
 
 jobs:
   freebsd:
+    # FORK-ONLY: runs only in the public repo; the private one has a small free Actions quota (2026-10-22)
+    if: github.repository == 'dawgon2/revolution'
     name: FreeBSD 14 (build + package)
     runs-on: ubuntu-latest
     timeout-minutes: 240

@@ -527,7 +527,7 @@ fn matte_of(n: &GradeNode, cx: &NodeCx) -> (Option<Arc<[ColorOp]>>, Vec<u32>, bo
     let Some(q) = n.qualifier_at(cx.t) else { return (None, Vec::new(), false, masks) };
     let sigma = q.blur * QUAL_MAX_BLUR * px_scale;
     let blur = if sigma >= 0.3 { crate::effects::gaussian_boxes(cx.w, cx.h, sigma, sigma).0 } else { Vec::new() };
-    (Some(Arc::from(vec![key_op(n, &q, cx.gs.is_hdr())])), blur, q.invert, masks)
+    (Some(Arc::from(vec![key_op(n, &q, cx.gs.is_hdr(), cx.t)])), blur, q.invert, masks)
 }
 
 /// A node's Magic Mask matte for this frame (fork G3; None: none, or an invalid one, which the

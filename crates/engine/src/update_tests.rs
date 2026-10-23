@@ -126,6 +126,26 @@ fn malformed_replies_are_errors_not_crashes() {
     assert_eq!(parse_releases(b"[]", &CH).unwrap(), vec![]);
 }
 
+/// LO.1: a release without this install's file (a tarball-only patch, a missing AppImage) is skipped
+/// and the newest release that has it is offered.
+#[test]
+fn newer_skips_releases_without_this_installs_file() {
+    let mut r = parse_releases(&list(), &CH).unwrap();
+    assert_eq!(r[0].tag, "fork-h264-3");
+    assert_eq!(r[1].tag, "fork-comp-1");
+    r[0].tarball = None;
+    let has_tarball = |x: &Release| x.tarball.is_some();
+    assert_eq!(newer_with(&r, &cur(Some("fork-yt-3"), None), has_tarball).map(|r| r.tag.as_str()), Some("fork-comp-1"));
+    assert_eq!(newer_with(&r, &cur(Some("fork-comp-1"), None), has_tarball), None);
+    // the running build is newer than every usable release → nothing
+    assert_eq!(newer_with(&r, &cur(Some("fork-h264-3"), None), has_tarball), None);
+    // a held build made between them → nothing older offered
+    assert_eq!(newer_with(&r, &cur(Some("fork-ai-3"), Some("2026-10-15T16:00:00Z")), has_tarball), None);
+    // nothing usable → nothing; without a filter the newest is still offered
+    assert_eq!(newer_with(&r, &cur(Some("fork-yt-3"), None), |_| false), None);
+    assert_eq!(newer(&r, &cur(Some("fork-yt-3"), None)).map(|r| r.tag.as_str()), Some("fork-h264-3"));
+}
+
 #[test]
 fn newer_compares_with_the_running_build() {
     let r = parse_releases(&list(), &CH).unwrap();

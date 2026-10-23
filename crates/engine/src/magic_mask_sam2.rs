@@ -4,7 +4,9 @@
 //! reference is far too slow for tracking, so without a usable GPU the track falls back to
 //! MobileSAM (unchanged). `Auto` is Better on a discrete GPU (owner question Q66).
 //!
-//! One model is kept loaded (weights on the GPU, the decoder's on the CPU; loading the other
+//! The mask decoder runs on the GPU too (fork LO.6), with its CPU copy as the fallback.
+//!
+//! One model is kept loaded (weights on the GPU, the decoder's also on the CPU; loading the other
 //! size replaces it), and released after [`IDLE_RELEASE`] when no track uses it; a track makes
 //! its own [`Sam2Tracker`] (the memory of that clip). A model whose GPU failed is forgotten
 //! ([`forget`]) so the next track loads it afresh.
@@ -21,8 +23,8 @@ use filmcraft_gpu::sam2::{GpuBlock, Sam2Gpu, Sam2GpuSpec, Weight};
 use filmcraft_mask::MaskError;
 use filmcraft_mask::sam2::heads::Sam2Heads;
 use filmcraft_mask::sam2::tracker::Sam2Tracker;
-use filmcraft_mask::sam2::weights::{HEAVY_PREFIXES, Sam2Weights};
-use filmcraft_mask::sam2::{Sam2Compute, Sam2Config, Sam2Features, Sam2Size};
+use filmcraft_mask::sam2::weights::{DECODER_PREFIXES, HEAVY_PREFIXES, Sam2Weights};
+use filmcraft_mask::sam2::{DecoderInput, DecoderRaw, Sam2Compute, Sam2Config, Sam2Features, Sam2Size};
 
 /// The GPU passes as the mask crate's [`Sam2Compute`].
 struct GpuCompute(Sam2Gpu);
@@ -51,6 +53,16 @@ impl Sam2Compute for GpuCompute {
 
     fn memory_encoder(&self, feat: &[f32], mask: &[f32]) -> Result<Vec<f32>, MaskError> {
         self.0.memory_encoder(feat, mask).map_err(failed)
+    }
+
+    fn mask_decoder(&self, i: &DecoderInput<'_>) -> Option<Result<DecoderRaw, MaskError>> {
+        let d = self.0.decoder()?;
+        Some(d.decode(i.pix, i.s0, i.s1, i.tokens, i.dense).map_err(failed).map(|o| DecoderRaw {
+            masks: o.masks.chunks(filmcraft_gpu::sam2::decoder::MASK_SIDE * filmcraft_gpu::sam2::decoder::MASK_SIDE).map(<[f32]>::to_vec).collect(),
+            ious: o.ious,
+            tokens: o.tokens.chunks(256).map(<[f32]>::to_vec).collect(),
+            object_score: o.score,
+        }))
     }
 }
 
@@ -188,7 +200,9 @@ pub(crate) fn load(size: Sam2Size, files: &(PathBuf, PathBuf)) -> Result<Arc<Sam
     let cfg = Sam2Config::from_yaml(&text)?;
     let mut w = Sam2Weights::load(&files.0, cfg)?;
     let spec = spec(&w)?;
-    let plain: HashMap<String, Weight> = w.plain_with(&HEAVY_PREFIXES)?.into_iter().map(|(k, t)| (k, Weight { shape: t.shape, data: t.data })).collect();
+    let mut prefixes = HEAVY_PREFIXES.to_vec();
+    prefixes.extend(DECODER_PREFIXES);
+    let plain: HashMap<String, Weight> = w.plain_with(&prefixes)?.into_iter().map(|(k, t)| (k, Weight { shape: t.shape, data: t.data })).collect();
     // the plain copy goes to the GPU; the candle one isn't needed (the CPU fallback is MobileSAM)
     w.release(&HEAVY_PREFIXES);
     let opened = catch_unwind(AssertUnwindSafe(|| Sam2Gpu::open(&spec, &plain).map_err(failed)));
@@ -199,7 +213,10 @@ pub(crate) fn load(size: Sam2Size, files: &(PathBuf, PathBuf)) -> Result<Arc<Sam
     };
     let w = Arc::new(w);
     let discrete = gpu.discrete();
-    let model = Arc::new(Sam2Model { compute: Arc::new(GpuCompute(gpu)), heads: Arc::new(Sam2Heads::new(w)?), size, discrete });
+    let has_decoder = gpu.decoder().is_some();
+    let compute: Arc<dyn Sam2Compute> = Arc::new(GpuCompute(gpu));
+    let heads = if has_decoder { Sam2Heads::new(w)?.with_decoder(compute.clone()) } else { Sam2Heads::new(w)? };
+    let model = Arc::new(Sam2Model { compute, heads: Arc::new(heads), size, discrete });
     log::info!("Magic Mask: {} loaded", model.name());
     *LOADED.lock().unwrap_or_else(PoisonError::into_inner) = Some(Loaded { size, path: files.0.clone(), model: model.clone(), used: Instant::now() });
     #[cfg(not(target_arch = "wasm32"))]

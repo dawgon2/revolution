@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use filmcraft_mask::sam2::cpu::Sam2Cpu;
-use filmcraft_mask::sam2::heads::{HeadPoint, Sam2Heads};
+use filmcraft_mask::sam2::heads::{HeadPoint, Pick, Sam2Heads};
 use filmcraft_mask::sam2::weights::Sam2Weights;
 use filmcraft_mask::sam2::{Sam2Compute, Sam2Config, Sam2Size, prepare_input, tests_support};
 use filmcraft_mask::{LOW_RES, RgbImage, Segment};
@@ -152,7 +152,7 @@ fn main() {
     // masks decoded from both
     let click = [HeadPoint { x: 512.0, y: 540.0, label: 1 }];
     let seg = |pix: &[f32], s0: &[f32], s1: &[f32]| {
-        let o = heads.forward(pix, s0, s1, &click, None, true, None).unwrap_or_else(|e| fail(e));
+        let o = heads.forward(pix, s0, s1, &click, None, true, Pick::Best).unwrap_or_else(|e| fail(e));
         Segment { logits: o.mask, cover: (1.0, 1.0), score: o.iou }
     };
     let mut cpix = cfeat.clone();
@@ -207,7 +207,7 @@ fn main() {
     let t = Instant::now();
     let reps = 5;
     for _ in 0..reps {
-        let _ = heads.forward(&cpix, &cs0, &cs1, &click, None, true, None);
+        let _ = heads.forward(&cpix, &cs0, &cs1, &click, None, true, Pick::Best);
     }
     println!("CPU decoder: {:.1} ms", t.elapsed().as_secs_f64() * 1e3 / reps as f64);
 }

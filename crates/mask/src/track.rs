@@ -427,7 +427,7 @@ pub fn follow(
         positives = spread_points(&vec![true; prev.len()], &depth, w, 1, 0.0).into_iter().map(|p| to_point(p, true)).collect();
     }
     let Some(b) = bounds(prev, w, h) else { return Ok(None) };
-    let first = Prompt { points: positives.clone(), rect: grown_box(b, o), prior: o.prior.then(|| track.prev.clone()) };
+    let first = Prompt { points: positives.clone(), rect: grown_box(b, o), prior: o.prior.then(|| track.prev.clone()), prefer_whole: false };
     let mut report = FollowReport { calls: 1, positives: positives.clone(), ..FollowReport::default() };
     let cands = model.candidates(embedding, &first, o.multimask && !positives.is_empty())?;
     // keep the candidate that best overlaps the previous mask (not the model's own score)
@@ -483,7 +483,7 @@ pub fn follow(
             let rect = bounds(&kept, w, h).and_then(|b| grown_box(b, &FollowOptions { grow: 0.05, grow_min: 0.005, ..*o }));
             let mut points = positives.clone();
             points.extend(negatives.iter().copied());
-            let second = Prompt { points, rect, prior: o.prior.then(|| track.prev.clone()) };
+            let second = Prompt { points, rect, prior: o.prior.then(|| track.prev.clone()), prefer_whole: false };
             report.calls = 2;
             report.negatives = negatives;
             if let Some(s2) = model.candidates(embedding, &second, false)?.into_iter().next() {

@@ -3658,3 +3658,186 @@
 	Send to	Envoyer vers
 	New Bus	Nouveau bus
 	Attenuation Limit	Limite d’atténuation
+
+# Compositor (fork C3 / C4), Magic Mask (G3) and grade (G4) strings (LO.4); written from the plain meaning of the English text.
+	Create linear gradient mask	Créer un masque en dégradé linéaire
+	Planar	Planaire
+	Stop planar tracking (keeps what was tracked)	Arrêter le suivi planaire (le suivi déjà fait est conservé)
+	✕ planar	✕ planaire
+	Enabled	Activé
+	New Comp Clip	Nouveau clip de composition
+	Comp	Composition
+	Select a comp clip to edit its nodes.	Sélectionnez un clip de composition pour modifier ses nœuds.
+	Media Out	Media Out
+	Operation	Opération
+	Smooth radius	Rayon de lissage
+	Set to playhead	Placer sur la tête de lecture
+	Clear track	Effacer le suivi
+	Add point	Ajouter un point
+	Plane corners	Coins du plan
+	Add shape	Ajouter une forme
+	Strokes	Traits
+	Reveal	Révéler
+	Erase	Effacer
+	Single frame	Image unique
+	Follow tracker	Suivre le traqueur
+	Missing tracker	Traqueur manquant
+	Magic Mask	Magic Mask
+	Add Magic Mask	Ajouter un Magic Mask
+	Remove Magic Mask	Retirer le Magic Mask
+	Remove the Magic Mask from this node	Retirer le Magic Mask de ce nœud
+	A whole person: the strokes pick which one	Une personne entière : les traits indiquent laquelle
+	Whatever the strokes cover	Tout ce que les traits recouvrent
+	Object	Objet
+	Person	Personne
+	Clean Black	Noir net
+	Clean White	Blanc net
+	Clear Frame	Effacer l'image
+	Remove the strokes drawn on this frame	Retirer les traits dessinés sur cette image
+	Remove every stroke of this mask	Retirer tous les traits de ce masque
+	click or drag on the Program picture · Esc ends	cliquez ou faites glisser sur l'image du programme · Échap termine
+	Click the subject in the Program picture, or drag a box round it (Alt-click: leave out)	Cliquez sur le sujet dans l'image du programme, ou tracez un cadre autour (Alt+clic : exclure)
+	Click what the mask should leave out	Cliquez sur ce que le masque doit exclure
+	Follow the subject both ways from the strokes	Suivre le sujet dans les deux sens à partir des traits
+	Follow the subject from the strokes towards the end of the clip	Suivre le sujet à partir des traits jusqu'à la fin du clip
+	Follow the subject from the strokes towards the start of the clip	Suivre le sujet à partir des traits jusqu'au début du clip
+	Grow / Shrink	Dilater / Contracter
+	Magic Mask finds the subject you mark with a few strokes and follows it through the shot, so this node only changes that.	Magic Mask repère le sujet que vous marquez avec quelques traits et le suit tout au long du plan ; ce nœud ne modifie donc que lui.
+	{n} strokes, {here} on this frame	{n} traits, {here} sur cette image
+	Show matte	Afficher le cache
+	Tint the tracked matte over the Program picture (frames not tracked yet show none)	Teinter le cache suivi sur l'image du programme (les images pas encore suivies n'en montrent aucun)
+	Stop tracking (the frames done so far are kept)	Arrêter le suivi (les images déjà traitées sont conservées)
+	Stroke +	Trait +
+	Stroke −	Trait −
+	The strokes changed while tracking: track again	Les traits ont changé pendant le suivi : relancez le suivi
+	Track	Suivre
+	Track Backward	Suivre vers l'arrière
+	Track Forward	Suivre vers l'avant
+	Tracked {frames} frames ({segmented} by the model, {reused} already done)	{frames} images suivies ({segmented} par le modèle, {reused} déjà faites)
+	Tracking… {done} of {frames} frames	Suivi… {done} sur {frames} images
+	Tracking failed	Échec du suivi
+	Tracking progress	Progression du suivi
+	Tracking stopped	Suivi arrêté
+	Waiting to track…	En attente du suivi…
+	Clear Magic Mask Strokes	Effacer les traits du Magic Mask
+	Magic Mask Stroke	Trait de Magic Mask
+	Refine Magic Mask	Affiner le Magic Mask
+	Track Magic Mask	Suivre le Magic Mask
+	Better	Meilleure
+	Faster	Plus rapide
+	Auto ({model})	Auto ({model})
+	Model: {model}	Modèle : {model}
+	Better on a discrete GPU when SAM 2.1 Large is installed, else MobileSAM	Meilleure qualité sur un GPU dédié si SAM 2.1 Large est installé, sinon MobileSAM
+	SAM 2.1 Large on the GPU: the most accurate, about 0.9 s a frame	SAM 2.1 Large sur le GPU : le plus précis, environ 0,9 s par image
+	SAM 2.1 Base+ on the GPU: a little less accurate, a little quicker	SAM 2.1 Base+ sur le GPU : un peu moins précis, un peu plus rapide
+	MobileSAM, frame by frame: quickest and needs no discrete GPU, but weaker when similar objects touch	MobileSAM, image par image : le plus rapide et sans GPU dédié, mais moins fiable quand des objets semblables se touchent
+	Render Voice Isolation	Calculer l'isolation de la voix
+	Bézier	Bézier
+	B-Spline	B-spline
+	Click to add control points. Click the first point (or press Enter) to close.	Cliquez pour ajouter des points de contrôle. Cliquez sur le premier point (ou appuyez sur Entrée) pour fermer.
+	Click to add points, drag to curve them. Click the first point (or press Enter) to close.	Cliquez pour ajouter des points, faites glisser pour les courber. Cliquez sur le premier point (ou appuyez sur Entrée) pour fermer.
+	Click to add region points around the flat area. Click the first point (or press Enter) to close.	Cliquez pour ajouter des points de région autour de la zone plane. Cliquez sur le premier point (ou appuyez sur Entrée) pour fermer.
+	Drag a point, its pattern box corner or its search box corner. Ctrl-click (Cmd-click) adds a point.	Faites glisser un point, un coin de sa zone de motif ou un coin de sa zone de recherche. Ctrl+clic (Cmd+clic) ajoute un point.
+	Drag points, handles or a shape. Alt-drag a point moves its shape; Alt-click makes it smooth or sharp.	Faites glisser des points, des poignées ou une forme. Alt+glisser un point déplace sa forme ; Alt+clic le rend lisse ou anguleux.
+	Drag the region's points, or the plane's four corners at the reference frame.	Faites glisser les points de la région, ou les quatre coins du plan sur l'image de référence.
+	Drag to paint; each drag is one stroke.	Faites glisser pour peindre ; chaque glissement forme un trait.
+	Drag to paint; each drag is one stroke. Alt-click picks where Clone copies from.	Faites glisser pour peindre ; chaque glissement forme un trait. Alt+clic choisit la source de copie du clone.
+	Draw region	Dessiner la région
+	Hardness	Dureté
+	This frame only	Cette image seulement
+	The tracker this shape follows has no usable motion at this frame, so the shape can't be edited here.	Le traqueur suivi par cette forme n'a aucun mouvement exploitable sur cette image ; la forme ne peut donc pas être modifiée ici.
+	Open Group	Ouvrir le groupe
+	Expose	Exposer
+	Exposed	Exposé
+	That node is not a group.	Ce nœud n'est pas un groupe.
+	No settings on this group yet: open it and expose an inner node's setting.	Ce groupe n'a pas encore de réglages : ouvrez-le et exposez un réglage d'un nœud interne.
+	Group Input	Entrée du groupe
+	Put on the group	Placer sur le groupe
+	This node has no settings that can be exposed.	Ce nœud n'a aucun réglage pouvant être exposé.
+	Expression	Expression
+	e.g. time * 10	p. ex. time * 10
+	Save Selection as Template…	Enregistrer la sélection comme modèle…
+	Insert Template	Insérer un modèle
+	Reading templates…	Lecture des modèles…
+	No saved templates	Aucun modèle enregistré
+	Delete Template…	Supprimer le modèle…
+	Delete Template	Supprimer le modèle
+	Inserted template “{name}” ({count} nodes)	Modèle « {name} » inséré ({count} nœuds)
+	{count} Media In node(s) that read a clip will be left out; templates can't hold your clips.	{count} nœud(s) Media In qui lisent un clip seront omis ; les modèles ne peuvent pas contenir vos clips.
+	Media Out is never saved in a template.	Media Out n'est jamais enregistré dans un modèle.
+	{count} selected node(s)	{count} nœud(s) sélectionné(s)
+	Replace a template with this name	Remplacer un modèle portant ce nom
+	Delete the template “{name}”? Comps that used it keep their nodes.	Supprimer le modèle « {name} » ? Les compositions qui l'ont utilisé conservent leurs nœuds.
+	Deleted template “{name}”	Modèle « {name} » supprimé
+	HDR zone wheels: exposure in stops from mid grey, per tonal zone	Roues de zones HDR : exposition en diaphragmes à partir du gris moyen, par zone tonale
+	Reset All	Tout réinitialiser
+	Reset every HDR wheel	Réinitialiser toutes les roues HDR
+	Where the zone ends, in stops from mid grey	Où la zone se termine, en diaphragmes à partir du gris moyen
+	How soft the zone's edge is, in stops	Douceur du bord de la zone, en diaphragmes
+	Exposure in stops	Exposition en diaphragmes
+	How much each zone acts at each brightness (stops from mid grey)	Effet de chaque zone selon la luminosité (diaphragmes à partir du gris moyen)
+hdr	Global	Global
+hdr	Black	Noir
+hdr	Dark	Sombre
+hdr	Shadow	Ombres
+hdr	Light	Lumières
+hdr	Highlight	Hautes lumières
+hdr	Specular	Spéculaire
+	Reset HDR Wheels	Réinitialiser les roues HDR
+	Warper	Déformateur
+	Hue-Sat	Teinte-Sat
+	Chroma-Luma	Chroma-Luma
+	Move colours round the hue circle and in or out in saturation	Déplacer les couleurs autour du cercle chromatique et vers l'intérieur ou l'extérieur en saturation
+	Change the saturation and brightness of colours by how saturated and bright they are	Modifier la saturation et la luminosité des couleurs selon leur saturation et leur luminosité actuelles
+	Remove the colour warper from this node	Retirer le déformateur de couleur de ce nœud
+	Remove Colour Warper	Retirer le déformateur de couleur
+	Colour warper	Déformateur de couleur
+	Point	Point
+	Pin	Épingler
+	A pinned point stays put when its neighbours move	Un point épinglé reste en place quand ses voisins bougent
+	Reset Point	Réinitialiser le point
+	Reset Mesh	Réinitialiser la grille
+	Sat	Sat
+	Falloff range	Plage d'atténuation
+	Preserve luma	Conserver la luma
+	Hue-Sat moves keep each colour's brightness	Les déplacements Teinte-Sat conservent la luminosité de chaque couleur
+	Hue columns	Colonnes de teinte
+	Saturation rings	Anneaux de saturation
+	Chroma columns	Colonnes de chroma
+	Luma rows	Rangées de luma
+	A new grid size starts this mesh afresh	Une nouvelle taille de grille recommence cette grille à zéro
+	Set Colour Warper	Régler le déformateur de couleur
+	Move Warper Point	Déplacer le point du déformateur
+	Pin Warper Point	Épingler le point du déformateur
+	Reset Colour Warper	Réinitialiser le déformateur de couleur
+	HSL	HSL
+	3D	3D
+	Select by hue, saturation and luminance ranges	Sélectionner par plages de teinte, de saturation et de luminance
+	Select the colours you paint strokes over in the Program picture	Sélectionner les couleurs sur lesquelles vous tracez des traits dans l'image du programme
+	Include	Inclure
+	Exclude	Exclure
+	Drag over colours in the Program picture to select them (Alt: exclude)	Faites glisser sur des couleurs de l'image du programme pour les sélectionner (Alt : exclure)
+	Drag over colours in the Program picture to leave them out	Faites glisser sur des couleurs de l'image du programme pour les exclure
+	drag over the Program picture · Esc cancels	faites glisser sur l'image du programme · Échap annule
+	colours picked	couleurs choisies
+	left out	exclues
+	Despill	Suppression de la dominante
+	Clear Include	Effacer l'inclusion
+	Clear Exclude	Effacer l'exclusion
+	Add 3D Qualifier Stroke	Ajouter un trait au qualificateur 3D
+	Set 3D Qualifier	Régler le qualificateur 3D
+	Clear 3D Qualifier	Effacer le qualificateur 3D
+	Pulls the picked colour's tint out of what the node corrects; use with Invert for green or blue screen spill	Retire la teinte de la couleur choisie de ce que le nœud corrige ; à utiliser avec Inverser pour la dominante d'un fond vert ou bleu
+	Include stroke	Trait d'inclusion
+	Exclude stroke	Trait d'exclusion
+	Track the mask as a plane (a sign, a screen, a wall), both ways from the playhead	Suivre le masque comme un plan (un panneau, un écran, un mur), dans les deux sens à partir de la tête de lecture
+	Clear the planar track (the mask stays where it is seen)	Effacer le suivi planaire (le masque reste là où on le voit)
+	Point {n}	Point {n}
+	Confidence	Fiabilité
+	not analysed here	non analysé ici
+	{now} here, lowest {low} %	{now} ici, minimum {low} %
+	not analysed yet	pas encore analysé
+	Top left	En haut à gauche
+	Top right	En haut à droite
+	Bottom right	En bas à droite
+	Bottom left	En bas à gauche

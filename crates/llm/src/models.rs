@@ -299,6 +299,22 @@ static CATALOGUE: &[ModelInfo] = &[
             SMOL_TOKENIZER,
         ],
     },
+    // fork AI2b: v3's data plus G4's grading tools and C3 / C4's comp nodes; a local file chosen in
+    // Settings until its release asset is uploaded (OWNER-QUESTIONS Q69), then first in
+    // TUNED_PREFERENCE
+    ModelInfo {
+        id: "filmcraft-explainer-smol360-v4b-q8",
+        name: "Revolution explainer, SmolLM2 360M tuned v4 (8-bit)",
+        family: Family::SmolLm2,
+        description: "SmolLM2-360M-Instruct (revision a10cc15) fine-tuned by the fork on everything v3 knows plus the HDR wheels, colour warper, 3D qualifier, trackers, roto, paint and node groups: 34 / 36, 39 / 40 and 13 / 13 held-out node cases, 32 / 32 comp lines, 20 / 20 branch notes, 13 / 13 new grading-tool cases and 8 / 8 new comp lines pass the fact checker. Local file until published.",
+        license: APACHE,
+        license_url: APACHE_URL,
+        author: "Hugging Face (base); Revolution fork (fine-tune)",
+        source: "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct",
+        weights: "smol360-v4b-q8_0.gguf",
+        tokenizer: "tokenizer.json",
+        files: &[local!("smol360-v4b-q8_0.gguf", "a138d2c9e0e86627137b2c86ce1d268d04338627b61c2eee4b2887168e95434f", 384636128), SMOL_TOKENIZER],
+    },
     // fork AI1.4: the "fast" option for slower PCs (about half the 360M tune's time per answer);
     // chosen in Settings, never automatically (not in TUNED_PREFERENCE)
     ModelInfo {
@@ -342,9 +358,10 @@ static CATALOGUE: &[ModelInfo] = &[
 pub const DEFAULT_MODEL: &str = "qwen2.5-0.5b-instruct-q4km";
 
 /// The fine-tuned explainers in order of preference (best first). [`automatic`] uses the first one
-/// installed. Fork AI2: `smol360-v3` first, the only tune trained on comp lines and branch notes
-/// (32 / 32 and 20 / 20 where v1 passes 6 and 2; one case short of v1 / v2 on held-out set 3:
-/// provisional, OWNER-QUESTIONS Q61); then AI1's qwen05-v1 (35 / 36) and smol360-v1 (34 / 36).
+/// installed (automatic choices download from the fork's releases). Fork AI2: `smol360-v3` first,
+/// the only published tune trained on comp lines and branch notes (32 / 32 and 20 / 20 where v1
+/// passes 6 and 2; Q61); then AI1's qwen05-v1 (35 / 36) and smol360-v1 (34 / 36). AI2b's
+/// `smol360-v4b` (local until its release asset is uploaded, OWNER-QUESTIONS Q69) goes first then.
 pub const TUNED_PREFERENCE: &[&str] = &["filmcraft-explainer-smol360-v3-q8", "filmcraft-explainer-qwen05-v1-q8", "filmcraft-explainer-smol360-v1-q8"];
 
 /// The model used when the user hasn't chosen one: the best fine-tuned explainer installed in
@@ -526,7 +543,7 @@ mod tests {
 
     #[test]
     fn catalogue_is_pinned_checksummed_and_licensed() {
-        assert_eq!(catalogue().len(), 9);
+        assert_eq!(catalogue().len(), 10);
         assert!(!find(DEFAULT_MODEL).is_some_and(ModelInfo::is_local), "the default must be downloadable");
         assert!(find(DEFAULT_MODEL).is_some());
         let mut ids = std::collections::HashSet::new();
@@ -571,9 +588,10 @@ mod tests {
     #[test]
     fn tuned_models_are_published_or_local_and_run_without_repeat_penalty() {
         let tuned: Vec<_> = catalogue().iter().filter(|m| m.is_tuned()).collect();
-        assert_eq!(tuned.len(), 4);
+        assert_eq!(tuned.len(), 5);
         for m in tuned {
-            // the automatic choices download from the fork's releases; only the "fast" tune is local
+            // the automatic choices download from the fork's releases; only the "fast" tune and
+            // AI2b's v4b (until uploaded, Q69) are local
             assert_eq!(m.is_local(), !TUNED_PREFERENCE.contains(&m.id), "{}", m.id);
             assert_eq!(m.recommended_options().repeat_penalty, 1.0);
             assert!(m.description.contains("fine-tuned"));

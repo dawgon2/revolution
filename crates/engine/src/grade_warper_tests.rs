@@ -140,3 +140,49 @@ fn failed_and_no_op_edits_leave_no_trace() {
     run(&mut s, "grade.warper.pin", json!({"node": n, "index": 3, "on": true})).unwrap();
     assert_eq!(undo(&s), pinned);
 }
+
+/// Fork LO.3: the warper's strength and range and the 3D qualifier's softness and despill
+/// keyframe like node parameters (`grade.toggleAnimation`, then `grade.warper.set` /
+/// `grade.qual3d.set` / `grade.setParam` at a time), one undo step per edit.
+#[test]
+fn warper_and_3d_qualifier_settings_keyframe() {
+    let (mut s, c, n) = demo();
+    run(&mut s, "grade.warper.movePoint", json!({"node": n, "index": 2, "to": [0.3, 0.25]})).unwrap();
+    run(&mut s, "grade.warper.set", json!({"node": n, "strength": 0.6})).unwrap();
+    run(&mut s, "grade.qual3d.set", json!({"node": n, "mode": "3d", "despill": 0.2})).unwrap();
+    let it = s.active_sequence().unwrap().find_item(c).unwrap().1.clone();
+    let (t0, t1) = (it.start, it.start + filmcraft_time::Tick(254_016_000_000 / 2));
+    let (m0, m1) = (it.effect_time_at(t0), it.effect_time_at(t1));
+    let node = |s: &Session| s.active_sequence().unwrap().find_item(c).unwrap().1.grade.clone().unwrap().node(n).unwrap().clone();
+    let undo = |s: &Session| s.history.undo.len();
+    // animating starts from the static value
+    let r = run(&mut s, "grade.toggleAnimation", json!({"node": n, "param": "warp.strength", "time": t0.0})).unwrap();
+    assert_eq!(r["animated"], true);
+    run(&mut s, "grade.toggleAnimation", json!({"node": n, "param": "q3d.despill", "time": t0.0})).unwrap();
+    assert!((node(&s).warper_at(m1).unwrap().strength - 0.6).abs() < 1e-6);
+    // the panel's slider (grade.warper.set) now writes a keyframe at the time: one undo step per drag
+    let before = undo(&s);
+    for v in [0.8, 0.9, 1.0] {
+        run(&mut s, "grade.warper.set", json!({"node": n, "strength": v, "time": t1.0, "merge": "drag-1"})).unwrap();
+    }
+    assert_eq!(undo(&s), before + 1);
+    run(&mut s, "grade.qual3d.set", json!({"node": n, "despill": 0.9, "time": t1.0})).unwrap();
+    let nd = node(&s);
+    assert!((nd.warper_at(m0).unwrap().strength - 0.6).abs() < 1e-6);
+    assert!((nd.warper_at(m1).unwrap().strength - 1.0).abs() < 1e-6);
+    assert!((nd.qual3d_active_at(m0).unwrap().despill - 0.2).abs() < 1e-6);
+    assert!((nd.qual3d_active_at(m1).unwrap().despill - 0.9).abs() < 1e-6);
+    // the static values are untouched
+    assert_eq!(nd.warper.as_ref().map(|w| w.strength), Some(0.6));
+    // grade.setParam reaches it too; a mixed set (strength + preserve luma) still works
+    run(&mut s, "grade.setParam", json!({"node": n, "param": "warp.strength", "value": 0.5, "time": t1.0})).unwrap();
+    assert!((node(&s).warper_at(m1).unwrap().strength - 0.5).abs() < 1e-6);
+    run(&mut s, "grade.warper.set", json!({"node": n, "strength": 0.4, "preserveLuma": true, "time": t1.0})).unwrap();
+    let nd = node(&s);
+    assert!((nd.warper_at(m1).unwrap().strength - 0.4).abs() < 1e-6);
+    assert!(nd.warper.as_ref().is_some_and(|w| w.preserve_luma));
+    // undo walks back
+    run(&mut s, "edit.undo", json!({})).unwrap();
+    run(&mut s, "edit.undo", json!({})).unwrap();
+    assert!((node(&s).warper_at(m1).unwrap().strength - 0.5).abs() < 1e-6);
+}

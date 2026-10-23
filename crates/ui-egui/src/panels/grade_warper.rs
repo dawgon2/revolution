@@ -7,7 +7,8 @@
 //! Automation ids: `grade.warper.mode.hueSat`, `grade.warper.mode.chromaLuma`,
 //! `grade.warper.plane`, `grade.warper.point.<index>` (each mesh point), `grade.warper.pin`,
 //! `grade.warper.resetPoint`, `grade.warper.resetMesh`, `grade.warper.remove`,
-//! `grade.warper.strength` / `grade.warper.range` (each with `.reset`),
+//! `grade.warper.strength` / `grade.warper.range` (each with `.reset` and `.anim`, the keyframe
+//! toggle: fork LO.3),
 //! `grade.warper.preserveLuma`, `grade.warper.cols`, `grade.warper.rows`.
 
 use egui::{Color32, Rect, Sense, Shape, Stroke, pos2, vec2};
@@ -102,6 +103,7 @@ fn nearest(mode: WarpMode, mesh: &WarpMesh, r: Rect, p: egui::Pos2) -> Option<u3
 pub(crate) fn controls(
     ui: &mut egui::Ui,
     node: &GradeNode,
+    mt: filmcraft_time::Tick,
     t: &crate::theme::Tokens,
     gest: u64,
     cmds: &mut Vec<(&'static str, Value)>,
@@ -285,15 +287,20 @@ pub(crate) fn controls(
     // strength, range, luma
     let merge = |k: &str| format!("warper:{}:{k}#{gest}", node.id);
     let def = Warper::default();
-    for (k, label, value, max, id, reset_id, reset_to) in [
-        ("strength", tl!("Strength"), w.strength, 1.0, "grade.warper.strength", "grade.warper.strength.reset", def.strength),
-        ("range", tl!("Falloff range"), w.range, MAX_RANGE, "grade.warper.range", "grade.warper.range.reset", def.range),
+    // (each keyframes like a node parameter, `warp.<key>`, once the node has a warper: fork LO.3)
+    for (k, param, label, value, max, id, reset_id, reset_to) in [
+        ("strength", "warp.strength", tl!("Strength"), w.effective_strength(), 1.0, "grade.warper.strength", "grade.warper.strength.reset", def.strength),
+        ("range", "warp.range", tl!("Falloff range"), w.effective_range(), MAX_RANGE, "grade.warper.range", "grade.warper.range.reset", def.range),
     ] {
-        let row = FloatRow { label, value, min: 0.0, max, step: 0.0, suffix: "", enabled: true, animated: None, id, reset_id, anim_id: "" };
+        let anim_id = if k == "strength" { "grade.warper.strength.anim" } else { "grade.warper.range.anim" };
+        let animated = node.warper.is_some().then(|| node.param(param).is_some_and(|p| p.is_animated()));
+        let value = node.keyed_at(param, value, mt);
+        let row = FloatRow { label, value, min: 0.0, max, step: 0.0, suffix: "", enabled: true, animated, id, reset_id, anim_id };
         match float_row(ui, t, row, autos) {
             Some(RowEdit::Set(x)) => cmds.push(("grade.warper.set", with(json!({k: x, "merge": merge(k)})))),
             Some(RowEdit::Reset) => cmds.push(("grade.warper.set", with(json!({k: reset_to})))),
-            Some(RowEdit::ToggleAnimation) | None => {}
+            Some(RowEdit::ToggleAnimation) => cmds.push(("grade.toggleAnimation", with(json!({"param": param})))),
+            None => {}
         }
     }
     let mut keep = w.preserve_luma;

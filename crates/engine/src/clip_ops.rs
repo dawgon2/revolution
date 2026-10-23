@@ -473,13 +473,29 @@ impl SourceView {
 /// steps to its real previous / next frame (Y2); a sequence, an interpreted clip or a constant-rate
 /// one steps on `v.rate`'s grid. `from` itself when there is no usable spacing.
 pub fn source_step(s: &Session, v: &SourceView, from: Tick, frames: i64) -> Tick {
-    use filmcraft_media::timing::{FrameClock, FrameTimes};
-    let vfr = s.project.item(v.media).and_then(|i| i.as_media()).and_then(|m| m.vfr()).is_some();
-    let clock = vfr.then(|| s.source(v.media)).flatten().map(|src| src.frame_clock()).unwrap_or(FrameClock::Grid(v.rate));
+    use filmcraft_media::timing::FrameTimes;
+    let clock = source_clock(s, v);
     if !clock.usable() {
         return from;
     }
     clock.tick_of(clock.frame_at(from).saturating_add(frames))
+}
+
+/// The Source view's frame clock: a variable-frame-rate clip's own frame times (Y2), else
+/// `v.rate`'s grid.
+fn source_clock(s: &Session, v: &SourceView) -> filmcraft_media::timing::FrameClock {
+    let vfr = s.project.item(v.media).and_then(|i| i.as_media()).and_then(|m| m.vfr()).is_some();
+    vfr.then(|| s.source(v.media)).flatten().map(|src| src.frame_clock()).unwrap_or(filmcraft_media::timing::FrameClock::Grid(v.rate))
+}
+
+/// The start of the Source view's last frame (End, and Go to Out without an Out point): the
+/// frame showing just before `v.end` on the clip's own clock, so a variable-frame-rate clip lands
+/// on its real last frame (LO.7), not one typical frame before the end. Never before `v.start`.
+pub fn source_last_frame(s: &Session, v: &SourceView) -> Tick {
+    use filmcraft_media::timing::FrameTimes;
+    let clock = source_clock(s, v);
+    let t = if clock.usable() { clock.tick_of(clock.frame_at(Tick(v.end.0.saturating_sub(1)))) } else { v.end - v.rate.frame_duration() };
+    t.min(v.end).max(v.start)
 }
 
 /// The Source monitor view of `item` (see [`SourceView`]).

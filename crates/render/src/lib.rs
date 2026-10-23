@@ -857,10 +857,26 @@ pub fn render_comp_node_at(
     size: (usize, usize),
     sources: &dyn SourceProvider,
 ) -> Option<Image> {
+    render_comp_group_node_at(project, comp, &[], node, clip, t, size, sources)
+}
+
+/// [`render_comp_node_at`] of node `node` inside the group at `group` (a group path, outer group
+/// first, at most [`filmcraft_project::comp::MAX_GROUP_DEPTH`]; empty: the comp's own nodes),
+/// evaluated in place (LO.4): its Group Inputs read the group node's inputs from the enclosing
+/// level, the groups' exposed parameters apply. `None` when the path or node leads nowhere.
+#[allow(clippy::too_many_arguments)]
+pub fn render_comp_group_node_at(
+    project: &Project,
+    comp: ItemId,
+    group: &[filmcraft_project::dag::NodeId],
+    node: filmcraft_project::dag::NodeId,
+    clip: Option<(ItemId, filmcraft_project::ClipId)>,
+    t: Tick,
+    size: (usize, usize),
+    sources: &dyn SourceProvider,
+) -> Option<Image> {
     let ItemKind::Comp(c) = &project.item(comp)?.kind else { return None };
-    c.node(node)?;
-    let mut view = (**c).clone();
-    view.output = Some(node);
+    let view = filmcraft_project::comp::group::view_of(c, group, node).ok()?;
     let size = (size.0.max(1), size.1.max(1));
     let want = (size.0 as f32 / c.width.max(1) as f32).clamp(1.0 / 64.0, 1.0);
     let opts = RenderOptions { scale: want, ..Default::default() };

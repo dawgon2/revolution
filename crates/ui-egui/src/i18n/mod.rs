@@ -972,8 +972,11 @@ mod tests {
         let items = both_workflows_menu_items();
         let known = |text: &str| crate::menus::MENUS.contains(&text) || items.iter().any(|it| it.label == text || it.path.iter().any(|p| p == text));
         let (entries, _) = catalog::parse_entries(include_str!("de.tsv"));
-        for (_, en, _) in entries {
-            assert!(known(&en) || en == "Settings", "not a menu label: {en}");
+        // beyond the menus, German also covers the compositor and grade strings (LO.4); each must
+        // have a Spanish counterpart so a renamed source can't leave a dead entry
+        let (spanish, _) = catalog::parse_entries(include_str!("es.tsv"));
+        for (ctx, en, _) in entries {
+            assert!(known(&en) || en == "Settings" || spanish.iter().any(|(c, e, _)| *c == ctx && *e == en), "not a menu label or Spanish-backed string: {en}");
         }
         let (portuguese, _) = catalog::parse_entries(include_str!("pt-br.tsv"));
         for (_, en, _) in portuguese {
@@ -994,8 +997,9 @@ mod tests {
     fn french_covers_the_menus_and_has_no_dead_entries() {
         let (entries, errors) = catalog::parse_entries(include_str!("fr.tsv"));
         assert!(errors.is_empty(), "{errors:?}");
+        let (spanish, _) = catalog::parse_entries(include_str!("es.tsv"));
         for (ctx, en, _) in &entries {
-            assert!(ctx.is_empty() && (Language::Es.has(en) || en == "Settings"), "French entry without a Spanish one: {ctx:?} {en:?}");
+            assert!(en == "Settings" || spanish.iter().any(|(c, e, _)| c == ctx && e == en), "French entry without a Spanish one: {ctx:?} {en:?}");
         }
         let (portuguese, _) = catalog::parse_entries(include_str!("pt-br.tsv"));
         for (_, en, _) in portuguese {

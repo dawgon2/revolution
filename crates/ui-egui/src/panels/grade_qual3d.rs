@@ -5,7 +5,8 @@
 //! matte blur) stay on the Qualifier tab as for the HSL key.
 //!
 //! Automation ids: `grade.qual3d.mode.hsl`, `grade.qual3d.mode.3d`, `grade.qual3d.include`,
-//! `grade.qual3d.exclude`, `grade.qual3d.softness` / `grade.qual3d.despill` (each with `.reset`),
+//! `grade.qual3d.exclude`, `grade.qual3d.softness` / `grade.qual3d.despill` (each with `.reset` and
+//! `.anim`, the keyframe toggle: fork LO.3),
 //! `grade.qual3d.clear.include`, `grade.qual3d.clear.exclude`, `grade.qual3d.clear`.
 
 use egui::{Color32, Rect, Stroke};
@@ -51,6 +52,7 @@ pub(crate) fn mode_row(
 pub(crate) fn controls(
     ui: &mut egui::Ui,
     node: &GradeNode,
+    mt: filmcraft_time::Tick,
     t: &crate::theme::Tokens,
     gest: u64,
     armed: Option<bool>,
@@ -80,20 +82,33 @@ pub(crate) fn controls(
     });
     ui.label(egui::RichText::new(format!("{} {} · {} {}", k.include.len(), tl!("colours picked"), k.exclude.len(), tl!("left out"))).color(t.text_dim));
     let merge = |key: &str| format!("qual3d:{}:{key}#{gest}", node.id);
+    // (each keyframes like a node parameter, `q3d.<key>`: fork LO.3)
     for (key, label, value, lo, hi, id, reset_id, reset_to) in [
         (
             "softness",
             tl!("Softness"),
-            k.effective_softness(),
+            node.keyed_at("q3d.softness", k.effective_softness(), mt),
             *SOFTNESS.start(),
             *SOFTNESS.end(),
             "grade.qual3d.softness",
             "grade.qual3d.softness.reset",
             DEFAULT_SOFTNESS,
         ),
-        ("despill", tl!("Despill"), k.effective_despill(), 0.0, 1.0, "grade.qual3d.despill", "grade.qual3d.despill.reset", 0.0),
+        (
+            "despill",
+            tl!("Despill"),
+            node.keyed_at("q3d.despill", k.effective_despill(), mt),
+            0.0,
+            1.0,
+            "grade.qual3d.despill",
+            "grade.qual3d.despill.reset",
+            0.0,
+        ),
     ] {
-        let row = FloatRow { label, value, min: lo, max: hi, step: 0.0, suffix: "", enabled: true, animated: None, id, reset_id, anim_id: "" };
+        let param = if key == "softness" { "q3d.softness" } else { "q3d.despill" };
+        let anim_id = if key == "softness" { "grade.qual3d.softness.anim" } else { "grade.qual3d.despill.anim" };
+        let animated = Some(node.param(param).is_some_and(|p| p.is_animated()));
+        let row = FloatRow { label, value, min: lo, max: hi, step: 0.0, suffix: "", enabled: true, animated, id, reset_id, anim_id };
         let edit = float_row(ui, t, row, autos);
         if key == "despill"
             && let Some((_, r, _)) = autos.iter().find(|(a, ..)| a == id)
@@ -104,7 +119,8 @@ pub(crate) fn controls(
         match edit {
             Some(RowEdit::Set(x)) => cmds.push(("grade.qual3d.set", with(json!({key: x, "merge": merge(key)})))),
             Some(RowEdit::Reset) => cmds.push(("grade.qual3d.set", with(json!({key: reset_to})))),
-            Some(RowEdit::ToggleAnimation) | None => {}
+            Some(RowEdit::ToggleAnimation) => cmds.push(("grade.toggleAnimation", with(json!({"param": param})))),
+            None => {}
         }
     }
     ui.horizontal(|ui| {
@@ -142,6 +158,63 @@ pub(crate) fn tool_state(app: &mut FilmcraftApp, clip: ClipId, node: &GradeNode,
         Some(exclude) => set_tool(app, Some(Qual3dTool { clip: clip.0, node: node.id, exclude })),
         None if tab != "qualifier" || armed.is_none() || node.qual3d_active().is_none() => app.ui.qual3d_tool = None,
         None => {}
+    }
+}
+
+/// Where the Qualifier tab in 3D mode marks its clip and node for [`monitor_overlay`] (egui temp
+/// data, set by the panel each frame it shows them, taken by the overlay).
+fn shown_id() -> egui::Id {
+    egui::Id::new("qual3d-paths-shown")
+}
+
+/// The Qualifier tab shows node `node` of `clip` in 3D mode this frame: its strokes are drawn on
+/// the Program picture (fork LO.3).
+pub(crate) fn mark_shown(ctx: &egui::Context, clip: ClipId, node: u64) {
+    ctx.data_mut(|d| d.insert_temp(shown_id(), (clip.0, node)));
+}
+
+/// The stored strokes of the 3D qualifier on the Program picture (fork LO.3), while the stroke
+/// tool is armed or the Qualifier tab shows the node in 3D mode (that tab's mark from this or the
+/// last frame, so panel order doesn't matter): include strokes as solid green lines, exclude
+/// strokes as dashed red ones (a one-spot stroke: a dot, a ring for exclude). Automation ids
+/// `program.qual3d.stroke.<n>` (oldest first).
+pub(crate) fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect) {
+    let shown: Option<(u64, u64)> = ui.ctx().data_mut(|d| d.remove_temp(shown_id()));
+    let Some((clip, node)) = app.ui.qual3d_tool.map(|t| (t.clip, t.node)).or(shown) else { return };
+    if !app.session.state.selection.iter().any(|c| c.0 == clip) || pic.width() <= 0.0 || pic.height() <= 0.0 {
+        return;
+    }
+    let Some(seq) = app.session.active_sequence() else { return };
+    let Some((_, it)) = seq.find_item(ClipId(clip)) else { return };
+    let Some(k) = it.grade.as_ref().and_then(|g| g.node(node)).and_then(|n| n.qual3d_active()) else { return };
+    let at = |q: &[f32; 2]| egui::pos2(pic.min.x + q[0] * pic.width(), pic.min.y + q[1] * pic.height());
+    let (plus, minus) = (Color32::from_rgb(0x50, 0xe0, 0x70), Color32::from_rgb(0xf0, 0x60, 0x50));
+    let mut hits: Vec<(String, Rect, &'static str)> = Vec::new();
+    let p = ui.painter();
+    for (i, s) in k.paths.iter().enumerate() {
+        let pts: Vec<egui::Pos2> = s.pts.iter().map(at).collect();
+        let Some(first) = pts.first().copied() else { continue };
+        let col = if s.exclude { minus } else { plus };
+        // (a dark outline under each so it reads on any picture)
+        if pts.len() > 1 {
+            p.add(egui::Shape::line(pts.clone(), Stroke::new(4.0, Color32::from_black_alpha(160))));
+            if s.exclude {
+                p.extend(egui::Shape::dashed_line(&pts, Stroke::new(2.0, col), 6.0, 4.0));
+            } else {
+                p.add(egui::Shape::line(pts.clone(), Stroke::new(2.0, col)));
+            }
+        } else if s.exclude {
+            p.circle_stroke(first, 4.0, Stroke::new(4.0, Color32::from_black_alpha(160)));
+            p.circle_stroke(first, 4.0, Stroke::new(2.0, col));
+        } else {
+            p.circle_filled(first, 4.0, col);
+            p.circle_stroke(first, 4.0, Stroke::new(1.0, Color32::BLACK));
+        }
+        let r = Rect::from_points(&pts).expand(5.0);
+        hits.push((format!("program.qual3d.stroke.{i}"), r, if s.exclude { tl!("Exclude stroke") } else { tl!("Include stroke") }));
+    }
+    for (id, r, label) in hits {
+        app.auto.add(&id, r, label);
     }
 }
 

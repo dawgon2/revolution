@@ -60,7 +60,12 @@ fn main() {
     let worst = feats.iter().zip(&cpu).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
     println!("embedding max abs diff {worst:.3e}");
 
-    let p = Prompt { points: vec![Point { x: 0.5, y: 0.52, positive: true }], rect: Some(Rect { x0: 0.38, y0: 0.2, x1: 0.62, y1: 0.82 }), prior: None };
+    let p = Prompt {
+        points: vec![Point { x: 0.5, y: 0.52, positive: true }],
+        rect: Some(Rect { x0: 0.38, y0: 0.2, x1: 0.62, y1: 0.82 }),
+        prior: None,
+        prefer_whole: false,
+    };
     let e_gpu = sam.embedding_from_features(feats, w, h, fitted).unwrap_or_else(|e| fail(e));
     let e_cpu = sam.embedding_from_features(cpu, w, h, fitted).unwrap_or_else(|e| fail(e));
     let a = sam.segment(&e_gpu, &p).and_then(|s| s.matte(w, h)).unwrap_or_else(|e| fail(e));

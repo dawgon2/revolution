@@ -337,6 +337,34 @@ fn inspector_expression_field() {
     assert_eq!(expression(&mut d), json!("50 + 5"), "a refused expression stores nothing");
 }
 
+/// LO.4: a Color node's grade numbers and a Text node's layer settings show the "=" expression
+/// toggle too; a stored grade expression opens its field and the row shows its value.
+#[test]
+fn inspector_expression_rows_for_color_and_text_nodes() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().expect("the panel's comp");
+    let color = d.exec("comp.addNode", json!({"comp": comp, "kind": "color", "pos": [-200, 0]}))["node"].as_u64().unwrap();
+    let text = d.exec("comp.addNode", json!({"comp": comp, "kind": "text", "pos": [-200, 120]}))["node"].as_u64().unwrap();
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [text]}}}}));
+    d.frames(3);
+    assert!(d.has("comp.inspector.size.expr.toggle"), "a text layer number");
+    assert!(!d.has("comp.inspector.text.expr.toggle"), "the source text takes none");
+    d.exec("comp.setExpression", json!({"comp": comp, "node": color, "param": "saturation", "expression": "0.25"}));
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [color]}}}}));
+    d.frames(3);
+    assert!(d.has("comp.inspector.contrast.expr.toggle"), "a grade number");
+    assert!(d.has("comp.inspector.saturation.expr"), "a stored expression shows its field");
+    let row = d.ok("ui.elements", json!({"prefix": "comp.param.saturation"}));
+    assert!(
+        row.as_array().unwrap().iter().any(|e| e["id"] == json!("comp.param.saturation") && e["label"].as_str().is_some_and(|l| l.starts_with("0.25"))),
+        "{row}"
+    );
+}
+
 #[test]
 fn compositor_panel_premiere() {
     compositor_round_trip(Workflow::Premiere);
@@ -487,7 +515,7 @@ fn compositing_workspace_and_fusion_page() {
 }
 
 /// C4.8 review: an undo that removes the open group drops the selection of its inner nodes, so
-/// Delete can't remove the same-numbered node of the comp's own level; tracking is off inside.
+/// Delete can't remove the same-numbered node of the comp's own level; Analyse is on inside (LO.4).
 #[test]
 fn undoing_the_open_group_drops_the_inner_selection() {
     let mut d = Driver::demo(Workflow::Premiere);
@@ -505,9 +533,9 @@ fn undoing_the_open_group_drops_the_inner_selection() {
     let g = d.exec("comp.group", json!({"comp": comp, "nodes": [blur, tracker]}))["node"].as_u64().unwrap();
     d.ok("ui.set", json!({"panels": {"comp": {"path": [g], "canvas": {"selection": [tracker]}}}}));
     d.frames(3);
-    // the tracker inside the group: Analyse is there but off
+    // LO.4: the tracker inside the group can be analysed (its picture as evaluated in place)
     let el = d.ok("ui.elements", json!({"prefix": "comp.track.analyse.forward"}));
-    assert!(el[0]["label"].as_str().unwrap().contains("own nodes only"), "{el}");
+    assert_eq!(el[0]["label"], json!("Analyse forward"), "{el}");
     d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [blur]}}}}));
     d.frames(3);
     let before = d.exec("comp.get", json!({"comp": comp}));
@@ -524,4 +552,93 @@ fn undoing_the_open_group_drops_the_inner_selection() {
     d.frames(3);
     assert_eq!(d.exec("comp.get", json!({"comp": comp})), flat, "the comp's own nodes are unchanged");
     assert!(flat["nodes"].as_array().unwrap().iter().any(|n| n["id"] == json!(blur)));
+}
+
+/// LO.4: Analyse forward on a Tracker inside an open group starts the analysis there (the
+/// engine tests check what it tracks).
+#[test]
+fn analyse_runs_inside_a_group() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().unwrap();
+    // (small and a few frames long, so the analysis ends soon)
+    d.exec("comp.setSize", json!({"comp": comp, "width": 160, "height": 90, "duration": 254_016_000_000i64 / 8}));
+    let grad = d.exec("comp.addNode", json!({"comp": comp, "kind": "gradient", "pos": [0, 0]}))["node"].as_u64().unwrap();
+    let tracker = d.exec("comp.addNode", json!({"comp": comp, "kind": "tracker", "pos": [200, 120]}))["node"].as_u64().unwrap();
+    d.exec("comp.connect", json!({"comp": comp, "from": grad, "to": tracker}));
+    d.exec("comp.connect", json!({"comp": comp, "from": tracker, "to": 1}));
+    let g = d.exec("comp.group", json!({"comp": comp, "nodes": [tracker]}))["node"].as_u64().unwrap();
+    d.exec("comp.track.setPoints", json!({"comp": comp, "group": [g], "node": tracker, "points": [{"at": [80, 45]}]}));
+    d.ok("ui.set", json!({"panels": {"comp": {"path": [g], "canvas": {"selection": [tracker]}}}}));
+    d.frames(3);
+    let el = d.ok("ui.elements", json!({"prefix": "comp.track.analyse.forward"}));
+    assert_eq!(el[0]["label"], json!("Analyse forward"), "{el}");
+    // (the Inspector scrolled so the button is on screen)
+    let (x, y) = (el[0]["rect"][0].as_f64().unwrap() + 20.0, 940.0);
+    d.ok("ui.scroll", json!({"x": x, "y": y, "dx": 0.0, "dy": -400.0}));
+    d.frames(3);
+    let el = d.ok("ui.elements", json!({"prefix": "comp.track.analyse.forward"}));
+    assert!(el[0]["rect"][1].as_f64().unwrap() < 940.0, "{el}");
+    d.ok("ui.click", json!({"id": "comp.track.analyse.forward"}));
+    d.frames(3);
+    let jobs = d.exec("jobs.list", json!({}));
+    assert!(jobs.as_array().unwrap().iter().any(|j| j["label"].as_str().unwrap_or("").starts_with("Analyse Tracker")), "{jobs} {el}");
+    // (a clock deadline, not a frame count, for the background job)
+    let start = std::time::Instant::now();
+    let running = |j: &Value| j["label"].as_str().unwrap_or("").starts_with("Analyse Tracker") && j["finished"] != json!(true);
+    loop {
+        let jobs = d.exec("jobs.list", json!({}));
+        if !jobs.as_array().unwrap().iter().any(running) {
+            break;
+        }
+        assert!(start.elapsed().as_secs() < 60, "the analysis never ended: {jobs}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        d.frames(1);
+    }
+    d.frames(3);
+}
+
+/// LO.5: the Tracker's Inspector has a Confidence row (the values and the bar strip are
+/// unit-tested in `panels::comp::confidence_tests`).
+#[test]
+fn tracker_inspector_shows_the_confidence() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().unwrap();
+    let tracker = d.exec("comp.addNode", json!({"comp": comp, "kind": "tracker", "pos": [200, 120]}))["node"].as_u64().unwrap();
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [tracker]}}}}));
+    d.frames(3);
+    let el = d.ok("ui.elements", json!({"prefix": "comp.track.confidence"}));
+    assert_eq!(el.as_array().map_or(0, Vec::len), 1, "{el}");
+    assert_eq!(el[0]["label"], json!("Confidence"));
+}
+
+/// LO.5: with Corner Pin and four or more points, the Tracker's Inspector offers a point for each
+/// corner (Top left … Bottom left); fewer points or another operation: none.
+#[test]
+fn tracker_inspector_offers_the_corner_pin_points() {
+    let mut d = Driver::demo(Workflow::Premiere);
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "comp.newClip"}));
+    d.frames(3);
+    let comp = d.ok("ui.inspect", json!({}))["ui"]["panels"]["comp"]["comp"].as_u64().unwrap();
+    let tracker = d.exec("comp.addNode", json!({"comp": comp, "kind": "tracker", "pos": [200, 120]}))["node"].as_u64().unwrap();
+    let pts: Vec<_> = (0..5).map(|i| json!({"name": format!("P{i}"), "at": [10 + 10 * i, 20]})).collect();
+    d.exec("comp.track.setPoints", json!({"comp": comp, "node": tracker, "points": pts}));
+    d.ok("ui.set", json!({"panels": {"comp": {"canvas": {"selection": [tracker]}}}}));
+    d.frames(3);
+    let corners = |d: &mut Driver| d.ok("ui.elements", json!({"prefix": "comp.track.corner."})).as_array().map_or(0, Vec::len);
+    assert_eq!(corners(&mut d), 0, "match move: no corner rows");
+    d.exec("comp.track.setOptions", json!({"comp": comp, "node": tracker, "operation": "cornerPin", "cornerPoints": [4, 1, 2, 0]}));
+    d.frames(3);
+    assert_eq!(corners(&mut d), 4);
+    let el = d.ok("ui.elements", json!({"prefix": "comp.track.corner.topLeft"}));
+    assert_eq!(el[0]["label"], json!("Top left"), "{el}");
 }

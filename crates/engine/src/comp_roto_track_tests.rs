@@ -400,6 +400,7 @@ fn add_trackers(s: &mut Session, comp: u64) -> (u64, u64) {
         smooth_radius: 0,
         reference: filmcraft_time::Tick::ZERO,
         method: TrackMethod::Position,
+        corner_points: Vec::new(),
     };
     let quad = |f: i64| {
         let k = f as f64;
@@ -674,4 +675,85 @@ mod real {
         assert!(worst_c <= 2.0, "worst centroid error {worst_c:.2} px");
         assert!(worst_iou >= 0.9, "worst IoU {worst_iou:.4}");
     }
+}
+
+/// LO.5: a keyframe set with `onScreen` on a shape following a tracker lands where it was put on
+/// screen at that time (stored through the tracker's motion); without it the path is stored as
+/// given (the reference frame), as before; a time the tracker can't map is refused.
+#[test]
+fn an_on_screen_keyframe_on_a_linked_shape_lands_where_it_was_put() {
+    let (mut s, c, r) = session();
+    let (tr, _) = add_trackers(&mut s, c);
+    s.execute("comp.roto.linkTracker", json!({"comp": c, "node": r, "shape": 0, "tracker": tr})).unwrap();
+    let seen = MaskPath::ellipse(Vec2::new(70.0, 60.0), Vec2::new(12.0, 12.0));
+    let t = RATE.tick_of(10);
+    s.execute("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 0, "time": t.0, "path": seen.clone(), "onScreen": true})).unwrap();
+    let gap = max_vertex_gap(&drawn(&s, c, r, 10), &seen);
+    assert!(gap < 1e-6, "on screen where it was put: {gap}");
+    // stored as given: the tracker's motion (2, 1) px a frame moves it 20, 10 px on frame 10
+    s.execute("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 0, "time": t.0, "path": seen.clone()})).unwrap();
+    let off = drawn(&s, c, r, 10).vertices[0].p - seen.vertices[0].p;
+    assert!((off - Vec2::new(20.0, 10.0)).length() < 1e-6, "{off:?}");
+    // hostile flag
+    assert!(s.execute("comp.roto.setShapeKeyframe", json!({"comp": c, "node": r, "shape": 0, "time": t.0, "path": seen, "onScreen": "yes"})).is_err());
+}
+
+/// LO.4: a Roto node inside a group tracks its shape over its input as evaluated in place (the
+/// group's input from the comp's level): the same keyframes as ungrouped, written into the inner
+/// node in one undo step; hostile group paths start nothing; stop and the running check go by
+/// the group path; a group deleted mid-track gets nothing written.
+#[test]
+fn a_shape_inside_a_group_tracks_like_an_ungrouped_one() {
+    let to = RATE.tick_of(8).0;
+    let (mut flat, fc, fr) = session();
+    install(&mut flat, None);
+    flat.execute("comp.roto.trackShape", json!({"comp": fc, "node": fr, "shape": 0, "to": to, "wait": true})).unwrap();
+    let want = keys(&shape(&flat, fc, fr, 0));
+    assert_eq!(want.len(), 9);
+
+    let (mut s, c, r) = session();
+    install(&mut s, None);
+    let g = s.execute("comp.group", json!({"comp": c, "nodes": [r]})).unwrap()["node"].as_u64().unwrap();
+    for bad in [json!([999]), json!([r, r]), json!([g, g, g, g, g]), json!([]), json!({"x": 1})] {
+        assert!(s.execute("comp.roto.trackShape", json!({"comp": c, "group": bad, "node": r, "shape": 0, "to": to})).is_err(), "{bad}");
+    }
+    assert!(s.roto_track_jobs.is_empty() && s.jobs.is_empty());
+    let undo = s.history.undo.len();
+    s.execute("comp.roto.trackShape", json!({"comp": c, "group": [g], "node": r, "shape": 0, "to": to, "wait": true})).unwrap();
+    assert!(s.roto_track_jobs.is_empty());
+    assert_eq!(s.history.undo.len(), undo + 1, "one undo step");
+    let inner = |s: &Session| {
+        let Some(ItemKind::Comp(cc)) = s.project.item(ItemId(c)).map(|i| &i.kind) else { panic!("comp") };
+        let Some(CompKind::Roto { roto, .. }) = filmcraft_project::comp::group::inner(cc, &[g]).unwrap().node(r).map(|n| &n.kind) else { panic!("roto") };
+        roto.shapes[0].clone()
+    };
+    let got = keys(&inner(&s));
+    assert_eq!(got.len(), want.len());
+    for ((fa, pa), (fb, pb)) in got.iter().zip(&want) {
+        assert_eq!(fa, fb);
+        for (va, vb) in pa.vertices.iter().zip(&pb.vertices) {
+            assert!((va.p - vb.p).length() < 1e-6, "grouped and ungrouped tracks agree");
+        }
+    }
+    // in the background: gated, so it is still running for the checks
+    let gate = Arc::new(AtomicBool::new(false));
+    install(&mut s, Some(gate.clone()));
+    s.execute("edit.undo", json!({})).unwrap();
+    s.execute("comp.roto.trackShape", json!({"comp": c, "group": [g], "node": r, "shape": 0, "to": to})).unwrap();
+    assert!(s.execute("comp.roto.trackShape", json!({"comp": c, "group": [g], "node": r, "shape": 0, "to": to})).is_err(), "already tracked");
+    assert!(s.execute("comp.roto.stopTrack", json!({"comp": c, "node": r})).is_err(), "not the comp's own node {r}");
+    s.execute("comp.roto.stopTrack", json!({"comp": c, "group": [g], "node": r})).unwrap();
+    gate.store(true, Ordering::Relaxed);
+    finish_jobs(&mut s);
+    assert!(s.roto_track_jobs.is_empty());
+    // the group deleted mid-track: nothing written, no panic
+    let gate = Arc::new(AtomicBool::new(false));
+    install(&mut s, Some(gate.clone()));
+    s.execute("comp.roto.trackShape", json!({"comp": c, "group": [g], "node": r, "shape": 0, "to": to})).unwrap();
+    s.execute("comp.removeNode", json!({"comp": c, "nodes": [g]})).unwrap();
+    let undo = s.history.undo.len();
+    gate.store(true, Ordering::Relaxed);
+    finish_jobs(&mut s);
+    assert!(s.roto_track_jobs.is_empty());
+    assert_eq!(s.history.undo.len(), undo, "nothing written");
 }

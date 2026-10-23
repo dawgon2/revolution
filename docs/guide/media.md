@@ -118,7 +118,7 @@ shorter than six frames are ignored. Each result is one undo step.
 
 ## Variable frame rate clips (phones, screen recordings)
 
-> id: media.vfr | does: shows when a clip's frames are unevenly spaced, with its average, slowest and fastest frame rate | cmd: metadata.get, playhead.stepForward, clip.interpretAsCfr, clip.conformToSequenceRate, clip.interpretFootage | resolve: Clip Attributes, Media Pool Frame Rate column | premiere: Properties, Interpret Footage | when: footage from a phone, a screen recorder or a game capture; audio seems to drift away from the picture | see: media.import, proxies.auto
+> id: media.vfr | does: shows when a clip's frames are unevenly spaced, with its average, slowest and fastest frame rate | cmd: metadata.get, playhead.stepForward, clip.interpretAsCfr, clip.conformToSequenceRate, clip.interpretFootage | resolve: Clip Attributes, Media Pool Frame Rate column | premiere: Properties, Interpret Footage | when: footage from a phone, a screen recorder or a game capture; audio seems to drift away from the picture (out of sync) | see: media.import, proxies.auto
 
 **[Fork]**
 
@@ -145,7 +145,9 @@ On the timeline, steps stay on the sequence's frame rate (the sequence is consta
 
 The typical (most common) rate is what the clip offers when you make a sequence from it. A clip
 whose spacing only wobbles by the file's own rounding (a 1 ms time base writing 29.97 fps as 33 and
-34 ms) counts as constant.
+34 ms) counts as constant. So does film transferred to 29.97 video with **soft pulldown** (the
+MPEG-2 "3:2 pulldown" flags of DVDs and broadcast transfers, where frames alternately last three
+and two video fields): it is 23.976 fps film, shown and edited as 23.976, not as "Variable".
 
 **Options.** There is nothing to convert first: a VFR clip edits, plays and exports in sync as it
 is. If you would rather have every recorded frame played evenly, one after another:

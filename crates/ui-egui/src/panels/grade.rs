@@ -781,7 +781,7 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
             }
         } else if tab == "warper" {
             // the colour warper (fork G4.1)
-            super::grade_warper::controls(bui, &node, &t, gest, &mut cmds, &mut autos);
+            super::grade_warper::controls(bui, &node, mt, &t, gest, &mut cmds, &mut autos);
         } else if tab == "magicMask" {
             if let Some(v) = &mmview {
                 super::magic_mask::controls(bui, v, &t, gest, &mut mm_acts, &mut autos);
@@ -819,7 +819,8 @@ fn palette(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, middle: bool) 
             let mut edits = Vec::new();
             qualifier_controls(bui, &node, mt, &t, (armed, three_d), &mut arm, &mut edits, &mut autos);
             if three_d {
-                super::grade_qual3d::controls(bui, &node, &t, gest, q3_armed, &mut q3_arm, &mut cmds, &mut autos);
+                super::grade_qual3d::mark_shown(bui.ctx(), clip, node_id);
+                super::grade_qual3d::controls(bui, &node, mt, &t, gest, q3_armed, &mut q3_arm, &mut cmds, &mut autos);
             }
             for (key, v) in edits {
                 sets.push(match v {

@@ -380,6 +380,55 @@ pub fn eval_cases_v3() -> Vec<EvalCase> {
     measure_all(&frame_v2(), list.into_iter().map(|(l, n)| (format!("h3_{l}"), n)).collect())
 }
 
+/// The sixth evaluation set (fork AI2b): G4's grading tools on the second set's frame. HDR zone
+/// wheels (exposure, saturation, balance per zone), the colour warper (hue-sat and chroma-luma
+/// moves) and the 3D qualifier (picked clusters around a patch, inverted, with despill), alone and
+/// with a correction. Labels start with `h6_`. Fixed values (no seed); never in the training data.
+pub fn eval_cases_v6() -> Vec<EvalCase> {
+    use filmcraft_project::qual3d::Qual3d;
+    use filmcraft_project::warper::{WarpMode, Warper};
+    let gain = |v: f32| color("gain", [0.0, 0.0, 0.0, v]);
+    let warped = |moves: &[(WarpMode, u32, [f32; 2])], extra: &[(&'static str, ParamValue)]| {
+        let mut n = node(extra);
+        let mut w = Warper::default();
+        for &(mode, index, to) in moves {
+            w.mesh_mut(mode).set_point(mode, index, to, None);
+        }
+        n.warper = Some(w);
+        n
+    };
+    let picked = |patch: [f32; 3], invert: bool, despill: f32, extra: &[(&'static str, ParamValue)]| {
+        let mut params = vec![float("qual.on", 1.0)];
+        if invert {
+            params.push(float("qual.invert", 1.0));
+        }
+        params.extend_from_slice(extra);
+        let mut n = node(&params);
+        let c = crate::grade::qual3d_point(WS, patch).unwrap_or_default();
+        let mut k = Qual3d::default();
+        k.add_samples(&[c, c.map(|v| v + 0.01), c.map(|v| v - 0.01)], false);
+        k.despill = despill;
+        n.qual3d = Some(k);
+        n
+    };
+    let list: Vec<(&str, GradeNode)> = vec![
+        ("hdr_global_exposure_up", node(&[float("hdr.global.exposure", 0.6)])),
+        ("hdr_highlights_down", node(&[float("hdr.highlight.exposure", -1.0)])),
+        ("hdr_shadows_lifted", node(&[float("hdr.shadow.exposure", 0.8)])),
+        ("hdr_dark_balance_blue", node(&[color("hdr.dark.balance", [0.0, 0.0, 0.3, 0.0])])),
+        ("hdr_global_desaturated", node(&[float("hdr.global.sat", 0.4)])),
+        ("hdr_specular_and_gain", node(&[float("hdr.specular.exposure", -1.2), gain(0.15)])),
+        ("warper_red_toward_orange", warped(&[(WarpMode::HueSat, 16, [0.07, 0.75]), (WarpMode::HueSat, 24, [0.07, 1.0])], &[])),
+        ("warper_cyan_toward_blue", warped(&[(WarpMode::HueSat, 20, [0.62, 0.75]), (WarpMode::HueSat, 28, [0.62, 1.0])], &[])),
+        ("warper_chroma_luma_darker", warped(&[(WarpMode::ChromaLuma, 12, [0.5, 0.3])], &[float("contrast", 1.1)])),
+        ("qual3d_skin_brighter", picked(SKIN2, false, 0.0, &[gain(0.3)])),
+        ("qual3d_foliage_desaturated", picked(FOLIAGE2, false, 0.0, &[float("saturation", 0.4)])),
+        ("qual3d_outside_red_cooler", picked(RED2, true, 0.0, &[float("temperature", -40.0)])),
+        ("qual3d_teal_despill", picked(TEAL2, false, 0.8, &[])),
+    ];
+    measure_all(&frame_v2(), list.into_iter().map(|(l, n)| (format!("h6_{l}"), n)).collect())
+}
+
 /// One case of the branch held-out set (fork AI2 set 5): the facts of one branching node of a
 /// fixed graph grade and its template note. Never in the training data.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -880,6 +929,31 @@ mod tests {
         // the white-balance cases change the picture
         let invisible: Vec<&str> = cases.iter().filter(|c| c.label.starts_with("h3_wb_") && !c.facts.visible()).map(|c| c.label.as_str()).collect();
         assert!(invisible.is_empty(), "{invisible:?}");
+    }
+
+    #[test]
+    fn sixth_set_is_fixed_distinct_and_its_templates_pass() {
+        let cases = eval_cases_v6();
+        assert_eq!(cases.len(), 13);
+        assert_eq!(cases, eval_cases_v6(), "deterministic");
+        let labels: std::collections::BTreeSet<_> = cases.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels.len(), cases.len(), "unique labels");
+        let others: Vec<EvalCase> = eval_cases().into_iter().chain(eval_cases_v2()).chain(eval_cases_v3()).collect();
+        for c in &cases {
+            assert!(c.label.starts_with("h6_"), "{}", c.label);
+            assert_eq!(check_grammar(&c.template), Ok(()), "{}", c.template);
+            assert_eq!(check_explanation_labeled(&c.facts, None, Some(1), &c.template).map_err(|e| e.to_string()), Ok(()), "{}: {}", c.label, c.template);
+            assert!(others.iter().all(|f| f.facts != c.facts), "{} repeats another set's facts", c.label);
+        }
+        // every case changes the picture (each tool is really exercised)
+        let invisible: Vec<String> = cases.iter().filter(|c| !c.facts.visible()).map(|c| format!("{}: {}", c.label, c.template)).collect();
+        assert!(invisible.is_empty(), "{invisible:#?}");
+        // the 3D-qualifier cases carry the 3D facts and act on part of the frame
+        for c in cases.iter().filter(|c| c.label.starts_with("h6_qual3d_")) {
+            let q = c.facts.controls.qualifier.as_ref().expect("a qualifier");
+            assert!(q.three_d, "{}", c.label);
+        }
+        assert!(cases.iter().filter(|c| c.label.starts_with("h6_hdr_")).all(|c| !c.facts.controls.hdr.is_empty()));
     }
 
     #[test]

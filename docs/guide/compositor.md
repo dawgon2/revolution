@@ -89,7 +89,7 @@ nodes hides the rows.
 
 ## Expressions: a setting worked out by a formula [Fork]
 
-> id: compositor.expressions | does: drives a comp setting with a small formula of time, frame, size or another setting, instead of or on top of keyframes | cmd: comp.setExpression, comp.clearExpression, comp.explain | resolve: Fusion's simple expressions (the = field on a control) | premiere: none (After Effects has expressions; Premiere has none) | when: a setting should follow time steadily (a spin, a pulse, a wiggle), follow a setting elsewhere in the comp, or depend on the comp's size | see: compositor.inspector, compositor.explain
+> id: compositor.expressions | does: drives a comp setting with a small formula of time, frame, size or another setting, instead of or on top of keyframes | cmd: comp.setExpression, comp.clearExpression, comp.explain | resolve: Fusion's simple expressions (the = field on a control) | premiere: none (After Effects has expressions; Premiere has none) | when: a setting should follow time steadily (a spin, a pulse, a wiggle), follow a setting elsewhere in the comp (one node's setting driving another's), or depend on the comp's size | see: compositor.inspector, compositor.explain
 
 Keyframes are best for exact values at exact moments. Some motion is easier to describe than to
 keyframe: "turn 10 degrees a second", "shake a little", "stay as opaque as that Merge". An
@@ -139,8 +139,14 @@ Starting points, each with a trade-off:
   a web of references is harder to follow (`comp.explain` helps).
 
 Formulas work on a node's own numbers, points, RGBA swatches, checkboxes and menus (a menu takes the
-rounded number, kept within its choices); text, curves, mask shapes and the settings inside
-Color and Text nodes take none yet.
+rounded number, kept within its choices). They also work on a Color node's number rows and
+its four wheels (`[r, g, b, master]`; the wheels by command only), and on a Text node's number,
+checkbox and menu rows. **[Fork]** For example `time < 2 ? 1 : 0` on a Color node's
+**Saturation** row turns it grey two seconds in, and `node("Title").size` on another node reads a
+Text node's size. Text itself, fonts, curves,
+mask shapes and Tracker / Planar Tracker settings take none: a tracker's analysed motion is read
+at several moments for each frame (its reference frame, the Stabilise smoothing), which a
+formula worked out once per frame can't drive.
 
 - **Revolution:** a small formula language of its own, close to Fusion's simple expressions and
   unlike After Effects' JavaScript: no scripting, no loops, no variables, no files. So a formula
@@ -248,7 +254,7 @@ mask list.
 
 ## Roto and Paint nodes [Fork]
 
-> id: compositor.roto | does: cuts a picture out along animated roto shapes, or paints brush strokes over it | cmd: comp.roto.addShape, comp.roto.setShapeKeyframe, comp.paint.addStroke | resolve: Polygon / B-Spline and Paint nodes on the Fusion page | premiere: animated masks in Effect Controls (no paint) | when: isolating a moving subject, or painting out a mark, a wire or a logo | see: compositor.masks
+> id: compositor.roto | does: cuts a picture out by hand along animated roto shapes, or paints brush strokes over it | cmd: comp.roto.addShape, comp.roto.setShapeKeyframe, comp.paint.addStroke | resolve: Polygon / B-Spline and Paint nodes on the Fusion page | premiere: animated masks in Effect Controls (no paint) | when: isolating a moving subject, or painting out a mark, a wire or a logo | see: compositor.masks
 
 A **Roto** node holds up to 256 shapes. Each one is a Bézier or B-spline outline with its own
 feather at every point, and its outline can be keyframed. **Output** picks what the node gives:
@@ -361,7 +367,9 @@ shape's **Follow tracker** list (`comp.roto<k>.follow`, `comp.roto.linkTracker`)
 moves the way the tracker measured, whatever the tracker node itself does with its picture.
 The shape stays where it is on screen at the playhead when you pick the tracker, and keyframes
 you already set stay where you drew them. Its own keyframes still work on top of the track, for a
-hand that also opens and closes. Pick **None** to stop following (`comp.roto.unlinkTracker`); the
+hand that also opens and closes. (A following shape keeps its outlines as they are at the
+tracker's reference frame. The viewer converts for you; an agent that sends points as seen on
+screen adds `"onScreen": true` to `comp.roto.setShapeKeyframe`.) Pick **None** to stop following (`comp.roto.unlinkTracker`); the
 shape again stays where it is at the playhead. If the tracker is deleted, the list shows **Missing tracker** and the
 shape stays where it was drawn. An agent can also follow one point of a Tracker
 (`"output"`: the point's name), which moves the shape without turning it.
@@ -374,7 +382,8 @@ with the same number of points as your shape and the same per-point feather. An 
 the keyframes out (`"every"`: frames) and pick the model (`"model"`). It runs in the background;
 **Stop** (`comp.roto<k>.track.stop`, `comp.roto.stopTrack`) keeps what was tracked so far. The
 whole track is one undo step. If you change the shape while it runs, nothing is written, so you
-can try again.
+can try again. A Roto node inside a group tracks the same way, over its input as the group sees
+it in the comp (agents pass the group path as `group`). **[Fork]**
 
 Which to use depends on the shot:
 
@@ -463,12 +472,17 @@ pieces combine more freely; whole looks are quicker to reuse. Pick what suits yo
 
 - Parts of a graph that don't change over time (a Text, Solid, Gradient, Blur, Key or Mask with
   no keyframes and no footage feeding it) are drawn once and remembered (up to 256 MB), so a
-  title comp costs about one picture per frame.
+  title comp costs about one picture per frame. A group counts too when everything inside it
+  qualifies.
 - Anything fed by a Media In, a Color node, or anything keyframed is redrawn every frame.
 - Comps are drawn on the graphics card, at the size they appear (a comp clip scaled to 50 % is
   built at half size). A Media In that reads a track under the comp clip takes that track's
   frames straight from the decoder, as the timeline does, so 1080p comps and 4K comps at half
   resolution play in real time (measured on synthetic footage).
+- Roto shapes stay on the graphics card as well: the processor only traces the outline, and the
+  card fills in the edges and the feather, so a soft roto on 6K costs a few milliseconds a frame
+  instead of tens (measured on synthetic shapes). A roto with an enormous feather or a very
+  dense outline is filled on the processor instead; it looks the same, only slower.
 - These run on the processor instead, and play slower:
   - a comp clip with effects, a grade or opacity masks of its own (move those into the comp as
     nodes to keep it on the graphics card);

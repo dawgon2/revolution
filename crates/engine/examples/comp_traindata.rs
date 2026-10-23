@@ -2,30 +2,41 @@
 //!
 //! ```text
 //! cargo run --release -p filmcraft-engine --example comp_traindata -- \
-//!     --out-dir ~/Apps/filmcraft-train/runs/<name> [--comps 1500] [--per-node 2] [--seed 1] [--val 0.05]
-//! cargo run --release -p filmcraft-engine --example comp_traindata -- --dump-cases set4.jsonl
+//!     --out-dir ~/Apps/filmcraft-train/runs/<name> [--comps 1500] [--per-node 2] [--seed 1] [--val 0.05] [--c34 0.3]
+//! cargo run --release -p filmcraft-engine --example comp_traindata -- --dump-cases set4.jsonl [--set 4|7]
 //! ```
 //!
 //! Builds random comps (Media In from layers or a missing clip, now and then late; Merge, Transform,
 //! Key, Mask, Blur, Color, Solid, Gradient; bypassed and unconnected nodes; parameters off their
-//! defaults, near-default ones too), reads each node's [`CompFacts`] and writes chat examples in
+//! defaults, near-default ones too; with `--c34` also C3's Roto / Paint / Tracker / Planar Tracker
+//! nodes, roto shapes following a tracker, and C4's groups with exposed controls, fork AI2b), reads each node's [`CompFacts`] and writes chat examples in
 //! `explain_traindata`'s format: system + user = `filmcraft_llm::explain_prompt(facts, template)`,
 //! assistant = one of the line's fixed phrasings ([`CompFacts::phrasings`]), each checked with
-//! [`check_comp_explanation`]. Facts equal to a held-out set-4 case ([`comp_eval_cases`]) are
+//! [`check_comp_explanation`]. Facts equal to a held-out set-4 or set-7 case ([`comp_eval_cases`],
+//! [`comp_eval_cases_v7`]) are
 //! dropped. Appends to `train.jsonl` / `val.jsonl` in `--out-dir` (so it adds to a folder
 //! `explain_traindata` wrote) and writes `comp-data-stats.json`. Deterministic for a seed.
 //!
-//! `--dump-cases` writes held-out set 4 as JSON lines `{label, facts, template, accept}` for
+//! `--dump-cases` writes held-out set 4 (or with `--set 7` set 7, C3 / C4's nodes, fork AI2b) as
+//! JSON lines `{label, facts, template, accept}` for
 //! `llm_eval` and `explain_score --cases` (`accept`: the phrasings the checker takes) and stops.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::io::Write as _;
 
-use filmcraft_engine::comp_explain::{CompFacts, check_comp_explanation, comp_eval_cases, comp_facts, empty_comp, float_params, link, new_node, set_float};
-use filmcraft_project::Project;
-use filmcraft_project::comp::{CompKind, KEY_EFFECTS, MediaInSource};
+use filmcraft_engine::comp_explain::{
+    CompFacts, check_comp_explanation, comp_eval_cases, comp_eval_cases_v7, comp_facts, empty_comp, float_params, link, new_node, set_float,
+};
+use filmcraft_geom::Vec2;
+use filmcraft_project::comp::group::{expose, group_nodes};
+use filmcraft_project::comp::{Comp, CompKind, CompNode, KEY_EFFECTS, MediaInSource, RotoOutput, TrackOperation, TrackerPoint};
+use filmcraft_project::dag::NodeId;
 use filmcraft_project::grade::GradeNode;
+use filmcraft_project::keyframe::ParamValue;
+use filmcraft_project::paint::PaintStroke;
+use filmcraft_project::roto::{RotoShape, TrackLink};
+use filmcraft_project::{Param, Project};
 use filmcraft_time::{TICKS_PER_SECOND, Tick};
 
 /// SplitMix64.
@@ -62,10 +73,12 @@ struct Args {
     seed: u64,
     val: f64,
     dump: Option<String>,
+    c34: f64,
+    set: u8,
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
-    let mut a = Args { out_dir: std::path::PathBuf::new(), comps: 1500, per_node: 2, seed: 1, val: 0.05, dump: None };
+    let mut a = Args { out_dir: std::path::PathBuf::new(), comps: 1500, per_node: 2, seed: 1, val: 0.05, dump: None, c34: 0.0, set: 4 };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut v = || it.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -76,11 +89,19 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
             "--seed" => a.seed = v()?.parse()?,
             "--val" => a.val = v()?.parse::<f64>()?.clamp(0.0, 0.5),
             "--dump-cases" => a.dump = Some(v()?),
+            "--set" => {
+                a.set = match v()?.as_str() {
+                    "4" => 4,
+                    "7" => 7,
+                    s => return Err(format!("--set {s}: expected 4 or 7").into()),
+                }
+            }
+            "--c34" => a.c34 = v()?.parse::<f64>()?.clamp(0.0, 1.0),
             other => return Err(format!("unknown argument {other}").into()),
         }
     }
     if a.out_dir.as_os_str().is_empty() && a.dump.is_none() {
-        return Err("usage: comp_traindata --out-dir <dir> [--comps N] [--per-node K] [--seed S] [--val F] | --dump-cases <path>".into());
+        return Err("usage: comp_traindata --out-dir <dir> [--comps N] [--per-node K] [--seed S] [--val F] [--c34 F] | --dump-cases <path> [--set 4|7]".into());
     }
     Ok(a)
 }
@@ -90,8 +111,49 @@ fn label(rng: &mut Rng) -> &'static str {
     if rng.chance(0.4) { rng.word(NAMES) } else { "" }
 }
 
-/// A processing node `id` of a random kind with random parameters.
-fn random_node(rng: &mut Rng, id: u64) -> filmcraft_project::comp::CompNode {
+/// One of C3's nodes (fork AI2b): Roto (shapes, sometimes as a matte), Paint (strokes), Tracker
+/// (points, sometimes analysed) or Planar Tracker (sometimes analysed), any operation.
+fn c3_node(rng: &mut Rng, id: u64) -> CompNode {
+    let key = rng.word(&["roto", "paint", "tracker", "planarTracker"]);
+    let mut kind = CompKind::from_key(key).unwrap_or(CompKind::Blur);
+    let analysed = rng.chance(0.6);
+    let track = |rng: &mut Rng| {
+        let at = Vec2::new(rng.f() * 1920.0, rng.f() * 1080.0);
+        let mut p = Param::new(ParamValue::Vec2(at));
+        if analysed {
+            p.put_keyframe(Tick::ZERO, ParamValue::Vec2(at));
+        }
+        p
+    };
+    let op = TrackOperation::ALL.get(rng.below(TrackOperation::ALL.len())).copied().unwrap_or(TrackOperation::MatchMove);
+    match &mut kind {
+        CompKind::Roto { roto, output } => {
+            roto.shapes =
+                (0..1 + rng.below(4)).map(|i| RotoShape { name: format!("Shape {}", i + 1), enabled: !rng.chance(0.1), ..RotoShape::default() }).collect();
+            if rng.chance(0.3) {
+                *output = RotoOutput::Matte;
+            }
+        }
+        CompKind::Paint { paint } => paint.strokes = (0..1 + rng.below(6)).map(|_| PaintStroke::default()).collect(),
+        CompKind::Tracker { points, operation, .. } => {
+            *points = (0..1 + rng.below(4)).map(|i| TrackerPoint { track: track(rng), ..TrackerPoint::at(format!("P{}", i + 1), Vec2::ZERO) }).collect();
+            *operation = op;
+        }
+        CompKind::PlanarTracker { corners, operation, .. } => {
+            *corners = (0..4).map(|_| track(rng)).collect();
+            *operation = op;
+        }
+        _ => {}
+    }
+    new_node(id, kind, label(rng))
+}
+
+/// A processing node `id` of a random kind with random parameters; with probability `c34` one of
+/// C3's nodes instead (`c34` 0 draws no extra random numbers, so older data regenerates unchanged).
+fn random_node(rng: &mut Rng, id: u64, c34: f64) -> CompNode {
+    if c34 > 0.0 && rng.chance(c34) {
+        return c3_node(rng, id);
+    }
     let kind = match rng.below(6) {
         0 => CompKind::Transform,
         1 => CompKind::Key { effect: rng.word(KEY_EFFECTS).to_string() },
@@ -115,7 +177,7 @@ fn random_node(rng: &mut Rng, id: u64) -> filmcraft_project::comp::CompNode {
 }
 
 /// A source node: a layer (sometimes late), a missing clip, a solid or a gradient.
-fn random_source(rng: &mut Rng, id: u64) -> filmcraft_project::comp::CompNode {
+fn random_source(rng: &mut Rng, id: u64) -> CompNode {
     let kind = match rng.below(10) {
         0 => CompKind::MediaIn { source: MediaInSource::Item { item: filmcraft_project::ItemId(900_000 + rng.below(1000) as u64) }, offset: Tick::ZERO },
         1 => CompKind::Solid,
@@ -133,8 +195,9 @@ fn random_source(rng: &mut Rng, id: u64) -> filmcraft_project::comp::CompNode {
 }
 
 /// A random comp: one or two chains of processing nodes, merged when there are two; sometimes an
-/// unconnected node or a Media Out without input.
-fn random_comp(rng: &mut Rng) -> filmcraft_project::comp::Comp {
+/// unconnected node or a Media Out without input. With `c34` > 0 (AI2b) roto shapes may follow a
+/// tracker (or a missing one) and a chain may become a group with exposed controls.
+fn random_comp(rng: &mut Rng, c34: f64) -> Comp {
     let mut c = empty_comp();
     let mut next = 2u64;
     let mut fresh = || {
@@ -146,18 +209,21 @@ fn random_comp(rng: &mut Rng) -> filmcraft_project::comp::Comp {
         return c;
     }
     let chains = 1 + usize::from(rng.chance(0.55));
-    let mut ends = Vec::new();
+    let (mut ends, mut chain_nodes) = (Vec::new(), Vec::new());
     for _ in 0..chains {
         let src = fresh();
         c.nodes.push(random_source(rng, src));
         let mut end = src;
+        let mut chain = Vec::new();
         for _ in 0..rng.below(3) {
             let id = fresh();
-            c.nodes.push(random_node(rng, id));
+            c.nodes.push(random_node(rng, id, c34));
             link(&mut c, end, id, 0);
             end = id;
+            chain.push(id);
         }
         ends.push(end);
+        chain_nodes.push(chain);
     }
     let last = match ends.as_slice() {
         [bg, fg] => {
@@ -177,9 +243,53 @@ fn random_comp(rng: &mut Rng) -> filmcraft_project::comp::Comp {
     link(&mut c, last, 1, 0);
     if rng.chance(0.15) {
         let id = fresh();
-        c.nodes.push(random_node(rng, id));
+        c.nodes.push(random_node(rng, id, c34));
+    }
+    if c34 > 0.0 {
+        c34_links(rng, &mut c, &chain_nodes, c34);
     }
     c
+}
+
+/// AI2b: roto shapes follow a tracker in the comp (or a missing one); a chain becomes a group,
+/// sometimes with an exposed control.
+fn c34_links(rng: &mut Rng, c: &mut Comp, chains: &[Vec<NodeId>], c34: f64) {
+    let trackers: Vec<NodeId> = c.nodes.iter().filter(|n| matches!(n.kind, CompKind::Tracker { .. } | CompKind::PlanarTracker { .. })).map(|n| n.id).collect();
+    let pick = if trackers.is_empty() { None } else { trackers.get(rng.below(trackers.len())).copied() };
+    for n in &mut c.nodes {
+        if let CompKind::Roto { roto, .. } = &mut n.kind {
+            for s in &mut roto.shapes {
+                if rng.chance(0.5) {
+                    let tracker = match pick {
+                        Some(t) if rng.chance(0.85) => t.to_string(),
+                        _ => "999999".to_string(),
+                    };
+                    s.track_link = Some(TrackLink { tracker, output: "transform".to_string() });
+                }
+            }
+        }
+    }
+    let Some(chain) = chains.get(rng.below(chains.len())).filter(|ch| !ch.is_empty()) else {
+        return;
+    };
+    if !rng.chance(c34) {
+        return;
+    }
+    let Ok(group) = group_nodes(c, chain, rng.word(&["", "Cleanup", "Look", "Key rig", "Screen fix"])) else {
+        return;
+    };
+    if rng.chance(0.5) {
+        let inner = chain.iter().copied().find_map(|id| {
+            let n = c.node(group).and_then(|g| match &g.kind {
+                CompKind::Group { comp, .. } => comp.node(id).cloned(),
+                _ => None,
+            })?;
+            float_params(&n.kind).first().map(|(k, ..)| (id, *k))
+        });
+        if let Some((id, key)) = inner {
+            let _ = expose(c, group, id, key, rng.word(&["", "Amount", "Softness", "Size"]));
+        }
+    }
 }
 
 /// The facts' `kind` ("merge", "media_in", …).
@@ -190,7 +300,8 @@ fn kind_of(f: &CompFacts) -> String {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = parse_args()?;
     if let Some(p) = &args.dump {
-        let lines: Vec<String> = comp_eval_cases()
+        let cases = if args.set == 7 { comp_eval_cases_v7() } else { comp_eval_cases() };
+        let lines: Vec<String> = cases
             .iter()
             .map(|c| serde_json::json!({"label": c.label, "facts": c.facts, "template": c.template, "accept": c.facts.phrasings()}).to_string())
             .collect();
@@ -200,8 +311,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     std::fs::create_dir_all(&args.out_dir)?;
     let mut rng = Rng(args.seed ^ 0x636f_6d70_7472_6e64);
-    let held: BTreeSet<String> =
-        comp_eval_cases().iter().filter_map(|c| serde_json::to_string(&c.facts).ok()).map(|s| filmcraft_llm::compact_facts(&s)).collect();
+    let held: BTreeSet<String> = comp_eval_cases()
+        .iter()
+        .chain(comp_eval_cases_v7().iter())
+        .filter_map(|c| serde_json::to_string(&c.facts).ok())
+        .map(|s| filmcraft_llm::compact_facts(&s))
+        .collect();
     let open = |name: &str| std::fs::OpenOptions::new().create(true).append(true).open(args.out_dir.join(name));
     let mut train = std::io::BufWriter::new(open("train.jsonl")?);
     let mut val = std::io::BufWriter::new(open("val.jsonl")?);
@@ -209,7 +324,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (mut seen, mut kinds): (BTreeSet<String>, BTreeMap<String, usize>) = (BTreeSet::new(), BTreeMap::new());
     let (mut n_train, mut n_val, mut dropped_held, mut dropped_dup, mut rejected) = (0usize, 0usize, 0usize, 0usize, 0usize);
     for ci in 0..args.comps {
-        let c = random_comp(&mut rng);
+        let c = random_comp(&mut rng, args.c34);
         let is_val = rng.chance(args.val);
         for (ni, facts) in comp_facts(&c, &project, Tick::ZERO).into_iter().enumerate() {
             let facts_json = serde_json::to_string(&facts)?;

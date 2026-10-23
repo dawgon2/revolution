@@ -318,6 +318,16 @@ pub struct ColorPrefs {
     pub coach: crate::coach::CoachPrefs,
     /// Local AI explanations (fork GRADE-PLAN G2.11): the opt-in switch and the chosen model.
     pub ai: crate::ai_explain::AiPrefs,
+    /// Which model tracks Magic Masks (fork G3, LO.6): Auto / Better / Faster / MobileSAM, as last
+    /// picked on the Magic Mask tab. An unknown value loads as Auto.
+    #[serde(deserialize_with = "de_mask_model")]
+    pub magic_mask: crate::magic_mask::MaskModel,
+}
+
+/// A saved Magic Mask model, or Auto for anything else (hostile or newer preferences).
+fn de_mask_model<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<crate::magic_mask::MaskModel, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(v.as_str().and_then(crate::magic_mask::MaskModel::parse).unwrap_or_default())
 }
 
 impl Default for ColorPrefs {
@@ -328,6 +338,7 @@ impl Default for ColorPrefs {
             hdr_graphics_white: "203".into(),
             coach: Default::default(),
             ai: Default::default(),
+            magic_mask: Default::default(),
         }
     }
 }

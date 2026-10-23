@@ -274,7 +274,7 @@ fn outside_uses_the_key_invert_graph_param_and_params_lists_graph_params() {
     assert_eq!(grade(&s, c).node(o).unwrap().float_at("key.invert", filmcraft_time::Tick(0)), 1.0);
     let list = s.execute("grade.params", json!({})).unwrap();
     let keys: Vec<&str> = list["params"].as_array().unwrap().iter().filter_map(|p| p["key"].as_str()).collect();
-    for k in ["lift", "key.invert", "key.gain", "mix.gain.0", "layer.mode.15", "kmix.invert.3"] {
+    for k in ["lift", "key.invert", "key.gain", "mix.gain.0", "layer.mode.15", "kmix.invert.3", "warp.strength", "q3d.despill"] {
         assert!(keys.contains(&k), "{k}");
     }
 }

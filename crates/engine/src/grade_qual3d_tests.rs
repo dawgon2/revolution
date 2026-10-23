@@ -105,9 +105,13 @@ fn clear_removes_a_side_or_everything() {
     assert!(run(&mut s, "grade.qual3d.clear", json!({"node": n})).is_err(), "nothing to clear");
     run(&mut s, "grade.qual3d.addStroke", json!({"node": n, "points": [[0.5, 0.5]]})).unwrap();
     run(&mut s, "grade.qual3d.addStroke", json!({"node": n, "points": [[0.2, 0.8]], "exclude": true})).unwrap();
+    // (each stroke's path is kept to draw it: fork LO.3)
+    let k = q3(&s, c, n).unwrap();
+    assert_eq!(k.paths.iter().map(|p| (p.exclude, p.pts.clone())).collect::<Vec<_>>(), [(false, vec![[0.5, 0.5]]), (true, vec![[0.2, 0.8]])]);
     run(&mut s, "grade.qual3d.clear", json!({"node": n, "which": "exclude"})).unwrap();
     let k = q3(&s, c, n).unwrap();
     assert!(k.exclude.is_empty() && !k.include.is_empty());
+    assert!(k.paths.len() == 1 && !k.paths[0].exclude, "the excluded strokes' paths go with them");
     assert!(run(&mut s, "grade.qual3d.clear", json!({"node": n, "which": "exclude"})).is_err());
     assert!(run(&mut s, "grade.qual3d.clear", json!({"node": n, "which": "both"})).is_err());
     run(&mut s, "grade.qual3d.clear", json!({"node": n})).unwrap();

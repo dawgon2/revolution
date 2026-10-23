@@ -241,7 +241,14 @@ pub fn tag_from_dir(exe: &Path, ch: &Channel) -> Option<String> {
 /// - the running tag isn't released (a held build) → the newest only if it was published after
 ///   this build was made; without a build time, no (never offer an older build as an update).
 pub fn newer<'a>(releases: &'a [Release], cur: &Current) -> Option<&'a Release> {
-    let newest = releases.first()?;
+    newer_with(releases, cur, |_| true)
+}
+
+/// [`newer`] among the releases `usable` accepts (the ones carrying this install's file, LO.1):
+/// a release without it (e.g. a tarball-only patch, or an AppImage missing) is never offered,
+/// and the newest one that has it is offered instead.
+pub fn newer_with<'a>(releases: &'a [Release], cur: &Current, usable: impl Fn(&Release) -> bool) -> Option<&'a Release> {
+    let newest = releases.iter().find(|r| usable(r))?;
     if let Some(tag) = cur.tag.as_deref() {
         if newest.tag == tag {
             return None;
@@ -474,7 +481,14 @@ impl Updater {
         self.status.checked = now;
         match r {
             Ok(list) => {
-                let latest = newer(&list, &self.current).cloned();
+                // Only a release carrying this install's file can be installed (LO.1); a build that
+                // can't update itself is told about any newer release.
+                let latest = match &self.layout {
+                    Ok(l) if l.appimage.is_some() => newer_with(&list, &self.current, |r| r.appimage.is_some()),
+                    Ok(_) => newer_with(&list, &self.current, |r| r.tarball.is_some()),
+                    Err(_) => newer(&list, &self.current),
+                }
+                .cloned();
                 if latest.as_ref().map(|l| &l.tag) != self.status.latest.as_ref().map(|l| &l.tag) {
                     self.dismissed = false;
                 }

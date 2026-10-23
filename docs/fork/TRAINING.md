@@ -48,7 +48,11 @@ Where things go: data, logs, eval outputs and scores in `~/Apps/filmcraft-train/
 - **generate** (`explain_traindata`): random one-node grades over every control family of the
   evaluation set (wheels, contrast, saturation, temperature / tint, curves, qualifier incl.
   inverted, windows incl. inverted, LUT, grain, noise reduction, highlight roll-off, disabled,
-  matte view, identity) on synthetic frames (the evaluation frame or random patch colours);
+  matte view, identity; `--g4 <p>` (AI2b) adds one of G4's tools to that share of the grades: an
+  HDR zone wheel, the colour warper or the 3D qualifier; `--g4 0`, the default, regenerates older
+  data sets byte for byte; likewise `comp_traindata --c34 <p>` adds C3's Roto / Paint / Tracker /
+  Planar Tracker nodes, roto shapes following a tracker (or a missing one) and C4 groups with exposed
+  controls) on synthetic frames (the evaluation frame or random patch colours);
   facts from `explain_node`; the prompt from `filmcraft_llm::explain_prompt` (exactly what the
   app sends); targets from a rule-based realizer that words the verified facts several ways
   (by dimension with verbs, by subject, template-like; leads such as "inside the window", "in the
@@ -324,3 +328,23 @@ Then point the catalogue entry's GGUF `url` at the release asset
 `models.rs`; the catalogue test accepts these besides pinned Hugging Face URLs); its `sha256` and
 `size` already pin the file, and `ModelInfo::is_local()` turns false so Settings can download it.
 The tokenizer keeps its pinned Hugging Face URL (it is the base's, unchanged).
+
+## smol360-v4 and v4b (fork AI2b, 2026-10-22)
+
+**Data:** `data-v4` = `data-v3` unchanged + extra seed 41: `explain_traindata --grades 1400 --per-grade 2 --seed 41
+--subtle 0.12 --g4 1.0` (2 598 / 124: hdr_zone 606, warper 431, qualifier_3d 324) and `comp_traindata --comps 700
+--seed 41 --c34 0.6` (2 590 / 154: group 314, roto 196, paint 180, tracker 190, planar 154) = 16 571 train / 964 val.
+Driver `runs/v4.sh` / `runs/v4b.sh`. New held-out sets: 6 (G4's node tools, 13 cases) and 7 (C3 / C4 comp lines, 8).
+
+**v4:** `TRAIN_ARGS="--epochs 2"`: stopped at the 90-minute cap at step 850 of 2 072 (0.82 epoch; v3 had reached
+1.33 epochs in the same time on less data), best val 0.2923. Q8_0 scores, v4 vs v3: set 1 33 / 36 vs 36, set 2
+34 / 40 vs 38, set 3 13 / 13 vs 12, set 4 32 / 32 both, set 5 20 / 20 both, set 6 12 / 13 vs 13, set 7 8 / 8 vs 5 / 8
+(v3: 3 ungrammatical). Not shipped: it doesn't beat v3 on sets 1–5. **v4b:** same data, `--max-minutes 150`
+(≈ 1.4 epochs, like v3).
+
+**v4b:** best val 0.2777 at step 1 350 (1.3 epochs, 154 min). Q8_0: set 1 34 / 36 (v3 36), set 2 39 / 40 (38), set 3
+13 / 13 (12), set 4 32 / 32, set 5 20 / 20, set 6 13 / 13 (13), set 7 8 / 8 (5); 1.24 s per answer on set 1. Sets 1–5
+tie v3 at 138 / 141 (set 1's misses: `warm_gain` claims warmer midtones, `temperature_cool_tint_green` leaves out
+greener shadows). Installed as `filmcraft-explainer-smol360-v4b-q8` (sha256 a138d2c9…434f, 384 636 128 bytes) with
+a `local!` catalogue entry, chosen in Settings; v3 stays the automatic choice until the release asset is uploaded
+(OWNER-QUESTIONS Q69), then v4b goes first in `TUNED_PREFERENCE` with a `fork_release!` entry.

@@ -17,10 +17,12 @@ use filmcraft_render::plan::{FramePlan, LayerFx, PlanLayer};
 use filmcraft_render::track::Homography;
 
 use filmcraft_render::paint::PlannedStroke;
+use filmcraft_render::roto::PreparedRoto;
 use filmcraft_time::Tick;
 use wgpu::util::DeviceExt;
 
 use crate::comp_paint::{self, CompKernels};
+use crate::comp_roto::{self, RotoKernel};
 use crate::comp_warp::{self, WarpKernels};
 use crate::{GpuCompositor, Uploaded};
 
@@ -288,10 +290,28 @@ impl GpuCompositor {
                     }
                     mark(&mut written, d);
                 }
-                // C3.6: the f32 coverage uploaded, one draw (a GPU error: the CPU runs the comp)
+                // C3.6 / LO.5: the f32 coverage (kernel or CPU upload), one draw (a GPU error in
+                // the draw: the CPU runs the comp)
                 Pass::Coverage { tex, coverage, matte } => {
                     let t = usize::from(*tex);
                     let n = (w as usize).saturating_mul(h as usize);
+                    let needed = *matte || written.get(t).copied().unwrap_or(false);
+                    // LO.5: the shapes rasterised by the kernel into the coverage texture
+                    if needed
+                        && let Some(roto) = coverage.roto().filter(|r| (r.w, r.h) == (w as usize, h as usize))
+                        && self.gpu_roto_fill(roto, (w, h))
+                    {
+                        if !self.gpu_coverage(t, scratch, None, *matte, (w, h)) {
+                            return None;
+                        }
+                        mark(&mut written, t);
+                        continue;
+                    }
+                    // otherwise the CPU raster, uploaded
+                    let coverage: &[f32] = if needed { coverage.raster().map_or(&[], |c| &c[..]) } else { &[] };
+                    if needed && coverage.len() == n && n > 0 {
+                        self.comp_roto_cpu = self.comp_roto_cpu.saturating_add(1);
+                    }
                     if coverage.len() != n {
                         if *matte {
                             let px = Arc::new(VideoFrame::rgba_f32(1, 1, vec![0.0, 0.0, 0.0, 1.0]));
@@ -299,7 +319,7 @@ impl GpuCompositor {
                             mark(&mut written, t);
                         }
                     } else if *matte || written.get(t).copied().unwrap_or(false) {
-                        if !self.gpu_coverage(t, scratch, coverage, *matte, (w, h)) {
+                        if !self.gpu_coverage(t, scratch, Some(coverage), *matte, (w, h)) {
                             return None;
                         }
                         mark(&mut written, t);
@@ -640,36 +660,35 @@ impl GpuCompositor {
     /// A Roto coverage pass on slot `t` (C3.6): the coverage uploaded as `R32Float`, then the Matte
     /// `(c, c, c, 1)` drawn into `t`, or `t · c` into `scratch` and the two swapped. False on a GPU
     /// error or without kernels (`t` unchanged).
-    fn gpu_coverage(&mut self, t: usize, scratch: usize, coverage: &[f32], matte: bool, (w, h): (u32, u32)) -> bool {
+    fn gpu_coverage(&mut self, t: usize, scratch: usize, upload: Option<&[f32]>, matte: bool, (w, h): (u32, u32)) -> bool {
         if self.comp_kernels().is_none() {
             return false;
         }
         let device = self.device.clone();
         let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let val = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        if self.comp_coverage.as_ref().is_none_or(|c| c.2 != (w, h)) {
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("comp-coverage"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R32Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            let view = tex.create_view(&Default::default());
-            self.comp_coverage = Some((tex, view, (w, h)));
-        }
-        let Some((cov_tex, cov_view, _)) = self.comp_coverage.as_ref() else { return false };
-        let (cov_tex, cov_view) = (cov_tex.clone(), cov_view.clone());
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &cov_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            bytemuck::cast_slice(coverage),
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w.saturating_mul(4)), rows_per_image: Some(h) },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        );
-        self.uploaded_bytes = self.uploaded_bytes.saturating_add((coverage.len() as u64).saturating_mul(4));
+        let cov_view = match upload {
+            Some(coverage) => {
+                let (cov_tex, cov_view) = self.coverage_texture((w, h));
+                self.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo { texture: &cov_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                    bytemuck::cast_slice(coverage),
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w.saturating_mul(4)), rows_per_image: Some(h) },
+                    wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                );
+                self.uploaded_bytes = self.uploaded_bytes.saturating_add((coverage.len() as u64).saturating_mul(4));
+                cov_view
+            }
+            // (filled by the roto kernel)
+            None => match self.comp_coverage.as_ref().filter(|c| c.2 == (w, h)) {
+                Some((_, v, _)) => v.clone(),
+                None => {
+                    let _ = pollster::block_on(val.pop());
+                    let _ = pollster::block_on(oom.pop());
+                    return false;
+                }
+            },
+        };
         let src_view = if matte {
             self.dummy.clone()
         } else {
@@ -731,6 +750,111 @@ impl GpuCompositor {
             self.put_target(scratch, b);
         }
         true
+    }
+
+    /// The comp-sized `R32Float` coverage texture (made again when the size changes).
+    fn coverage_texture(&mut self, (w, h): (u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
+        if let Some((tex, view, size)) = self.comp_coverage.as_ref()
+            && *size == (w, h)
+        {
+            return (tex.clone(), view.clone());
+        }
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("comp-coverage"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            // (storage: the roto kernel writes it, LO.5; copy source: read back by tests)
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::STORAGE_BINDING,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        self.comp_coverage = Some((tex.clone(), view.clone(), (w, h)));
+        (tex, view)
+    }
+
+    /// The Roto kernel (LO.5; built on first use, None when the device can't run it).
+    pub(crate) fn roto_kernel(&self) -> Option<&RotoKernel> {
+        self.comp_roto_kernel.get_or_init(|| RotoKernel::new(&self.device)).as_ref()
+    }
+
+    /// The prepared shapes rasterised into the coverage texture by the roto kernel (LO.5, see
+    /// [`crate::comp_roto`]). False when the kernel can't run this pass (no kernel, too much
+    /// work, a buffer over the device's limits, a GPU error): the caller uploads the CPU raster.
+    pub(crate) fn gpu_roto_fill(&mut self, roto: &PreparedRoto, (w, h): (u32, u32)) -> bool {
+        let limits = self.device.limits();
+        let side = comp_roto::TILE as u32;
+        let (gx, gy) = (w.div_ceil(side), h.div_ceil(side));
+        if gx.max(gy) > limits.max_compute_workgroups_per_dimension || w.max(h) > limits.max_texture_dimension_2d {
+            return false;
+        }
+        let max = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
+        let Some(data) = comp_roto::pack(roto, w as usize, h as usize, max, self.comp_roto_max_entries) else { return false };
+        let Some(k) = self.roto_kernel() else { return false };
+        let (pipeline, bgl) = (k.pipeline.clone(), k.bgl.clone());
+        let device = self.device.clone();
+        let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let val = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let (_, view) = self.coverage_texture((w, h));
+        let buf = |label: &str, bytes: &[u8], usage: wgpu::BufferUsages| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: if bytes.is_empty() { &[0; 16] } else { bytes },
+                usage,
+            })
+        };
+        let storage = wgpu::BufferUsages::STORAGE;
+        let bufs = [
+            buf("comp-roto-params", &data.params, wgpu::BufferUsages::UNIFORM),
+            buf("comp-roto-shapes", bytemuck::cast_slice(&data.shapes), storage),
+            buf("comp-roto-index", bytemuck::cast_slice(&data.index), storage),
+            buf("comp-roto-geom", bytemuck::cast_slice(&data.geom), storage),
+        ];
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("comp-roto"),
+            layout: &bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: bufs[0].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: bufs[1].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: bufs[2].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: bufs[3].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&view) },
+            ],
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("comp-roto"), timestamp_writes: None });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(gx, gy, 1);
+        }
+        self.queue.submit([enc.finish()]);
+        let errors = [pollster::block_on(val.pop()), pollster::block_on(oom.pop())];
+        if let Some(e) = errors.iter().flatten().next() {
+            // (the texture may be the failed allocation: made again on its next use)
+            log::warn!("the roto kernel failed, roto coverage is rasterised on the CPU: {e}");
+            self.comp_coverage = None;
+            return false;
+        }
+        self.comp_roto_gpu = self.comp_roto_gpu.saturating_add(1);
+        true
+    }
+
+    /// The roto kernel's coverage of `roto` on a `w × h` frame read back (parity tests, timings);
+    /// None when the kernel can't run it.
+    #[cfg(test)]
+    pub(crate) fn roto_coverage_readback(&mut self, roto: &PreparedRoto, (w, h): (u32, u32)) -> Option<Vec<f32>> {
+        if !self.gpu_roto_fill(roto, (w, h)) {
+            return None;
+        }
+        let (tex, _, size) = self.comp_coverage.as_ref()?;
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        let bands = crate::record_readback(&self.device, &mut enc, tex, *size, 4);
+        self.queue.submit([enc.finish()]);
+        let bytes = crate::map_readback(&self.device, &bands?, *size, 4)?;
+        Some(bytes.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect())
     }
 
     /// Slot `i`'s picture read back as premultiplied linear RGBA f32 (C3.5b Paint passes). None

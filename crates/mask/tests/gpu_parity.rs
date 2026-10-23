@@ -72,6 +72,7 @@ fn prompt(t: f32, w: usize, h: usize) -> Prompt {
         points: vec![Point { x: cx / w, y: cy / h, positive: true }],
         rect: Some(Rect { x0: (cx - rx) / w, y0: (cy - ry - rh * 1.8) / h, x1: (cx + rx) / w, y1: (cy + ry) / h }),
         prior: None,
+        prefer_whole: false,
     }
 }
 

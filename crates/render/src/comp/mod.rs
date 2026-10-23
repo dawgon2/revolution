@@ -92,11 +92,51 @@ pub enum Pass {
     /// transparency (Tracker / Planar Tracker corner pins; the GPU runs the same inverse map and
     /// bilinear rule in a kernel, C3.8).
     Warp { src: Tex, dst: Tex, h: crate::track::Homography },
-    /// A Roto node's coverage (C3.6; `w·h` f32 values in 0..1, row-major, rasterised on the CPU
-    /// by [`crate::roto::rasterize`]): `matte` sets `tex` to `(c, c, c, 1)` (the Matte output),
-    /// otherwise `tex` is multiplied by `c` in place (the Alpha output). A coverage of another
-    /// length than the program's pixels leaves `tex` unchanged (matte: black).
-    Coverage { tex: Tex, coverage: Arc<[f32]>, matte: bool },
+    /// A Roto node's coverage (C3.6; `w·h` f32 values in 0..1, row-major, see [`Coverage`]):
+    /// `matte` sets `tex` to `(c, c, c, 1)` (the Matte output), otherwise `tex` is multiplied by
+    /// `c` in place (the Alpha output). A coverage of another length than the program's pixels
+    /// leaves `tex` unchanged (matte: black).
+    Coverage { tex: Tex, coverage: Arc<Coverage>, matte: bool },
+}
+
+/// A Roto node's coverage in a [`Program`]: the prepared (flattened) shapes, rasterised on the
+/// CPU by [`crate::roto::rasterize`] the first time the CPU needs the values (LO.5: the GPU
+/// measures the same edges in its own kernel and only asks for the raster when it can't), or a
+/// raster given as it is.
+#[derive(Debug)]
+pub struct Coverage {
+    roto: Option<crate::roto::PreparedRoto>,
+    raster: OnceLock<Option<Arc<[f32]>>>,
+}
+
+impl Coverage {
+    /// The coverage of `prepared` (`prepared.w × prepared.h` values once rasterised).
+    pub fn from_roto(prepared: crate::roto::PreparedRoto) -> Coverage {
+        Coverage { roto: Some(prepared), raster: OnceLock::new() }
+    }
+
+    /// The prepared shapes (None for a raster given as it is).
+    pub fn roto(&self) -> Option<&crate::roto::PreparedRoto> {
+        self.roto.as_ref()
+    }
+
+    /// The f32 values (rasterised on first use; None when the frame is empty or too large).
+    pub fn raster(&self) -> Option<&Arc<[f32]>> {
+        self.raster.get_or_init(|| self.roto.as_ref().and_then(|p| roto_coverage(p, p.w, p.h))).as_ref()
+    }
+
+    /// The memory it holds now.
+    pub fn byte_size(&self) -> usize {
+        let pts = self.roto.as_ref().map_or(0, |p| p.shapes.iter().map(|s| s.pts.len().saturating_mul(32)).fold(0, usize::saturating_add));
+        let raster = self.raster.get().and_then(Option::as_ref).map_or(0, |r| r.len().saturating_mul(4));
+        pts.saturating_add(raster)
+    }
+}
+
+impl From<Arc<[f32]>> for Coverage {
+    fn from(raster: Arc<[f32]>) -> Coverage {
+        Coverage { roto: None, raster: OnceLock::from(Some(raster)) }
+    }
 }
 
 /// A comp ready to run: passes on `textures` slots of `size`, the result in `out`.
@@ -115,7 +155,7 @@ impl Program {
         let size = |p: &Pass| match p {
             Pass::Image { image, .. } => image.px.len().saturating_mul(4),
             Pass::Layers { layers, .. } => layers.iter().map(|l| l.frame.byte_size()).fold(0, usize::saturating_add),
-            Pass::Coverage { coverage, .. } => coverage.len().saturating_mul(4),
+            Pass::Coverage { coverage, .. } => coverage.byte_size(),
             _ => 0,
         };
         self.passes.iter().map(size).fold(0, usize::saturating_add)
@@ -296,7 +336,8 @@ fn compile_into(
     // from expr::parse_cached) (ADR 0009 §1.6)
     // (C4.3: inside a group, through the parent's frame for names the group doesn't have)
     let frame = scope.expr_frame_in(ctx.t, group.frame);
-    let evaluated: BTreeMap<NodeId, CompNode> = if scope.nodes.iter().any(|n| n.params.values().any(|p| p.expression.is_some())) {
+    // (LO.4: a Color node's grade and a Text node's layer settings too: `param_store`)
+    let evaluated: BTreeMap<NodeId, CompNode> = if scope.nodes.iter().any(|n| n.param_store().values().any(|p| p.expression.is_some())) {
         scope.nodes.iter().filter_map(|n| Some((n.id, frame.node(n.id)?))).collect()
     } else {
         BTreeMap::new()
@@ -403,27 +444,28 @@ fn compile_into(
                     }
                     dst
                 }
-                // C3.5b: roto coverage rasterised on the CPU (both paths), paint strokes
+                // C3.5b: roto coverage (rasterised by whichever path runs it, LO.5), paint strokes
                 CompKind::Roto { roto, output } => {
                     // C3.7: shapes linked to a Tracker / Planar Tracker move with it
                     let size = (f64::from(comp.width.max(1)), f64::from(comp.height.max(1)));
                     let roto = track::linked_roto(roto, |id| nodes.get(&id).copied().map(|n| &n.kind), comp.rate, t, size);
                     let prepared = crate::roto::prepare(&roto, t, w, h, px_scale);
+                    // (rasterised when a path needs the values: LO.5, the GPU measures the edges)
+                    let fits = w.checked_mul(h).is_some_and(|n| n > 0 && n <= crate::roto::MAX_PIXELS);
                     match output {
                         RotoOutput::Matte => {
                             let dst = slots.take()?;
-                            match roto_coverage(&prepared, w, h) {
-                                Some(coverage) => passes.push(Pass::Coverage { tex: dst, coverage, matte: true }),
-                                None => passes.push(Pass::Fill { dst, color: [0.0, 0.0, 0.0, 1.0] }),
+                            if fits {
+                                passes.push(Pass::Coverage { tex: dst, coverage: Arc::new(Coverage::from_roto(prepared)), matte: true });
+                            } else {
+                                passes.push(Pass::Fill { dst, color: [0.0, 0.0, 0.0, 1.0] });
                             }
                             dst
                         }
                         RotoOutput::Alpha => {
                             let tex = writable(0, slots, passes)?;
-                            if !prepared.shapes.is_empty()
-                                && let Some(coverage) = roto_coverage(&prepared, w, h)
-                            {
-                                passes.push(Pass::Coverage { tex, coverage, matte: false });
+                            if !prepared.shapes.is_empty() && fits {
+                                passes.push(Pass::Coverage { tex, coverage: Arc::new(Coverage::from_roto(prepared)), matte: false });
                             }
                             tex
                         }
@@ -697,6 +739,7 @@ pub fn execute_cpu(p: &Program) -> Image {
             }
             Pass::Coverage { tex: t, coverage, matte } => {
                 let n = w.saturating_mul(h);
+                let coverage: &[f32] = coverage.raster().map_or(&[], |c| &c[..]);
                 if *matte {
                     let img = if coverage.len() == n {
                         Image { w, h, px: coverage.iter().flat_map(|c| [*c, *c, *c, 1.0]).collect() }
@@ -801,6 +844,13 @@ fn static_cache() -> &'static Mutex<StaticCache> {
 /// node (its LUTs live outside the comp), no keyframe anywhere in it (masks, text layer) and no
 /// expression on time or another node.
 fn static_kind(comp: &Comp, n: &CompNode) -> bool {
+    static_kind_in(comp, n, 0)
+}
+
+/// [`static_kind`] `depth` groups down. A Group is static when every node inside is (its Group
+/// Inputs read the group's own inputs, which [`static_tops`] checks like any node's; LO.4), at
+/// most [`filmcraft_project::comp::MAX_GROUP_DEPTH`] deep.
+fn static_kind_in(comp: &Comp, n: &CompNode, depth: usize) -> bool {
     // (Paint: strokes show by time without a keyframe; a roto shape following a tracker moves
     // with the tracker's keyframes, which are not in this node)
     if let CompKind::Roto { roto, .. } = &n.kind
@@ -808,11 +858,13 @@ fn static_kind(comp: &Comp, n: &CompNode) -> bool {
     {
         return false;
     }
-    // (C4.2: an expression on time or on another node changes the picture without changing this node;
-    // C4.3: a Group isn't cached as one picture: its inside reads its inputs)
-    !matches!(n.kind, CompKind::MediaIn { .. } | CompKind::Color { .. } | CompKind::Paint { .. } | CompKind::Group { .. })
-        && serde_json::to_string(n).is_ok_and(|j| !j.contains("\"keyframes\""))
-        && comp.node_expressions_static(n.id)
+    let own = serde_json::to_string(n).is_ok_and(|j| !j.contains("\"keyframes\"")) && comp.node_expressions_static(n.id);
+    if let CompKind::Group { comp: inner, .. } = &n.kind {
+        let group_input = |m: &CompNode| matches!(m.kind, CompKind::MediaIn { source: filmcraft_project::comp::MediaInSource::GroupInput { .. }, .. });
+        return own && depth < filmcraft_project::comp::MAX_GROUP_DEPTH && inner.nodes.iter().all(|m| group_input(m) || static_kind_in(inner, m, depth + 1));
+    }
+    // (C4.2: an expression on time or on another node changes the picture without changing this node)
+    !matches!(n.kind, CompKind::MediaIn { .. } | CompKind::Color { .. } | CompKind::Paint { .. }) && own
 }
 
 /// The static subgraphs worth caching, by their top node: each top node is static (its whole
@@ -849,7 +901,11 @@ fn static_tops(comp: &Comp, order: &filmcraft_project::dag::Order) -> Vec<(NodeI
             }
         }
         let worth = sub.iter().filter_map(|id| nodes.get(id)).any(|x| {
-            !x.bypass && matches!(x.kind, CompKind::Text { .. } | CompKind::Blur | CompKind::Key { .. } | CompKind::Mask { .. } | CompKind::Roto { .. })
+            !x.bypass
+                && matches!(
+                    x.kind,
+                    CompKind::Text { .. } | CompKind::Blur | CompKind::Key { .. } | CompKind::Mask { .. } | CompKind::Roto { .. } | CompKind::Group { .. }
+                )
         });
         if worth {
             tops.push((n, sub));

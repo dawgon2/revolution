@@ -5,7 +5,96 @@ newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), t
 [`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (newest: **Q61** FYI, AI2 explainer choice), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
 
-## Exact next step (2026-10-22 ~17:30 EDT, scheduled run): G4.1, G4.2, G4.4 merged; G4.3 lane running (FULL, Opus, §1a.127)
+## Status (2026-10-23 03:34 EDT, scheduled run): Phase LO in progress: **LO.1, LO.2, LO.3 floors, LO.6a model pref, LO.6c nested matte hash, LO.7a Source End on VFR, LO.4a C4-TESTS, LO.5a confidence, LO.5b Corner Pin points, LO.7, LO.4b static groups, LO.5c linked roto keys, LO.3 (lane merged), LO.4 groups-analyse + expressions (lane merged; tracker-data expressions refused by design), LO.4 i18n done**; LO.5 GPU roto done; next lane: SAM 2 decoder on GPU + person prompt; open in LO.6: person prompt, SAM 2 decoder on GPU
+
+LO.1: release workflow carries every format again (public-repo guard kept); `update::newer_with` offers the newest
+release carrying this install's file; Q68 answered. LO.2: the "load-flaky" UI tests were **not load-flaky**: they
+failed deterministically in the optimized `ci` profile (and passed in debug). The drags measured or started before
+the Program picture / panels finished arriving from the frame workers, so the layout moved mid-gesture; the ask box
+waited a fixed 200 × 10 ms. Fix: `settle()` (frame workers idle for 4 frames) before the drags in `grade_ui` /
+`magic_mask_ui`, and a 60 s clock deadline in `coach_ui::ask_assistant`. **Lesson: reproduce ci-only UI failures
+with the `target/ci/deps/ui-*` binary, not the debug one.** Q69 (v4b asset) still open.
+
+## Exact next step (2026-10-23 ~00:55 EDT, owner live): finish AI2b → **Phase LO (leftovers)** → 0.3.1 → pause (§1a.133)
+
+**Owner decisions (FORK-PLAN §1a.133):** Actions works again (Q68 resolved): **Revolution 0.3.0 is fully released**
+(run 39894008609 green, 16 files + SHA256SUMS, 2026-10-23 03:47 UTC); stop retrying the 0.3.0 workflow. Public-repo
+builds cost nothing, so **every release carries every format** again (§1a.132's tarball-only rule withdrawn).
+**Order:** (1) AI2b item 6 exactly as below (v4b ship / don't ship), tag `ai-2b`, **no `.fork-paused`**. (2) Phase LO,
+LEAN, items in this order (code / CPU items first while `fc-train-v4c` holds the GPU; GPU tests and benches only after
+it ends). Each item: fix + test, commit `LO.n: …`, §7 + this file. Spread parallel lanes as usual (§1a.120-style
+worktrees, never two Fable lanes; Opus).
+- **LO.1 release:** revert the patch-release skips in `.github/workflows/revolution-release.yml` (keep the public-repo
+  guard); `update::newer` picks the newest release that has this install's asset (+ test); mark Q68 answered in
+  OWNER-QUESTIONS.
+- **LO.2 flaky tests:** make these load-proof (they pass alone): `grade_ui::hdr_tab_edits_the_zone_wheels`,
+  `grade_ui::qualifier_3d_strokes_on_the_program_picture`, the 2 `coach_ask_box_*`, `av_sync_ui`. Fix the cause
+  (frame waits / settle loops), never `#[ignore]`.
+- **LO.3 G4:** warper + 3D qualifier settings keyframable; 3D qualifier strokes drawn on the Program after they are
+  made; Planar button on Effect Controls mask rows; coach eval above its floor (raise floors, never lower); restore the
+  creative coverage floor to 581.
+- **LO.4 C4:** expressions on Text / Color-node / tracker params; Analyse / Track inside groups; groups in the static
+  cache; the 64 MiB list-budget test (C4-TESTS); de / fr / ja strings for C3 / C4 / G4 UI (C4-I18N).
+- **LO.5 C3:** tracker confidence shown in the UI; Tracker → Corner Pin lets you choose the four points (not just the
+  first four); roto keyframes set after linking stored in a consistent frame (or converted on save; keep old projects
+  loading); GPU roto rasteriser (CPU 33 ms at 6.2K); pool coach floor back to 150.
+- **LO.6 G3:** Magic Mask Better / Faster choice persisted in prefs; `mode: person` changes the prompt;
+  nested-sequence clips in the matte epoch hash; SAM 2 decoder on the GPU (CPU ~145 ms), f16 / faster matmul if cheap.
+- **LO.7 Y2:** soft-telecine MPEG-2 "Variable" label (ffmpeg fixture in `target/fixtures/`); Source goEnd / goOut on VFR
+  clips land on the true last frame.
+- **Not in LO** (need the owner or are by design): own-voice re-measure (no recordings; the stronger voice model is
+  already done: MossFormer2, A3.7, render default since 2026-10-22), Magic Mask twins (known limit), timeline items keeping their length after Interpret as CFR
+  (documented behaviour).
+(3) Full `cargo xtask ci`, tag `leftovers-1`, local build (§1a.9), cleanup.sh. (4) Publish **Revolution 0.3.1** (AI2b +
+LO, every format), verify green. (5) `.fork-paused` with `resume-after: 2026-10-27T04:05:00-04:00` (none if past it),
+then AI7 → D → 8. **Usage guard:** weekly all-models ≥ 90 % → stop at an item boundary, ship what's done as
+`leftovers-1` / 0.3.1, list the rest as LO2 (after AI7), pause.
+
+## Was: Exact next step (2026-10-22 ~21:40 EDT, scheduled run): AI2b in progress: items 1–3 done, **smol360-v4 training**
+
+**Done (FORK-PLAN §7, 21:36):** AI2b.1 data generators (`explain_traindata --g4`, `comp_traindata --c34`; default 0
+= data-v3 byte for byte), AI2b.2 checker test for G4's tools, AI2b.3 held-out **set 6** (`eval_cases_v6`, 13 `h6_`
+G4 node cases; `explain_score --set 6`) and **set 7** (`comp_eval_cases_v7`, 8 `c7_` C3 / C4 lines;
+`comp_traindata --dump-cases --set 7`); `score-sets.sh` scores sets 1–7. Roto 3-sentence line bug fixed.
+**Update 23:15:** v4 trained and scored (not shipped: regresses sets 1–2, see TRAINING.md); item 5 (Coach questions, floor 129) done. **Now running: `runs/v4b.sh` as unit `fc-train-v4c`** (same data, 150-min cap; started 23:14, ≈ 2.6 h + scoring), log `runs/v4b.driver.log`, scores `runs/smol360-v4b.sets.out`. Ship v4b if it beats v3 (36 / 38 / 12 / 32 / 20 on sets 1–5; ties count as not worse but at least one set must improve) and covers sets 6–7 at least as well as v3 (13 / 13, 5 / 8); else keep v3 shipped, log why, and close AI2b with the data / sets / Coach work (tag `ai-2b`). Was: **Running:** `~/Apps/filmcraft-train/runs/v4.sh` as user unit `fc-train-v4b` (started 21:35; train ≈ 2–2.5 h on the
+RX 6700 XT, then quantize, then `score-sets.sh smol360-v4` (sets 1–7, CPU) and v3 on sets 6–7 as the baseline).
+Check with `systemctl --user is-active fc-train-v4b` and `tail ~/Apps/filmcraft-train/runs/v4.driver.log` (ends
+`DONE`, or `*FAIL`); **never start a second training**; don't benchmark or run GPU-heavy work while it is active.
+Scores: `runs/smol360-v4.sets.out`, `runs/smol360-v3.sets67.out`, details `runs/<name>/sets/score-<n>.*`.
+**Next while it trains (CPU / docs):** item 5, Coach: questions for the new guide sections in
+`docs/fork/coach-eval/questions.toml` (mixer, VFR, Magic Mask, voice isolation, trackers / roto / paint,
+expressions / groups / templates, warper / HDR / 3D qualifier / planar windows), re-measure `ai_pool` / coach floors
+(raise, never lower; the coach eval sits at its floor 115 / 138). **Then item 6:** ship `explainer-smol360-v4` if it
+beats v3 on sets 1–5 and covers sets 6–7 at least as well as the template (TRAINING.md "publish"; the model release
+needs `gh release upload`, which an unattended run may be refused: then log it in OWNER-QUESTIONS like Q68 and point
+the catalogue at it once uploaded), tag `ai-2b`, then the timed pause (below).
+
+## Was: Exact next step (2026-10-22 ~21:20 EDT, scheduled run): G4 accepted (`grade-4`), 0.3.0 source published; next **AI2b**
+
+**G4 done** (FORK-PLAN §7, 2026-10-22 14:30 → 21:20): colour warper (`CO_WARP = 29`), HDR zone wheels
+(`CO_ZONE_WHEELS = 30`), 3D qualifier (`CO_KEY3D = 31`), planar-tracked windows (`masks.trackPlanar`). Node order:
+despill → primaries → HDR zones → warper → curves / LUT / roll-off / grain. Build `~/Apps/filmcraft-builds/grade-4`
+(`latest` → it; launcher valid). Tags `grade-4`, `revolution-0.3.0` (private, on 189a10a6).
+**Revolution 0.3.0:** snapshot `77b002d9` (parent `2a53f649` = 0.2.2) on public `fork` + public tag
+`revolution-0.3.0`; **the installers / GitHub release are NOT built: Actions is disabled on dawgon2/revolution**
+(Q68). Each run: try `gh workflow run revolution-release.yml -R dawgon2/revolution --ref revolution-0.3.0 -f
+tag=revolution-0.3.0 -f publish=true`; if it is accepted, watch the run and log it; until then don't retry more than
+once per run.
+**Next: Phase AI2b** (AI-PLAN, §1a.128 (ii)): retrain the explainer as `smol360-v4` on AI2's recipe and refresh the
+Coach's question pool / guide coverage on everything since AI2 (mixer, VFR, Magic Mask, voice isolation, trackers /
+roto / paint, expressions / groups / templates, G4's warper / HDR / 3D qualifier / planar windows); publish the model
+as its own release asset like v3 (also needs Actions or a manual `gh release upload`). Mode: **LEAN floor returns**
+(§1a.96, §1a.127); training is GPU time. **When AI2b is accepted (§1a.129 / §1a.131):** write `.fork-paused`
+containing `resume-after: 2026-10-27T04:05:00-04:00` (no pause if AI2b ends after that time), then AI7 (LEAN) → D → 8.
+Not R1 (§1a.129 (ii)).
+**Release policy (§1a.132):** x.y.0 releases carry every format; patch releases only the portable tarballs (workflow
+done). **Owed before the first patch release:** updater skips releases without its asset (see §1a.132).
+**Owed from G4 (non-blocking):** 2 new load-flaky UI drags (`grade_ui::hdr_tab_edits_the_zone_wheels`,
+`grade_ui::qualifier_3d_strokes_on_the_program_picture`; pass alone); warper / 3D settings not keyframed; 3D strokes
+not drawn after making them; no Planar button on Effect Controls mask rows; coach eval sits exactly at its floor
+(115 / 138) and creative coverage floor is 580 (was 581).
+
+## Was: Exact next step (2026-10-22 ~17:30 EDT, scheduled run): G4.1, G4.2, G4.4 merged; G4.3 lane running (FULL, Opus, §1a.127)
 
 Merged and pushed: **G4.1 colour warper** (`CO_WARP = 29`, Warper tab), **G4.2 HDR zone wheels**
 (`CO_ZONE_WHEELS = 30`, HDR tab), **G4.4 planar-tracked windows** (`masks.trackPlanar` / `clearPlanar`); details in

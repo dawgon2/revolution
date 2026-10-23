@@ -1,4 +1,5 @@
-//! Roto shape coverage (CPU, C3.3; the GPU comp uploads this f32 coverage as it is, C3.6).
+//! Roto shape coverage (CPU, C3.3). The GPU comp measures the same flattened edges in a kernel
+//! (LO.5, `filmcraft_gpu`'s `comp_roto`) and falls back to uploading this f32 coverage (C3.6).
 //!
 //! [`prepare`] evaluates every enabled [`RotoShape`] of a [`Roto`] at a time and flattens it to a
 //! closed polygon in working pixels whose vertices carry the inner / outer feather distance
@@ -82,15 +83,16 @@ pub struct FlatVertex {
     pub outer: f32,
 }
 
-/// One polygon edge with its reach.
+/// One polygon edge with its reach (public for the GPU rasteriser, LO.5, which measures the
+/// same edges).
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Edge {
-    a: FlatVertex,
-    b: FlatVertex,
+pub struct Edge {
+    pub a: FlatVertex,
+    pub b: FlatVertex,
     /// Distance beyond which this edge no longer changes the coverage.
-    band: f32,
+    pub band: f32,
     /// Its band's extent: `[x0, y0, x1, y1]`.
-    reach: [f32; 4],
+    pub reach: [f32; 4],
 }
 
 /// One enabled shape ready for rasterizing.
@@ -303,9 +305,10 @@ impl Edge {
         let wo = self.a.outer + (self.b.outer - self.a.outer) * t;
         Some(falloff(s - (wi - wo) * 0.5, wi + wo))
     }
-    /// Whether the edge crosses the horizontal line at `y` (half-open rule).
+    /// Whether the edge crosses the horizontal line at `y` (half-open rule): the crossing's `x`
+    /// and winding direction.
     #[inline]
-    fn crosses(&self, y: f32) -> Option<(f32, i32)> {
+    pub fn crosses(&self, y: f32) -> Option<(f32, i32)> {
         let (a, b) = (self.a.p, self.b.p);
         if (a[1] <= y) == (b[1] <= y) {
             return None;
@@ -316,6 +319,11 @@ impl Edge {
 }
 
 impl PreparedShape {
+    /// The outline's edges, sorted by the top of their band (empty when the shape has no area).
+    pub fn edges(&self) -> &[Edge] {
+        &self.edges
+    }
+
     #[inline]
     fn value(&self, c: f32) -> f32 {
         self.opacity * if self.inverted { 1.0 - c } else { c }

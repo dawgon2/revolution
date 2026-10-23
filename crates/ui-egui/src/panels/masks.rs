@@ -622,6 +622,34 @@ pub fn path_value(app: &mut FilmcraftApp, ui: &mut egui::Ui, clip: ClipId, effec
             }
         }
     });
+    // planar track (fork LO.3, as the Color page's windows, G4.4): both ways from the playhead;
+    // clicking while it runs stops it (keeping what was tracked); ✕ clears a planar track
+    let planar = app.session.planar_jobs.iter().find(|j| j.target == target).map(|j| j.job);
+    let (label, tip) = match planar {
+        Some(_) => (tl!("Stop"), tl!("Stop planar tracking (keeps what was tracked)")),
+        None => (tl!("Planar"), tl!("Track the mask as a plane (a sign, a screen, a wall), both ways from the playhead")),
+    };
+    let on = m.planar.is_some();
+    let r = ui.add_enabled(planar.is_some() || running.is_none(), egui::Button::new(label).small().selected(on && planar.is_none())).on_hover_text(tip);
+    app.auto.add(&format!("effectControls.{}.mask{k}.track.planar", e.effect), r.rect, tip);
+    if r.clicked() {
+        match planar {
+            Some(job) => actions.push(("jobs.cancel".into(), json!({"job": job}))),
+            None => {
+                actions.push(("masks.select".into(), json!({"clip": clip.0, "effect": effect, "mask": k})));
+                actions.push(("masks.trackPlanar".into(), json!({"clip": clip.0, "effect": effect, "mask": k})));
+            }
+        }
+    }
+    if on && planar.is_none() {
+        let tip = tl!("Clear the planar track (the mask stays where it is seen)");
+        let r = ui.small_button(tl!("✕ planar")).on_hover_text(tip);
+        app.auto.add(&format!("effectControls.{}.mask{k}.track.clearPlanar", e.effect), r.rect, tip);
+        if r.clicked() {
+            actions.push(("masks.clearPlanar".into(), json!({"clip": clip.0, "effect": effect, "mask": k})));
+        }
+    }
+    let running = running.or(planar);
     if let Some(job) = running
         && let Some(j) = app.session.jobs.iter().find(|j| j.id == job)
     {

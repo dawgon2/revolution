@@ -301,16 +301,9 @@ impl Segmenter for MobileSam {
 
     fn segment(&self, embedding: &Embedding, prompt: &Prompt) -> Result<Segment, MaskError> {
         // One clicked point is ambiguous (shirt / person / group): ask for SAM's three
-        // candidates and keep the best-scored; otherwise one mask.
-        let (points, rect) = prompt.checked()?;
-        let multimask = points.len() == 1 && rect.is_none() && prompt.prior.is_none();
-        let all = self.decode(embedding, prompt, multimask)?;
-        all.into_iter()
-            .fold(None, |b: Option<Segment>, s| match b {
-                Some(b) if b.score >= s.score => Some(b),
-                _ => Some(s),
-            })
-            .ok_or_else(|| MaskError::Failed("the decoder gave no mask".into()))
+        // candidates and keep the best-scored (Person mode: the largest of the well-scored
+        // ones, for any points-only prompt); otherwise one mask.
+        crate::segment_by_candidates(self, embedding, prompt)
     }
 
     fn candidates(&self, embedding: &Embedding, prompt: &Prompt, multimask: bool) -> Result<Vec<Segment>, MaskError> {

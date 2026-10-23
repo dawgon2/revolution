@@ -21,7 +21,7 @@ use std::ops::Bound::{Excluded, Unbounded};
 use std::sync::Arc;
 
 use super::config::{D_MODEL, IMAGE_SIZE, MAX_OBJ_PTRS, MEM_DIM};
-use super::heads::{HeadOutput, HeadPoint, Sam2Heads};
+use super::heads::{HeadOutput, HeadPoint, Pick, Sam2Heads};
 use super::{EMBED_TOKENS, MEM_MASK_SIDE, Sam2Compute, Sam2Features, bilinear_plane, prepare_input, sine_position};
 use crate::video::{Direction, VideoMask, VideoSegmenter};
 use crate::{LOW_RES, MaskError, Prompt, RgbImage, Segment};
@@ -403,8 +403,11 @@ impl VideoSegmenter for Sam2Tracker {
             self.frames.retain(|i, o| o.cond || i.abs_diff(frame) > r);
         }
         let pix = self.conditioned(&feats, frame, init, reverse)?;
-        let multimask = points.len() <= 1;
-        let out = self.heads.forward(&pix, &feats.s0, &feats.s1, &points, previous.as_deref(), multimask, None)?;
+        // Person mode with points only: ask for the candidates and keep the whole figure
+        let whole = prompt.prefer_whole && prompt.rect.is_none() && previous.is_none();
+        let multimask = points.len() <= 1 || whole;
+        let pick = if whole { Pick::Whole } else { Pick::Best };
+        let out = self.heads.forward(&pix, &feats.s0, &feats.s1, &points, previous.as_deref(), multimask, pick)?;
         self.last_candidates = out.candidates.clone();
         let mut mask = out.mask.clone();
         fill_holes(&mut mask, LOW_RES, FILL_HOLE_AREA);
@@ -429,11 +432,11 @@ impl VideoSegmenter for Sam2Tracker {
         // the neighbouring frame in the tracking direction, if it is still in memory
         let neighbour = if reverse { frame.checked_add(1) } else { frame.checked_sub(1) };
         let prev = neighbour.and_then(|n| self.frames.get(&n)).filter(|o| o.score > 0.0).map(|o| o.mask.as_slice());
-        let prefer = match self.selection {
-            Selection::Reference => None,
-            Selection::Consistent { weight } => prev.map(|p| (p, weight)),
+        let pick = match (self.selection, prev) {
+            (Selection::Consistent { weight }, Some(mask)) => Pick::Consistent { mask, weight },
+            _ => Pick::Best,
         };
-        let mut out = self.heads.forward(&pix, &feats.s0, &feats.s1, &pad, None, true, prefer)?;
+        let mut out = self.heads.forward(&pix, &feats.s0, &feats.s1, &pad, None, true, pick)?;
         self.last_candidates = out.candidates.clone();
         // Re-anchoring: the nearest prompted frame's mask (the user-confirmed size) is the yardstick
         let cond_ref = self.frames.iter().filter(|(_, o)| o.cond && o.score > 0.0).min_by_key(|(i, _)| i.abs_diff(frame)).map(|(_, o)| area_box(&o.mask));
@@ -456,7 +459,7 @@ impl VideoSegmenter for Sam2Tracker {
             ];
             // on the frame alone (no memory): the memory is what lost the changed part
             let alone = self.conditioned(&feats, frame, true, reverse)?;
-            let again = self.heads.forward(&alone, &feats.s0, &feats.s1, &corners, None, false, None)?;
+            let again = self.heads.forward(&alone, &feats.s0, &feats.s1, &corners, None, false, Pick::Best)?;
             let (aa, _) = area_box(&again.mask);
             let covered = again.mask.iter().zip(&out.mask).filter(|(a, o)| **a > 0.0 && **o > 0.0).count();
             // keep it when it holds what was tracked and is about the prompted size
@@ -560,6 +563,78 @@ mod tests {
         let nanmem = Arc::new(Fake { short_features: false, nan_memory: true });
         let mut tr = Sam2Tracker::new(nanmem, heads, 10).unwrap();
         assert!(matches!(tr.add_prompt(0, &img, &click), Err(MaskError::Failed(_))));
+    }
+
+    /// A device whose mask decoder answers with candidates of different extent: mask 0 (the
+    /// single-mask output) 80 columns, then a part (40, the best IoU), the whole subject (120, a
+    /// little lower) and a spill (250, far lower); or fails, when `broken`.
+    struct Candidates {
+        broken: bool,
+    }
+
+    impl Sam2Compute for Candidates {
+        fn name(&self) -> String {
+            "candidates".into()
+        }
+        fn image(&self, i: &[f32]) -> Result<Sam2Features, MaskError> {
+            Fake { short_features: false, nan_memory: false }.image(i)
+        }
+        fn memory_attention(&self, feat: &[f32], _: &[f32], _: &[f32], _: usize) -> Result<Vec<f32>, MaskError> {
+            Ok(feat.to_vec())
+        }
+        fn memory_encoder(&self, _: &[f32], _: &[f32]) -> Result<Vec<f32>, MaskError> {
+            Ok(vec![0.0; EMBED_TOKENS * MEM_DIM])
+        }
+        fn mask_decoder(&self, _: &super::super::DecoderInput<'_>) -> Option<Result<super::super::DecoderRaw, MaskError>> {
+            if self.broken {
+                return Some(Err(MaskError::Failed("device lost".into())));
+            }
+            let cols = |n: usize| (0..LOW_RES * LOW_RES).map(|i| if i % LOW_RES < n { 10.0 } else { -10.0 }).collect::<Vec<f32>>();
+            Some(Ok(super::super::DecoderRaw {
+                masks: vec![cols(80), cols(40), cols(120), cols(250)],
+                ious: vec![0.97, 0.95, 0.9, 0.5],
+                tokens: vec![vec![0.0; D_MODEL]; 4],
+                object_score: 5.0,
+            }))
+        }
+    }
+
+    /// Person mode (`prefer_whole`) keeps the whole figure among the decoder's candidates on
+    /// the first frame, Object mode the best-scored part; a box or two points in Object mode
+    /// keep the single mask; a failing device decoder hands over to the CPU.
+    #[test]
+    fn person_mode_takes_the_whole_figure_on_the_prompted_frame() {
+        use crate::sam2::weights::{Sam2Weights, expected};
+        use crate::sam2::{Sam2Config, Sam2Size};
+        use crate::{Point, Rect};
+        use candle_core::{DType, Device, Tensor};
+        let cfg = Sam2Config::builtin(Sam2Size::BasePlus);
+        let t = expected(&cfg).into_iter().map(|(n, s)| (n, Tensor::zeros(s.as_slice(), DType::F32, &Device::Cpu).unwrap())).collect();
+        let w = Arc::new(Sam2Weights::from_tensors(cfg, t).unwrap());
+        let dev: Arc<dyn Sam2Compute> = Arc::new(Candidates { broken: false });
+        let heads = Arc::new(Sam2Heads::new(w.clone()).unwrap().with_decoder(dev.clone()));
+        let img = RgbImage::new(32, 18, vec![100; 32 * 18 * 3]).unwrap();
+        let click = Prompt { points: vec![Point { x: 0.5, y: 0.5, positive: true }], ..Prompt::default() };
+        let two = Prompt { points: vec![Point { x: 0.5, y: 0.5, positive: true }, Point { x: 0.6, y: 0.5, positive: true }], ..Prompt::default() };
+        let person = |p: &Prompt| Prompt { prefer_whole: true, ..p.clone() };
+        let boxed = Prompt { rect: Some(Rect { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.9 }), ..person(&click) };
+        let cols = |m: &VideoMask| m.segment.logits.iter().filter(|v| **v > 0.0).count() / LOW_RES;
+        let first = |p: &Prompt| {
+            let mut tr = Sam2Tracker::new(dev.clone(), heads.clone(), 4).unwrap();
+            cols(&tr.add_prompt(0, &img, p).unwrap())
+        };
+        assert_eq!(first(&click), 40);
+        assert_eq!(first(&person(&click)), 120);
+        assert_eq!(first(&two), 80);
+        assert_eq!(first(&person(&two)), 120);
+        assert_eq!(first(&boxed), 80);
+        assert!(heads.decoder_on_device());
+        // a device decoder error: the CPU decodes (zero weights: nothing visible) and stays on
+        let broken: Arc<dyn Sam2Compute> = Arc::new(Candidates { broken: true });
+        let heads = Arc::new(Sam2Heads::new(w).unwrap().with_decoder(broken.clone()));
+        let mut tr = Sam2Tracker::new(broken, heads.clone(), 4).unwrap();
+        assert!(tr.add_prompt(0, &img, &person(&click)).is_ok());
+        assert!(!heads.decoder_on_device());
     }
 
     /// A square on a plain background, clicked once and followed for two frames with the CPU

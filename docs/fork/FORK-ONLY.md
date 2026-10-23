@@ -30,3 +30,11 @@ Removed in U0.2 (2026-10-13, one VA-API stack): `crates/platform/src/va_hevc.rs`
 `crates/platform/src/vaapi/va.rs` is removed too, so a contribution touching the VA-API decoder must
 bring the fork's `va.rs` display layer with it, or adapt to upstream's.
 
+
+- **Workflow repository guard (2026-10-22):** `.github/workflows/{revolution-release,freebsd,windows-arm64}.yml`
+  entry jobs run only when `github.repository == 'dawgon2/revolution'` (public). The private `dawgon2/filmcraft-fork`
+  ran the full release build on every `revolution-*` tag plus the nightly FreeBSD / weekly ARM64 builds, used up the
+  Free plan's private-repo Actions quota and got Actions blocked account-wide (Q68).
+- **No scheduled FreeBSD / Windows ARM64 builds (2026-10-22, owner):** GitHub paused the public fork's workflows
+  ("due to the scale of GitHub Actions usage"); the nightly FreeBSD and weekly ARM64 schedules inherited from upstream
+  were removed (manual `workflow_dispatch` still works) and both workflows disabled on dawgon2/revolution.

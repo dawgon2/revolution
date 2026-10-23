@@ -42,6 +42,7 @@ pub mod adapter_pick;
 pub mod colorops;
 mod comp;
 mod comp_paint;
+mod comp_roto;
 mod comp_warp;
 pub mod export_renderer;
 pub mod fx;
@@ -152,6 +153,13 @@ pub struct GpuCompositor {
     pub(crate) comp_paint_cpu: u64,
     /// [`comp_paint::MAX_TILE_ENTRIES`] (lower in tests).
     pub(crate) comp_paint_max_entries: usize,
+    /// The Roto coverage kernel (LO.5; built on first use, None: unavailable).
+    comp_roto_kernel: std::sync::OnceLock<Option<comp_roto::RotoKernel>>,
+    /// Roto passes rasterised by the GPU kernel / on the CPU and uploaded (stats, tests).
+    pub(crate) comp_roto_gpu: u64,
+    pub(crate) comp_roto_cpu: u64,
+    /// [`comp_roto::MAX_TILE_ENTRIES`] (lower in tests).
+    pub(crate) comp_roto_max_entries: usize,
     pub gpu_transitions: u64,
     pub cpu_transitions: u64,
     /// Total bytes uploaded (stats).
@@ -631,6 +639,10 @@ impl GpuCompositor {
             comp_paint_gpu: 0,
             comp_paint_cpu: 0,
             comp_paint_max_entries: comp_paint::MAX_TILE_ENTRIES,
+            comp_roto_kernel: std::sync::OnceLock::new(),
+            comp_roto_gpu: 0,
+            comp_roto_cpu: 0,
+            comp_roto_max_entries: comp_roto::MAX_TILE_ENTRIES,
             gpu_transitions: 0,
             cpu_transitions: 0,
             uploaded_bytes: 0,

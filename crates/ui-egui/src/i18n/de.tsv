@@ -384,3 +384,232 @@
 	Zoom Out	Verkleinern
 	Zoom to Sequence	Auf Sequenz zoomen
 	Project Notes	Projektnotizen
+
+# Compositor (fork C3 / C4), Magic Mask (G3) and grade (G4) strings (LO.4); written from the plain meaning of the English text.
+	Cancel	Abbrechen
+	Clear All	Alle löschen
+	Name:	Name:
+	Delete	Löschen
+	Reset	Zurücksetzen
+	Hold	Halten
+	Opacity	Deckkraft
+	None	Keine
+	Key	Key
+	Hue	Farbton
+	Soften	Weichzeichnen
+	Refine	Verfeinern
+	Feather	Weiche Kante
+	Reference	Referenz
+	Create ellipse mask	Ellipsenmaske erstellen
+	Create 4-point polygon mask	Vierpunkt-Polygonmaske erstellen
+	Free draw bezier	Bézier-Maske frei zeichnen
+	Create linear gradient mask	Linearen Verlaufsmaske erstellen
+	Click in the Program monitor to place mask points (drag for curves); click the first point or press Enter to close	Im Programmmonitor klicken, um Maskenpunkte zu setzen (für Kurven ziehen); zum Schließen den ersten Punkt anklicken oder die Eingabetaste drücken
+	Delete Mask	Maske löschen
+	Inverted	Invertiert
+	Drag: move · Alt-click: smooth/corner · Cmd-click: delete	Ziehen: verschieben · Alt+Klick: glatt/Ecke · Cmd+Klick: löschen
+	Track selected mask backward	Ausgewählte Maske rückwärts tracken
+	Track selected mask backward 1 frame	Ausgewählte Maske 1 Frame rückwärts tracken
+	Track selected mask forward 1 frame	Ausgewählte Maske 1 Frame vorwärts tracken
+	Track selected mask forward	Ausgewählte Maske vorwärts tracken
+	Stop tracking	Tracking beenden
+	Tracking method: {method}	Tracking-Methode: {method}
+	Toggle animation	Animation ein-/ausschalten
+	Size	Größe
+	Remove	Entfernen
+	Auto	Auto
+	Clone	Klonen
+	Invert	Invertieren
+	Luma	Luma
+	Method	Methode
+	Output	Ausgabe
+	Points	Punkte
+	Shapes	Formen
+	Softness	Weichheit
+	Strength	Stärke
+	Save as Template	Als Vorlage speichern
+	Stop	Stopp
+	Masks	Masken
+	Show	Anzeigen
+	Model	Modell
+	Drag: move · Alt-click: smooth/corner · Ctrl-click: delete	Ziehen: verschieben · Alt+Klick: glatt/Ecke · Strg+Klick: löschen
+	Planar	Planar
+	Stop planar tracking (keeps what was tracked)	Planares Tracking beenden (bereits Getracktes bleibt erhalten)
+	✕ planar	✕ planar
+	Enabled	Aktiviert
+	New Comp Clip	Neuer Comp-Clip
+	Comp	Comp
+	Select a comp clip to edit its nodes.	Comp-Clip auswählen, um seine Nodes zu bearbeiten.
+	Media Out	Media Out
+	Operation	Operation
+	Smooth radius	Glättungsradius
+	Set to playhead	Auf Abspielposition setzen
+	Clear track	Tracking löschen
+	Add point	Punkt hinzufügen
+	Plane corners	Ebenenecken
+	Add shape	Form hinzufügen
+	Strokes	Striche
+	Reveal	Aufdecken
+	Erase	Radieren
+	Single frame	Einzelnes Bild
+	Follow tracker	Tracker folgen
+	Missing tracker	Tracker fehlt
+	Magic Mask	Magic Mask
+	Add Magic Mask	Magic Mask hinzufügen
+	Remove Magic Mask	Magic Mask entfernen
+	Remove the Magic Mask from this node	Magic Mask von diesem Node entfernen
+	A whole person: the strokes pick which one	Eine ganze Person: Die Striche bestimmen, welche
+	Whatever the strokes cover	Alles, was die Striche abdecken
+	Object	Objekt
+	Person	Person
+	Clean Black	Sauberes Schwarz
+	Clean White	Sauberes Weiß
+	Clear Frame	Frame leeren
+	Remove the strokes drawn on this frame	Auf diesem Frame gezeichnete Striche entfernen
+	Remove every stroke of this mask	Alle Striche dieser Maske entfernen
+	click or drag on the Program picture · Esc ends	Im Programmbild klicken oder ziehen · Esc beendet
+	Click the subject in the Program picture, or drag a box round it (Alt-click: leave out)	Motiv im Programmbild anklicken oder einen Rahmen darum ziehen (Alt+Klick: ausschließen)
+	Click what the mask should leave out	Anklicken, was die Maske auslassen soll
+	Follow the subject both ways from the strokes	Motiv von den Strichen aus in beide Richtungen verfolgen
+	Follow the subject from the strokes towards the end of the clip	Motiv von den Strichen bis zum Clipende verfolgen
+	Follow the subject from the strokes towards the start of the clip	Motiv von den Strichen bis zum Clipanfang verfolgen
+	Grow / Shrink	Vergrößern / Verkleinern
+	Magic Mask finds the subject you mark with a few strokes and follows it through the shot, so this node only changes that.	Magic Mask findet das Motiv, das du mit ein paar Strichen markierst, und verfolgt es durch die Einstellung, sodass dieser Node nur das ändert.
+	{n} strokes, {here} on this frame	{n} Striche, {here} auf diesem Frame
+	Show matte	Matte anzeigen
+	Tint the tracked matte over the Program picture (frames not tracked yet show none)	Das getrackte Matte als Farbüberlagerung über dem Programmbild anzeigen (noch nicht getrackte Frames zeigen keins)
+	Stop tracking (the frames done so far are kept)	Tracking beenden (bereits fertige Frames bleiben erhalten)
+	Stroke +	Strich +
+	Stroke −	Strich −
+	The strokes changed while tracking: track again	Die Striche haben sich beim Tracking geändert: erneut tracken
+	Track	Tracken
+	Track Backward	Rückwärts tracken
+	Track Forward	Vorwärts tracken
+	Tracked {frames} frames ({segmented} by the model, {reused} already done)	{frames} Frames getrackt ({segmented} vom Modell, {reused} bereits vorhanden)
+	Tracking… {done} of {frames} frames	Tracking… {done} von {frames} Frames
+	Tracking failed	Tracking fehlgeschlagen
+	Tracking progress	Tracking-Fortschritt
+	Tracking stopped	Tracking beendet
+	Waiting to track…	Warten auf Tracking…
+	Clear Magic Mask Strokes	Magic-Mask-Striche löschen
+	Magic Mask Stroke	Magic-Mask-Strich
+	Refine Magic Mask	Magic Mask verfeinern
+	Track Magic Mask	Magic Mask tracken
+	Better	Besser
+	Faster	Schneller
+	Auto ({model})	Auto ({model})
+	Model: {model}	Modell: {model}
+	Better on a discrete GPU when SAM 2.1 Large is installed, else MobileSAM	Besser auf einer dedizierten GPU, wenn SAM 2.1 Large installiert ist, sonst MobileSAM
+	SAM 2.1 Large on the GPU: the most accurate, about 0.9 s a frame	SAM 2.1 Large auf der GPU: am genauesten, etwa 0,9 s pro Frame
+	SAM 2.1 Base+ on the GPU: a little less accurate, a little quicker	SAM 2.1 Base+ auf der GPU: etwas weniger genau, etwas schneller
+	MobileSAM, frame by frame: quickest and needs no discrete GPU, but weaker when similar objects touch	MobileSAM, Frame für Frame: am schnellsten und ohne dedizierte GPU, aber schwächer, wenn sich ähnliche Objekte berühren
+	Render Voice Isolation	Sprachisolierung rendern
+	Bézier	Bézier
+	B-Spline	B-Spline
+	Click to add control points. Click the first point (or press Enter) to close.	Klicken, um Kontrollpunkte hinzuzufügen. Zum Schließen den ersten Punkt anklicken (oder die Eingabetaste drücken).
+	Click to add points, drag to curve them. Click the first point (or press Enter) to close.	Klicken, um Punkte hinzuzufügen, ziehen, um sie zu krümmen. Zum Schließen den ersten Punkt anklicken (oder die Eingabetaste drücken).
+	Click to add region points around the flat area. Click the first point (or press Enter) to close.	Klicken, um Bereichspunkte rund um die ebene Fläche zu setzen. Zum Schließen den ersten Punkt anklicken (oder die Eingabetaste drücken).
+	Drag a point, its pattern box corner or its search box corner. Ctrl-click (Cmd-click) adds a point.	Einen Punkt, eine Ecke seines Musterfelds oder eine Ecke seines Suchfelds ziehen. Strg+Klick (Cmd+Klick) fügt einen Punkt hinzu.
+	Drag points, handles or a shape. Alt-drag a point moves its shape; Alt-click makes it smooth or sharp.	Punkte, Griffe oder eine Form ziehen. Alt+Ziehen eines Punkts verschiebt seine Form; Alt+Klick macht ihn glatt oder spitz.
+	Drag the region's points, or the plane's four corners at the reference frame.	Die Punkte des Bereichs oder die vier Ecken der Ebene am Referenz-Frame ziehen.
+	Drag to paint; each drag is one stroke.	Zum Malen ziehen; jedes Ziehen ist ein Strich.
+	Drag to paint; each drag is one stroke. Alt-click picks where Clone copies from.	Zum Malen ziehen; jedes Ziehen ist ein Strich. Alt+Klick legt fest, von wo Klonen kopiert.
+	Draw region	Bereich zeichnen
+	Hardness	Härte
+	This frame only	Nur dieser Frame
+	The tracker this shape follows has no usable motion at this frame, so the shape can't be edited here.	Der Tracker, dem diese Form folgt, hat auf diesem Frame keine brauchbare Bewegung, daher lässt sich die Form hier nicht bearbeiten.
+	Open Group	Gruppe öffnen
+	Expose	Freigeben
+	Exposed	Freigegeben
+	That node is not a group.	Dieser Node ist keine Gruppe.
+	No settings on this group yet: open it and expose an inner node's setting.	Diese Gruppe hat noch keine Einstellungen: Gruppe öffnen und eine Einstellung eines inneren Nodes freigeben.
+	Group Input	Gruppeneingang
+	Put on the group	Auf die Gruppe legen
+	This node has no settings that can be exposed.	Dieser Node hat keine Einstellungen, die sich freigeben lassen.
+	Expression	Ausdruck
+	e.g. time * 10	z. B. time * 10
+	Save Selection as Template…	Auswahl als Vorlage speichern…
+	Insert Template	Vorlage einfügen
+	Reading templates…	Vorlagen werden gelesen…
+	No saved templates	Keine gespeicherten Vorlagen
+	Delete Template…	Vorlage löschen…
+	Delete Template	Vorlage löschen
+	Inserted template “{name}” ({count} nodes)	Vorlage „{name}“ eingefügt ({count} Nodes)
+	{count} Media In node(s) that read a clip will be left out; templates can't hold your clips.	{count} Media-In-Node(s), die einen Clip lesen, werden ausgelassen; Vorlagen können deine Clips nicht enthalten.
+	Media Out is never saved in a template.	Media Out wird nie in einer Vorlage gespeichert.
+	{count} selected node(s)	{count} ausgewählte(r) Node(s)
+	Replace a template with this name	Vorlage mit diesem Namen ersetzen
+	Delete the template “{name}”? Comps that used it keep their nodes.	Vorlage „{name}“ löschen? Comps, die sie verwendet haben, behalten ihre Nodes.
+	Deleted template “{name}”	Vorlage „{name}“ gelöscht
+	HDR zone wheels: exposure in stops from mid grey, per tonal zone	HDR-Zonenräder: Belichtung in Blendenstufen ab Mittelgrau, pro Tonwertzone
+	Reset All	Alle zurücksetzen
+	Reset every HDR wheel	Alle HDR-Räder zurücksetzen
+	Where the zone ends, in stops from mid grey	Wo die Zone endet, in Blendenstufen ab Mittelgrau
+	How soft the zone's edge is, in stops	Wie weich der Rand der Zone ist, in Blendenstufen
+	Exposure in stops	Belichtung in Blendenstufen
+	How much each zone acts at each brightness (stops from mid grey)	Wie stark jede Zone bei welcher Helligkeit wirkt (Blendenstufen ab Mittelgrau)
+hdr	Global	Global
+hdr	Black	Schwarz
+hdr	Dark	Dunkel
+hdr	Shadow	Tiefen
+hdr	Light	Licht
+hdr	Highlight	Lichter
+hdr	Specular	Spitzlicht
+	Reset HDR Wheels	HDR-Räder zurücksetzen
+	Warper	Warper
+	Hue-Sat	Farbton-Sät.
+	Chroma-Luma	Chroma-Luma
+	Move colours round the hue circle and in or out in saturation	Farben um den Farbkreis und in der Sättigung nach innen oder außen verschieben
+	Change the saturation and brightness of colours by how saturated and bright they are	Sättigung und Helligkeit von Farben abhängig davon ändern, wie gesättigt und hell sie sind
+	Remove the colour warper from this node	Farb-Warper von diesem Node entfernen
+	Remove Colour Warper	Farb-Warper entfernen
+	Colour warper	Farb-Warper
+	Point	Punkt
+	Pin	Fixieren
+	A pinned point stays put when its neighbours move	Ein fixierter Punkt bleibt an Ort und Stelle, wenn sich seine Nachbarn bewegen
+	Reset Point	Punkt zurücksetzen
+	Reset Mesh	Gitter zurücksetzen
+	Sat	Sät.
+	Falloff range	Abfallbereich
+	Preserve luma	Luma beibehalten
+	Hue-Sat moves keep each colour's brightness	Farbton-Sättigungs-Bewegungen behalten die Helligkeit jeder Farbe bei
+	Hue columns	Farbtonspalten
+	Saturation rings	Sättigungsringe
+	Chroma columns	Chroma-Spalten
+	Luma rows	Luma-Zeilen
+	A new grid size starts this mesh afresh	Eine neue Rastergröße beginnt dieses Gitter von vorn
+	Set Colour Warper	Farb-Warper einstellen
+	Move Warper Point	Warper-Punkt verschieben
+	Pin Warper Point	Warper-Punkt fixieren
+	Reset Colour Warper	Farb-Warper zurücksetzen
+	HSL	HSL
+	3D	3D
+	Select by hue, saturation and luminance ranges	Nach Farbton-, Sättigungs- und Luminanzbereichen auswählen
+	Select the colours you paint strokes over in the Program picture	Die Farben auswählen, über die du im Programmbild Striche malst
+	Include	Einschließen
+	Exclude	Ausschließen
+	Drag over colours in the Program picture to select them (Alt: exclude)	Im Programmbild über Farben ziehen, um sie auszuwählen (Alt: ausschließen)
+	Drag over colours in the Program picture to leave them out	Im Programmbild über Farben ziehen, um sie auszulassen
+	drag over the Program picture · Esc cancels	über das Programmbild ziehen · Esc bricht ab
+	colours picked	Farben gewählt
+	left out	ausgelassen
+	Despill	Despill
+	Clear Include	Einschluss löschen
+	Clear Exclude	Ausschluss löschen
+	Add 3D Qualifier Stroke	3D-Qualifier-Strich hinzufügen
+	Set 3D Qualifier	3D-Qualifier einstellen
+	Clear 3D Qualifier	3D-Qualifier löschen
+	Pulls the picked colour's tint out of what the node corrects; use with Invert for green or blue screen spill	Entfernt den Farbstich der gewählten Farbe aus dem, was der Node korrigiert; zusammen mit Invertieren für Grün- oder Blauspill verwenden
+	Include stroke	Einschluss-Strich
+	Exclude stroke	Ausschluss-Strich
+	Track the mask as a plane (a sign, a screen, a wall), both ways from the playhead	Die Maske als Ebene (Schild, Bildschirm, Wand) tracken, von der Abspielposition aus in beide Richtungen
+	Clear the planar track (the mask stays where it is seen)	Planares Tracking löschen (die Maske bleibt, wo sie zu sehen ist)
+	Point {n}	Punkt {n}
+	Confidence	Zuverlässigkeit
+	not analysed here	hier nicht analysiert
+	{now} here, lowest {low} %	{now} hier, niedrigster Wert {low} %
+	not analysed yet	noch nicht analysiert
+	Top left	Oben links
+	Top right	Oben rechts
+	Bottom right	Unten rechts
+	Bottom left	Unten links

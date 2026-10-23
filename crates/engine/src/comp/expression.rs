@@ -1,13 +1,19 @@
 //! Parameter expression commands (fork C4.5, ADR 0009 §1.7): `comp.setExpression` and
-//! `comp.clearExpression`. Expressions work on a node's own parameters (not a Color node's grade
-//! or a Text node's layer) of number, point, colour, checkbox and menu types. Each command is one
+//! `comp.clearExpression`. Expressions work on a node's own parameters, a Color node's grade
+//! settings (numbers and wheels, LO.4) and a Text node's layer settings (LO.4) of number, point,
+//! colour, checkbox and menu types; they live with the parameter they drive
+//! ([`filmcraft_project::comp::CompNode::param_store`]). Tracker and Planar Tracker settings take
+//! none: their analysed tracks are read at several times per frame (the reference frame, the
+//! Stabilise smoothing window), which a per-frame expression can't drive. Each command is one
 //! undo step; a refused command changes nothing.
 
 use filmcraft_project::expr::{self, ExprError, MAX_SOURCE};
 use filmcraft_project::{Param, ParamKind};
 use serde_json::{Value, json};
 
-use super::{Slot, comp_at, default_of, edit_comp, node_mut, node_p, slot, spec, ticks_p};
+use filmcraft_project::grade::NodeParamKind;
+
+use super::{Slot, comp_at, default_of, edit_comp, node_mut, node_p, params_of, slot, spec, ticks_p};
 use crate::commands::{CommandSpec, bad, bool_p, str_p};
 use crate::{Result, Session};
 
@@ -29,7 +35,8 @@ pub(crate) fn error_json(e: &ExprError) -> Value {
 }
 
 /// The parameter `param` of node `node` can take an expression: one of the node's own schema
-/// parameters, of a type expressions can produce.
+/// parameters, a Color node's grade number or wheel, or a Text node's layer setting, of a type
+/// expressions can produce.
 fn check_param(s: &Session, p: &Value, cmd: &str) -> Result<(u64, String, Slot)> {
     let node = node_p(p, "node", cmd)?;
     let key = str_p(p, "param").ok_or_else(|| bad(cmd, "need `param`"))?.to_string();
@@ -37,14 +44,13 @@ fn check_param(s: &Session, p: &Value, cmd: &str) -> Result<(u64, String, Slot)>
     let n = c.node(node).ok_or_else(|| bad(cmd, format!("no node {node}")))?;
     let sl = slot(n, &key, cmd)?;
     match &sl {
-        Slot::Own(default, kind) => {
+        Slot::Own(default, kind) | Slot::Layer(default, kind) => {
             if matches!(kind, ParamKind::Text | ParamKind::Curve { .. } | ParamKind::Path) || !expr::kind_allowed(default) {
                 return Err(bad(cmd, format!("`{key}` is a text, curve or path parameter: those don't take expressions")));
             }
         }
-        Slot::Grade(_) | Slot::Layer(..) => {
-            return Err(bad(cmd, format!("expressions work on a node's own parameters; a {} node's `{key}` doesn't take one", n.kind.key())));
-        }
+        Slot::Grade(NodeParamKind::Curve) => return Err(bad(cmd, format!("`{key}` is a curve: curves don't take expressions"))),
+        Slot::Grade(_) => {}
     }
     Ok((node, key, sl))
 }
@@ -67,17 +73,18 @@ fn set_expression(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({"stored": false, "expression": src, "error": error_json(e)}));
     }
     let stored = (!src.is_empty()).then(|| src.to_string());
-    let had = comp_at(s, p, CMD)?.1.node(node).and_then(|n| n.params.get(&key)).is_some_and(|p| p.expression.is_some());
+    let had = comp_at(s, p, CMD)?.1.node(node).and_then(|n| n.param_store().get(&key)).is_some_and(|p| p.expression.is_some());
     if stored.is_none() && !had {
         return Ok(json!({"stored": true, "expression": Value::Null, "error": Value::Null}));
     }
     let label = if stored.is_some() { "Set Expression" } else { "Clear Expression" };
     edit_comp(s, p, CMD, label, None, |c| {
         let n = node_mut(c, node, CMD)?;
+        let map = params_of(n, &sl);
         match &stored {
-            Some(e) => n.params.entry(key.clone()).or_insert_with(|| Param::new(default_of(&sl))).expression = Some(e.clone()),
+            Some(e) => map.entry(key.clone()).or_insert_with(|| Param::new(default_of(&sl))).expression = Some(e.clone()),
             None => {
-                if let Some(prm) = n.params.get_mut(&key) {
+                if let Some(prm) = map.get_mut(&key) {
                     prm.expression = None;
                 }
             }
@@ -100,12 +107,13 @@ fn clear_expression(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "comp.clearExpression";
     let node = node_p(p, "node", CMD)?;
     let key = str_p(p, "param").ok_or_else(|| bad(CMD, "need `param`"))?.to_string();
-    let has = comp_at(s, p, CMD)?.1.node(node).ok_or_else(|| bad(CMD, format!("no node {node}")))?.params.get(&key).is_some_and(|p| p.expression.is_some());
+    let has =
+        comp_at(s, p, CMD)?.1.node(node).ok_or_else(|| bad(CMD, format!("no node {node}")))?.param_store().get(&key).is_some_and(|p| p.expression.is_some());
     if !has {
         return Err(bad(CMD, format!("`{key}` of node {node} has no expression")));
     }
     edit_comp(s, p, CMD, "Clear Expression", None, |c| {
-        if let Some(prm) = node_mut(c, node, CMD)?.params.get_mut(&key) {
+        if let Some(prm) = node_mut(c, node, CMD)?.param_store_mut().get_mut(&key) {
             prm.expression = None;
         }
         Ok(())

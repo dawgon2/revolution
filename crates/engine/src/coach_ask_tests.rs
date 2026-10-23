@@ -294,8 +294,10 @@ fn intros_fold_into_the_first_section_and_stubs_are_not_answers() {
 
 /// Questions of the eval set that must pass (DIAGNOSIS.md §1 rule). This may only go up; raise it
 /// when the guide or the coach improves (FORK-PLAN §1a.47). 115 measured with C3.11 (BM25 b 0.6,
-/// `compositor-trackers.md` indexed).
-const EVAL_FLOOR: usize = 115;
+/// `compositor-trackers.md` indexed); 130 / 160 with AI2b's 22 questions on what shipped since AI2
+/// (mixer, VFR, voice isolation, Magic Mask, G4's tools, trackers / roto / paint, expressions,
+/// groups, templates), floor one below because the count has moved by one with test order before.
+const EVAL_FLOOR: usize = 129;
 
 #[derive(Deserialize)]
 struct EvalFile {

@@ -463,6 +463,7 @@ fn tracker_nodes_run_on_the_gpu() {
         smooth_radius: 0,
         reference: Tick::ZERO,
         method: TrackMethod::Position,
+        corner_points: Vec::new(),
     });
     assert!(mm.passes.iter().any(|p| matches!(p, Pass::Draw { .. })) && !mm.passes.iter().any(|p| matches!(p, Pass::Warp { .. })));
     assert!(c.run_comp(&mm, 0).is_some(), "an affine track runs on the GPU");
@@ -654,7 +655,7 @@ fn roto_coverage_matches_without_8_bit_tolerance() {
     // a smooth ramp with every 1/255 step between: an 8-bit matte errs by up to 2e-3 here
     let cov: Arc<[f32]> = (0..w * h).map(|i| ((i % w) as f32 / (w - 1) as f32).powf(1.7) * 0.999 + 0.0005).collect();
     for matte in [false, true] {
-        let p = program(1, vec![Pass::Image { dst: 0, image: picture() }, Pass::Coverage { tex: 0, coverage: Arc::clone(&cov), matte }], 0);
+        let p = program(1, vec![Pass::Image { dst: 0, image: picture() }, Pass::Coverage { tex: 0, coverage: Arc::new(Arc::clone(&cov).into()), matte }], 0);
         assert!(c.run_comp(&p, 0).is_some(), "ran on the GPU");
         let (p99, mean, max) = compare_sized(&mut c, p);
         eprintln!("coverage matte={matte}: p99 {p99:.6} mean {mean:.7} max {max:.6}");
@@ -664,7 +665,7 @@ fn roto_coverage_matches_without_8_bit_tolerance() {
     // a wrong length: alpha leaves the picture, matte is black
     let short: Arc<[f32]> = vec![0.5f32; 7].into();
     for matte in [false, true] {
-        let p = program(1, vec![Pass::Image { dst: 0, image: picture() }, Pass::Coverage { tex: 0, coverage: Arc::clone(&short), matte }], 0);
+        let p = program(1, vec![Pass::Image { dst: 0, image: picture() }, Pass::Coverage { tex: 0, coverage: Arc::new(Arc::clone(&short).into()), matte }], 0);
         let (_, _, max) = compare_sized(&mut c, p);
         assert!(max <= 2e-3, "short coverage, matte {matte}: {max}");
     }
@@ -744,7 +745,7 @@ fn paint_and_roto_timings() {
         let cov = filmcraft_render::roto::rasterize(&prepared, w, h);
         let raster = t0.elapsed();
         let mut with_cov = base.clone();
-        with_cov.passes.push(Pass::Coverage { tex: 0, coverage: cov.into(), matte: false });
+        with_cov.passes.push(Pass::Coverage { tex: 0, coverage: Arc::new(Arc::<[f32]>::from(cov).into()), matte: false });
         let cover = timed(&mut c, &with_cov).saturating_sub(base_t);
         eprintln!(
             "{w}x{h}: paint CPU {cpu_paint:?}, kernel pass {kernel:?} (plan {plan_t:?}, pack {pack_t:?}, {packed:?} entries), read-back fallback {fallback:?}; \
@@ -1137,3 +1138,6 @@ fn compiled_clone_offsets_with_reused_slots_match_the_cpu() {
     assert!(c.comp_paint_gpu >= before + 2, "ran in the kernel");
     assert!(p99 <= 4e-3 && mean <= 1e-3, "p99 {p99}, mean {mean}");
 }
+
+#[path = "comp_roto_tests.rs"]
+mod roto;

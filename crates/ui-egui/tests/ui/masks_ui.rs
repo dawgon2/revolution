@@ -273,3 +273,66 @@ fn presets_bin_drag_and_save_dialog() {
     assert_eq!(mine["masks"], 1);
     d.rect("effects.preset.My Vignette");
 }
+
+/// Fork LO.3: an effect mask's Mask Path row has **Planar** (as the Color page's windows): it
+/// starts a planar track of that mask (`masks.trackPlanar` with the effect; clicking again while
+/// it runs stops it), and a planar-tracked mask gets **✕ planar**, which clears the track.
+#[test]
+fn planar_button_on_an_effect_mask_row() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Effects"}));
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = &seq["video"][0]["items"][0];
+    let (id, start, dur) = (clip["clip"].as_u64().unwrap(), clip["start"].as_i64().unwrap(), clip["duration"].as_i64().unwrap());
+    d.exec("playhead.set", json!({"time": start + dur / 2}));
+    d.exec("timeline.select", json!({"clips": [id]}));
+    d.exec("effects.apply", json!({"effect": "gaussian_blur"}));
+    d.frames(4);
+    for fx in ["motion", "time_remap"] {
+        d.ok("ui.click", json!({"id": format!("effectControls.effect.{fx}")}));
+        d.frames(2);
+    }
+    d.ok("ui.click", json!({"id": "effectControls.tnr"}));
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "effectControls.gaussian_blur.mask.ellipse"}));
+    d.frames(3);
+    d.rect("effectControls.gaussian_blur.mask0.track.planar");
+    let none = d.ok("ui.elements", json!({"prefix": "effectControls.gaussian_blur.mask0.track.clearPlanar"}));
+    assert!(none.as_array().is_some_and(|v| v.is_empty()), "nothing to clear yet: {none}");
+    d.ok("ui.click", json!({"id": "effectControls.gaussian_blur.mask0.track.planar"}));
+    d.frames(1);
+    assert!(d.harness.state().session.jobs.iter().any(|j| j.label.starts_with("Planar track")), "a planar job started");
+    // while it runs the button stops it
+    if !d.harness.state().session.planar_jobs.is_empty() {
+        d.ok("ui.click", json!({"id": "effectControls.gaussian_blur.mask0.track.planar"}));
+    }
+    // (by the clock: under a loaded parallel test run the job takes a while to wind down)
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !d.harness.state().session.planar_jobs.is_empty() && std::time::Instant::now() < deadline {
+        d.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(d.harness.state().session.planar_jobs.is_empty(), "the job ended");
+    // a mask that follows a plane (set directly when the demo picture gave none)
+    {
+        let s = &mut d.harness.state_mut().session;
+        let seq = s.state.active_sequence.unwrap();
+        let p = std::sync::Arc::make_mut(&mut s.project);
+        let q = p.sequence_mut(seq).unwrap();
+        let it = q.video_tracks.iter_mut().flat_map(|t| t.items.iter_mut()).find(|i| i.id.0 == id).unwrap();
+        let m = &mut it.effects.iter_mut().find(|e| e.effect == "gaussian_blur").unwrap().masks[0];
+        if m.planar.is_none() {
+            let h = [1.0, 0.0, 12.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+            m.planar = Some(filmcraft_project::PlanarTrack {
+                reference: filmcraft_time::Tick(0),
+                keys: vec![filmcraft_project::PlanarKey { time: filmcraft_time::Tick(0), h }],
+            });
+        }
+    }
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "effectControls.gaussian_blur.mask0.track.clearPlanar"}));
+    d.frames(2);
+    let s = &d.harness.state().session;
+    let it = s.active_sequence().unwrap().find_item(filmcraft_project::ClipId(id)).unwrap().1;
+    assert!(it.effects.iter().find(|e| e.effect == "gaussian_blur").unwrap().masks[0].planar.is_none(), "cleared");
+}

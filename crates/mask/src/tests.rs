@@ -15,6 +15,7 @@ fn prompts_drop_nan_points_clamp_the_rest_and_refuse_empty() {
         points: vec![Point { x: f32::NAN, y: 0.5, positive: true }, Point { x: 2.0, y: -1.0, positive: false }],
         rect: Some(Rect { x0: 0.9, y0: 0.8, x1: 0.1, y1: f32::INFINITY }),
         prior: None,
+        prefer_whole: false,
     };
     let (points, rect) = p.checked().unwrap();
     assert_eq!(points, vec![Point { x: 1.0, y: 0.0, positive: false }]);
@@ -466,8 +467,12 @@ mod sam_tests {
         let img = RgbImage::new(w, h, d).unwrap();
         let truth = crate::Matte { width: w, height: h, alpha: (0..w * h).map(|i| if inside(i % w, i / w) { 255 } else { 0 }).collect() };
         let e = sam.embed(&img).unwrap();
-        let prompt =
-            Prompt { points: vec![Point { x: 0.5, y: 0.5, positive: true }], rect: Some(Rect { x0: 0.35, y0: 0.25, x1: 0.65, y1: 0.75 }), prior: None };
+        let prompt = Prompt {
+            points: vec![Point { x: 0.5, y: 0.5, positive: true }],
+            rect: Some(Rect { x0: 0.35, y0: 0.25, x1: 0.65, y1: 0.75 }),
+            prior: None,
+            prefer_whole: false,
+        };
         let seg = sam.segment(&e, &prompt).unwrap();
         let iou = seg.matte(w, h).unwrap().iou(&truth).unwrap();
         assert!(iou > 0.9, "IoU {iou}");
@@ -504,4 +509,83 @@ mod sam_tests {
         let e = sam.embed(&wide).unwrap();
         assert!(sam.segment(&e, &Prompt { rect: Some(Rect { x0: 0.1, y0: 0.0, x1: 0.2, y1: 1.0 }), ..Prompt::default() }).is_ok());
     }
+}
+
+/// A segmenter whose candidates for an ambiguous prompt differ in extent: a part (the best
+/// score), the whole subject (a little lower), and a spill into the background (the largest,
+/// clearly lower); a single answer otherwise. It answers through [`segment_by_candidates`], as
+/// MobileSAM does, and records whether it was asked for several candidates.
+struct Parts {
+    asked: std::sync::Mutex<Vec<bool>>,
+}
+
+/// A segment whose first `n` grid columns are inside.
+fn cols(n: usize, score: f32) -> Segment {
+    let mut s = Segment::empty((1.0, 1.0));
+    for (i, v) in s.logits.iter_mut().enumerate() {
+        *v = if i % LOW_RES < n { 10.0 } else { -10.0 };
+    }
+    s.score = score;
+    s
+}
+
+fn inside_cols(s: &Segment) -> usize {
+    s.logits.iter().filter(|v| **v > 0.0).count() / LOW_RES
+}
+
+impl Segmenter for Parts {
+    fn embed(&self, image: &RgbImage) -> Result<Embedding, MaskError> {
+        Ok(Embedding::new(image.width(), image.height(), Box::new(())))
+    }
+    fn segment(&self, e: &Embedding, prompt: &Prompt) -> Result<Segment, MaskError> {
+        segment_by_candidates(self, e, prompt)
+    }
+    fn candidates(&self, _: &Embedding, _: &Prompt, multimask: bool) -> Result<Vec<Segment>, MaskError> {
+        self.asked.lock().unwrap().push(multimask);
+        Ok(if multimask { vec![cols(40, 0.95), cols(120, 0.9), cols(250, 0.5)] } else { vec![cols(80, 0.97)] })
+    }
+}
+
+#[test]
+fn person_mode_keeps_the_whole_figure_object_mode_the_best_scored() {
+    let seg = Parts { asked: std::sync::Mutex::new(Vec::new()) };
+    let e = seg.embed(&RgbImage::new(8, 8, vec![0; 8 * 8 * 3]).unwrap()).unwrap();
+    let click = Prompt { points: vec![Point { x: 0.3, y: 0.5, positive: true }], ..Prompt::default() };
+    let person = |p: &Prompt| Prompt { prefer_whole: true, ..p.clone() };
+    // one click (ambiguous): Object keeps the best-scored part, Person the whole figure, never
+    // the spill that scores far below
+    assert_eq!(inside_cols(&seg.segment(&e, &click).unwrap()), 40);
+    assert_eq!(inside_cols(&seg.segment(&e, &person(&click)).unwrap()), 120);
+    // several points without a box: Object asks for one mask (as before), Person for the
+    // candidates
+    let two = Prompt { points: vec![Point { x: 0.3, y: 0.5, positive: true }, Point { x: 0.4, y: 0.6, positive: true }], ..Prompt::default() };
+    seg.asked.lock().unwrap().clear();
+    assert_eq!(inside_cols(&seg.segment(&e, &two).unwrap()), 80);
+    assert_eq!(inside_cols(&seg.segment(&e, &person(&two)).unwrap()), 120);
+    assert_eq!(*seg.asked.lock().unwrap(), vec![false, true]);
+    // a box or a previous mask fixes the extent: Person changes nothing
+    let boxed = Prompt { rect: Some(Rect { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.9 }), ..person(&click) };
+    assert_eq!(inside_cols(&seg.segment(&e, &boxed).unwrap()), 80);
+    let prior = Prompt { prior: Some(cols(60, 1.0)), ..person(&click) };
+    assert_eq!(inside_cols(&seg.segment(&e, &prior).unwrap()), 80);
+}
+
+#[test]
+fn candidate_choice_follows_the_margin_and_ignores_bad_scores() {
+    assert_eq!(choose_candidate(&[], true), None);
+    assert_eq!(choose_candidate(&[], false), None);
+    let c = [(0.95, 10), (0.9, 30), (0.5, 90)];
+    assert_eq!(choose_candidate(&c, false), Some(0));
+    assert_eq!(choose_candidate(&c, true), Some(1));
+    // just outside the margin: not taken
+    let c = [(0.95, 10), (0.95 - WHOLE_MARGIN - 0.01, 30)];
+    assert_eq!(choose_candidate(&c, true), Some(0));
+    // equal areas: the better score; equal scores: the first
+    assert_eq!(choose_candidate(&[(0.9, 30), (0.93, 30)], true), Some(1));
+    assert_eq!(choose_candidate(&[(0.9, 30), (0.9, 10)], false), Some(0));
+    // NaN / infinite scores never win; all bad: the first
+    let c = [(f32::NAN, 99), (0.8, 5), (f32::INFINITY, 100), (0.75, 20)];
+    assert_eq!(choose_candidate(&c, false), Some(1));
+    assert_eq!(choose_candidate(&c, true), Some(3));
+    assert_eq!(choose_candidate(&[(f32::NAN, 1), (f32::NAN, 2)], true), Some(0));
 }

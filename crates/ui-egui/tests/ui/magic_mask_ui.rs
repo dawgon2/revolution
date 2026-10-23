@@ -39,6 +39,36 @@ impl Driver {
         }
     }
 
+    /// Steps until the frame workers have been idle for a few frames (LO.2): in an optimized build
+    /// the Program picture and the panels that follow it land mid-gesture and move what a drag
+    /// measured, so a drag waits for the layout to come to rest first.
+    fn settle(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut idle = 0;
+        while idle < 4 && std::time::Instant::now() < deadline {
+            self.frames(1);
+            idle = if self.harness.state().frames.queue_len() == 0 { idle + 1 } else { 0 };
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+    }
+
+    /// [`Self::settle`], then steps until `id`'s rectangle stays the same for three looks in a
+    /// row (LO.2: under a loaded ci, panels still moved between measuring and dragging after the
+    /// frame workers were idle).
+    fn settle_on(&mut self, id: &str) {
+        self.settle();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let (mut last, mut same) = (serde_json::Value::Null, 0);
+        while same < 3 && std::time::Instant::now() < deadline {
+            let v = self.ok("ui.elements", json!({"prefix": id}));
+            let rect = v.as_array().and_then(|a| a.iter().find(|e| e["id"] == id)).map(|e| e["rect"].clone()).unwrap_or_default();
+            same = if rect == last && !rect.is_null() { same + 1 } else { 0 };
+            last = rect;
+            self.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+    }
+
     fn call(&mut self, method: &str, params: Value) -> Value {
         let (req, reply) = ControlRequest::new(method, params.clone());
         self.tx.send(req).unwrap();
@@ -98,6 +128,8 @@ fn setup(segmenter: bool) -> (Driver, u64, u64) {
 /// [`setup`] with a fake segmenter taking `delay` per frame (None: no model).
 fn setup_with(segmenter: Option<Duration>) -> (Driver, u64, u64) {
     let mut s = Session::default();
+    // the Premiere-style layout these tests measure (the fork build defaults to Resolve; LO.2)
+    s.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
     let item = s.execute("file.newColorMatte", json!({"color": "#a08c78", "width": 160, "height": 90, "seconds": 2})).unwrap()["item"].as_u64().unwrap();
     s.execute("file.newSequenceFromClip", json!({"items": [item]})).unwrap();
     s.background = BackgroundWorker::new(WorkerConfig { resume_delay: Duration::ZERO, scrub_window: Duration::ZERO, pace: None, memory: None });
@@ -163,6 +195,7 @@ fn magic_mask_add_stroke_refine_and_track() {
     assert!(d.harness.state().ui.magic_mask.tool.is_none());
 
     // a Refine slider drag is one undo step
+    d.settle_on("grade.magicMask.refine.soften");
     let undo0 = d.exec("history.list", json!({}))["undo"].as_array().map_or(0, Vec::len);
     d.ok("ui.drag", json!({"from": {"id": "grade.magicMask.refine.soften", "fx": 0.05, "fy": 0.5}, "to": {"id": "grade.magicMask.refine.soften", "fx": 0.4, "fy": 0.5}, "steps": 6}));
     d.frames(2);
@@ -274,6 +307,9 @@ fn magic_mask_model_selector_sets_the_engine_model() {
         d.click(&full);
         let st = d.exec("grade.magicMask.status", json!({}));
         assert_eq!(st["tracker"], json!(want), "{full}: {st}");
+        // remembered in the preferences (LO.6)
+        let saved = serde_json::to_value(d.harness.state().session.prefs.color.magic_mask).unwrap();
+        assert_eq!(saved, json!(want), "{full}");
     }
     let auto = d.ok("ui.elements", json!({"prefix": "grade.magicMask.model.auto"}));
     assert!(auto.to_string().contains("Auto (MobileSAM)"), "Auto shows what it resolves to: {auto}");

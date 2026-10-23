@@ -16,6 +16,7 @@ default = []
 sam = ["dep:filmcraft-ml", "filmcraft-ml/candle", "dep:candle-core", "dep:candle-nn", "dep:candle-transformers"]
 
 [dependencies]
+log = { workspace = true }
 filmcraft-ml = { workspace = true, optional = true }
 candle-core = { version = "0.9", default-features = false, optional = true }
 candle-nn = { version = "0.9", default-features = false, optional = true }

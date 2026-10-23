@@ -488,8 +488,8 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
     // C3.5b: a Roto / Paint node's list edits, (command, params)
     let mut list_change: Option<(&'static str, serde_json::Value)> = None;
     let mut track_cmds: Vec<(&'static str, serde_json::Value)> = Vec::new();
-    // (analysis jobs run on the comp's own nodes only)
-    let running = path.is_empty() && app.session.comp_track_jobs.iter().any(|j| j.comp == comp && j.node == node.id);
+    // (LO.4: analysis runs inside groups too; a job is named by its group path)
+    let running = app.session.comp_track_jobs.iter().any(|j| j.comp == comp && j.group.as_slice() == path && j.node == node.id);
     // C3.7: the comp's trackers (for Follow tracker) and the Roto node's running shape track
     let roto_cx = RotoCtx {
         trackers: comp_now
@@ -502,8 +502,7 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
                     .collect()
             })
             .unwrap_or_default(),
-        tracking: app.session.roto_track_jobs.iter().find(|j| path.is_empty() && j.comp == comp && j.node == node.id).map(|j| j.shape),
-        inside: !path.is_empty(),
+        tracking: app.session.roto_track_jobs.iter().find(|j| j.comp == comp && j.group.as_slice() == path && j.node == node.id).map(|j| j.shape),
     };
     let rate = comp_now.as_deref().map_or_else(filmcraft_time::FrameRate::default, |c| c.rate);
     ui.scope_builder(UiBuilder::new().max_rect(rect.shrink(8.0)), |ui| {
@@ -570,20 +569,19 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
                 });
                 ui.add_space(6.0);
             }
-            // C4.5: values after expressions; an "=" toggle beside each keyframable own parameter
-            // opens a one-line expression field (`comp.inspector.<param>.expr`, committed on Enter
-            // or leaving the field with comp.setExpression), its error underneath
+            // C4.5: values after expressions; an "=" toggle beside each keyframable parameter (LO.4: a
+            // Color node's grade numbers and a Text node's layer settings too) opens a one-line
+            // expression field (`comp.inspector.<param>.expr`, committed on Enter or leaving the
+            // field with comp.setExpression), its error underneath
             let frame = comp_now.as_deref().map(|c| c.expr_frame(at));
-            let own = !matches!(node.kind, CompKind::Text { .. } | CompKind::Color { .. });
             egui::Grid::new("comp-inspector-grid").num_columns(3).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
                 for (pd, value, animated) in inspector_rows(node, at) {
-                    let src = if own { node.expression(pd.id).map(str::to_string) } else { None };
+                    let src = node.expression(pd.id).map(str::to_string);
                     let (value, eval_error) = match (&src, &frame) {
                         (Some(_), Some(f)) => f.param_at(node.id, pd.id),
                         _ => (value, None),
                     };
-                    let can_expr = own
-                        && pd.animatable
+                    let can_expr = pd.animatable
                         && filmcraft_project::expr::kind_allowed(&pd.default)
                         && !matches!(
                             pd.kind,
@@ -680,7 +678,7 @@ fn inspector(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, comp: ItemId
                 p["node"] = json!(node.id);
                 list_change = Some((cmd, p));
             }
-            track_cmds = tracker_rows(ui, &mut elems, TrackerCtx { comp: comp.0, at, size, running, rate, inside: !path.is_empty() }, node);
+            track_cmds = tracker_rows(ui, &mut elems, TrackerCtx { comp: comp.0, at, size, running, rate }, node);
             // C4.3: a group's exposed parameters
             group_rows(ui, &mut elems, (&mut changes, &mut toggles), comp.0, node, at, size);
         });
@@ -830,12 +828,7 @@ fn roto_rows(
 struct RotoCtx {
     trackers: Vec<(u64, String)>,
     tracking: Option<usize>,
-    /// Inside a group (C4.8): shape tracking runs on the comp's own nodes only.
-    inside: bool,
 }
-
-/// Why tracking is off inside a group (the hover note on its disabled buttons).
-const TRACK_INSIDE_NOTE: &str = "Tracking works on the comp's own nodes only for now; ungroup these nodes to track.";
 
 /// Shape `k`'s Follow tracker / Track shape row (C3.7, see [`roto_rows`]).
 fn shape_track_row(
@@ -878,14 +871,10 @@ fn shape_track_row(
             }
         } else {
             // (a linked shape moves with its tracker; tracking it as well would move it twice)
-            let can = !cx.inside && cx.tracking.is_none() && sh.track_link.is_none() && sh.kind == filmcraft_project::roto::RotoKind::Bezier;
+            let can = cx.tracking.is_none() && sh.track_link.is_none() && sh.kind == filmcraft_project::roto::RotoKind::Bezier;
             for (key, label, dir) in [("backward", "Track backward", "backward"), ("forward", "Track forward", "forward")] {
-                let mut resp = ui.add_enabled(can, egui::Button::new(crate::i18n::t(label)));
-                if cx.inside {
-                    resp = resp.on_disabled_hover_text(crate::i18n::t(TRACK_INSIDE_NOTE));
-                }
-                let label = if cx.inside { format!("{label} (off: {TRACK_INSIDE_NOTE})") } else { label.to_string() };
-                elems.push((format!("comp.roto{k}.track.{key}"), resp.rect, label));
+                let resp = ui.add_enabled(can, egui::Button::new(crate::i18n::t(label)));
+                elems.push((format!("comp.roto{k}.track.{key}"), resp.rect, label.into()));
                 if resp.clicked() {
                     out = Some(("comp.roto.trackShape", json!({ "shape": k, "from": at.0, "direction": dir })));
                 }
@@ -994,8 +983,60 @@ struct TrackerCtx {
     size: (f64, f64),
     running: bool,
     rate: filmcraft_time::FrameRate,
-    /// Inside a group (C4.8): analysis runs on the comp's own nodes only.
-    inside: bool,
+}
+
+/// A tracker's confidence per analysed frame (LO.5): a Planar Tracker's own, or a Tracker's
+/// lowest over its points; in time order.
+fn confidence_series(kind: &CompKind) -> Vec<(filmcraft_time::Tick, f32)> {
+    match kind {
+        CompKind::PlanarTracker { confidence, .. } => {
+            let mut v: Vec<_> = confidence.iter().filter(|(_, c)| c.is_finite()).copied().collect();
+            v.sort_by_key(|(t, _)| *t);
+            v
+        }
+        CompKind::Tracker { points, .. } => {
+            let mut by: std::collections::BTreeMap<filmcraft_time::Tick, f32> = std::collections::BTreeMap::new();
+            for (t, c) in points.iter().flat_map(|p| &p.confidence).filter(|(_, c)| c.is_finite()) {
+                let e = by.entry(*t).or_insert(*c);
+                *e = e.min(*c);
+            }
+            by.into_iter().collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The confidence of the analysed frame that holds `at`, if that frame was analysed.
+fn confidence_at(series: &[(filmcraft_time::Tick, f32)], rate: filmcraft_time::FrameRate, at: filmcraft_time::Tick) -> Option<f32> {
+    let f = rate.frame_at(at);
+    series.iter().find(|(t, _)| rate.frame_at(*t) == f).map(|(_, c)| c.clamp(0.0, 1.0))
+}
+
+/// A small strip of bars, one per analysed frame (at most one per pixel column): green when
+/// sure, amber below 80 %, red below 50 %.
+fn confidence_strip(ui: &mut egui::Ui, series: &[(filmcraft_time::Tick, f32)]) {
+    let (rect, _) = ui.allocate_exact_size(vec2(120.0, 14.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
+    // one bar per analysed frame, or the lowest of several frames per bar when they don't fit
+    let n = series.len();
+    let k = n.min(rect.width() as usize).max(1);
+    let w = rect.width() / k as f32;
+    for col in 0..k {
+        let a = col * n / k;
+        let b = ((col + 1) * n / k).max(a + 1);
+        let Some(c) = series.get(a..b.min(n)).and_then(|s| s.iter().map(|(_, c)| c.clamp(0.0, 1.0)).reduce(f32::min)) else { continue };
+        let colour = if c >= 0.8 {
+            egui::Color32::from_rgb(90, 170, 100)
+        } else if c >= 0.5 {
+            ui.visuals().warn_fg_color
+        } else {
+            ui.visuals().error_fg_color
+        };
+        let x = rect.left() + col as f32 * w;
+        let h = (rect.height() - 2.0) * c.max(0.05);
+        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(x, rect.bottom() - 1.0 - h), egui::pos2(x + w.max(1.0), rect.bottom() - 1.0)), 0.0, colour);
+    }
 }
 
 /// A Tracker / Planar Tracker node's controls (C3.5a; numeric for now, viewer tools later):
@@ -1069,6 +1110,52 @@ fn tracker_rows(
             }
         });
         ui.end_row();
+        // LO.5: Corner Pin's four points, chosen per corner (a pick already used elsewhere swaps)
+        if let CompKind::Tracker { points, corner_points, operation: TrackOperation::CornerPin, .. } = &node.kind
+            && points.len() >= 4
+        {
+            let current = comp::valid_corner_points(corner_points, points.len()).unwrap_or([0, 1, 2, 3]);
+            let name = |i: usize| match points.get(i).map(|p| p.name.trim()) {
+                Some(n) if !n.is_empty() => n.to_string(),
+                _ => crate::i18n::fmt(t("Point {n}"), &[("n", &(i + 1).to_string())]),
+            };
+            for (slot, (key, label)) in
+                [("topLeft", "Top left"), ("topRight", "Top right"), ("bottomRight", "Bottom right"), ("bottomLeft", "Bottom left")].into_iter().enumerate()
+            {
+                ui.label(t(label));
+                let Some(&now) = current.get(slot) else { continue };
+                let resp = egui::ComboBox::from_id_salt(("comp-track-corner", id, slot)).selected_text(name(now)).show_ui(ui, |ui| {
+                    for i in 0..points.len().min(comp::MAX_TRACK_POINTS) {
+                        if ui.selectable_label(i == now, name(i)).clicked() && i != now {
+                            let mut next = current;
+                            if let Some(other) = next.iter().position(|&x| x == i) {
+                                next.swap(slot, other);
+                            } else if let Some(x) = next.get_mut(slot) {
+                                *x = i;
+                            }
+                            out.push(("comp.track.setOptions", options(json!({"cornerPoints": next}))));
+                        }
+                    }
+                });
+                elems.push((format!("comp.track.corner.{key}"), resp.response.rect, label.into()));
+                ui.end_row();
+            }
+        }
+        // LO.5: how sure the analysis was, at the playhead and over the analysed frames
+        let series = confidence_series(&node.kind);
+        ui.label(t("Confidence"));
+        let resp = ui.horizontal(|ui| match (confidence_at(&series, cx.rate, cx.at), series.iter().map(|(_, c)| *c).reduce(f32::min)) {
+            (now, Some(low)) => {
+                let now = now.map_or_else(|| t("not analysed here").to_string(), |c| format!("{:.0} %", c * 100.0));
+                ui.label(crate::i18n::fmt(t("{now} here, lowest {low} %"), &[("now", &now), ("low", &format!("{:.0}", low * 100.0))]));
+                confidence_strip(ui, &series);
+            }
+            _ => {
+                ui.label(t("not analysed yet"));
+            }
+        });
+        elems.push(("comp.track.confidence".into(), resp.response.rect, "Confidence".into()));
+        ui.end_row();
     });
     ui.horizontal(|ui| {
         if cx.running {
@@ -1079,13 +1166,8 @@ fn tracker_rows(
             }
         } else {
             for (key, label, dir) in [("backward", "Analyse backward", "backward"), ("forward", "Analyse forward", "forward")] {
-                let mut resp = ui.add_enabled(!cx.inside, egui::Button::new(t(label)));
-                if cx.inside {
-                    resp = resp.on_disabled_hover_text(t(TRACK_INSIDE_NOTE));
-                }
-                // (the automation label carries the note while it is off)
-                let label = if cx.inside { format!("{label} (off: {TRACK_INSIDE_NOTE})") } else { label.to_string() };
-                elems.push((format!("comp.track.analyse.{key}"), resp.rect, label));
+                let resp = ui.button(t(label));
+                elems.push((format!("comp.track.analyse.{key}"), resp.rect, label.into()));
                 if resp.clicked() {
                     out.push(("comp.track.analyse", options(json!({"from": cx.at.0, "direction": dir}))));
                 }
@@ -1531,4 +1613,34 @@ fn group_rows(
             ui.end_row();
         }
     });
+}
+
+#[cfg(test)]
+mod confidence_tests {
+    use filmcraft_geom::Vec2;
+    use filmcraft_project::comp::{CompKind, TrackOperation, TrackerPoint};
+    use filmcraft_time::{FrameRate, Tick};
+
+    /// LO.5: a Tracker's confidence is its lowest point's per frame, in time order; NaN is
+    /// ignored; the value at the playhead is the analysed frame that holds it.
+    #[test]
+    fn tracker_confidence_is_the_lowest_point_per_frame() {
+        let r = FrameRate::new(24, 1);
+        let mut a = TrackerPoint::at("A", Vec2::new(0.0, 0.0));
+        let mut b = TrackerPoint::at("B", Vec2::new(0.0, 0.0));
+        a.confidence = vec![(r.tick_of(1), 0.9), (r.tick_of(0), 1.0), (r.tick_of(2), f32::NAN)];
+        b.confidence = vec![(r.tick_of(1), 0.4), (r.tick_of(2), 0.7)];
+        let kind = CompKind::Tracker {
+            points: vec![a, b],
+            operation: TrackOperation::MatchMove,
+            smooth_radius: 0,
+            reference: Tick::ZERO,
+            method: Default::default(),
+            corner_points: Vec::new(),
+        };
+        let s = super::confidence_series(&kind);
+        assert_eq!(s, vec![(r.tick_of(0), 1.0), (r.tick_of(1), 0.4), (r.tick_of(2), 0.7)]);
+        assert_eq!(super::confidence_at(&s, r, r.tick_of(1) + Tick(5)), Some(0.4));
+        assert_eq!(super::confidence_at(&s, r, r.tick_of(9)), None);
+    }
 }

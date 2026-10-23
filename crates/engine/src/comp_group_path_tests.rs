@@ -111,7 +111,8 @@ fn every_command_family_edits_inside_a_group() {
     let tracker = step(&mut s, c, &p, "comp.addNode", json!({"kind": "tracker"}))["node"].as_u64().unwrap();
     step(&mut s, c, &p, "comp.track.setPoints", json!({"node": tracker, "points": [{"at": [10, 10]}]}));
     step(&mut s, c, &p, "comp.roto.linkTracker", json!({"node": roto, "shape": 0, "tracker": tracker}));
-    assert!(refused(&mut s, "comp.track.analyse", json!({"comp": c, "group": p, "node": tracker})).contains("own nodes only"));
+    // (LO.4: analysis works inside a group; this tracker has no input yet)
+    assert!(refused(&mut s, "comp.track.analyse", json!({"comp": c, "group": p, "node": tracker})).contains("first input"));
     assert!(refused(&mut s, "comp.setSize", json!({"comp": c, "group": p, "width": 10})).contains("own nodes only"));
     // the inner Media Out, removing, comp.get of the inside
     step(&mut s, c, &p, "comp.setOutput", json!({"node": b}));

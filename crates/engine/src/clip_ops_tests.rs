@@ -1084,4 +1084,25 @@ fn source_steps_land_on_a_variable_frame_rate_clips_own_frames() {
     assert_eq!(step(48, -1), 45.0);
     assert_eq!(step(48, 5), 57.0);
     assert_eq!(step(0, -1), -1.0, "before the first frame: one gap back (the caller clamps)");
+    // End lands on the real last frame (frame 89 at 133 / 30 s; LO.7)
+    let last = crate::clip_ops::source_last_frame(&s, &v);
+    assert_eq!((last.0 as f64 / TICKS_PER_SECOND as f64 * 30.0 * 1000.0).round() / 1000.0, 133.0, "end {:?}", v.end);
+}
+
+/// LO.7: End on a constant-rate clip is the start of the grid frame showing at its end (a clip
+/// whose length isn't a whole number of frames included), and never before the start.
+#[test]
+fn source_last_frame_on_a_constant_rate_clip() {
+    let mut s = Session::default();
+    s.execute("file.openDemoProject", json!({})).unwrap();
+    let item = s.project.items.values().find(|i| i.as_media().is_some_and(|m| m.duration().0 > 0 && m.vfr().is_none())).map(|i| i.id).expect("a media clip");
+    let v = crate::clip_ops::source_view(&s, item).unwrap();
+    let last = crate::clip_ops::source_last_frame(&s, &v);
+    let fd = v.rate.frame_duration();
+    assert!(last < v.end && last + fd >= v.end, "{last:?} in the last frame before {:?}", v.end);
+    assert_eq!(v.rate.tick_of(v.rate.frame_at(last)), last, "on the frame grid");
+    let whole = crate::clip_ops::SourceView { end: v.rate.tick_of(40), ..v.clone() };
+    assert_eq!(crate::clip_ops::source_last_frame(&s, &whole), v.rate.tick_of(39));
+    let empty = crate::clip_ops::SourceView { end: v.start, ..v.clone() };
+    assert_eq!(crate::clip_ops::source_last_frame(&s, &empty), v.start);
 }

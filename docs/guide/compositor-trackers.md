@@ -27,13 +27,24 @@ that is moved and laid over the first input.
    foreground's corners sit on four tracked points, or on the plane's corners). Tracker also has
    **Method** (`comp.track.method`: position only, with rotation, or with scale too) and, for
    Stabilise, **Smooth radius** (`comp.track.smoothRadius`): 0 locks the shot in place, a larger
-   radius only removes the shake and keeps a pan.
+   radius only removes the shake and keeps a pan. With Corner Pin and four or more points, a
+   Tracker shows **Top left**, **Top right**, **Bottom right** and **Bottom left**
+   (`comp.track.corner.topLeft` … `.bottomLeft`; command `comp.track.setOptions` with
+   `cornerPoints`): pick which point each corner of the foreground goes to (picking a point
+   another corner uses swaps the two). Until you pick, the first four points are used, in the
+   order you added them. **[Fork]**
 4. **Set to playhead** (`comp.track.reference`) picks the reference frame the motion is measured
    from.
 5. **Analyse forward** or **Analyse backward** (`comp.track.analyse.forward` /
    `.backward`, the command `comp.track.analyse`) tracks from the playhead; **Stop** (`comp.track.cancel`) ends it early and keeps
    what was tracked. The whole run is one undo step. **Clear track** (`comp.track.clear`)
    removes the analysed keyframes.
+6. Check **Confidence** (`comp.track.confidence`): how sure the analysis was at the playhead's
+   frame ("not analysed here" when that frame wasn't tracked) and the lowest over the run, with a
+   small strip of bars, one per analysed frame: green when sure, amber below 80 %, red below 50 %.
+   A Tracker shows its least sure point on each frame. Red or amber bars mark where to check the
+   picture, fix a keyframe by hand or analyse again from a good frame. **[Fork]** (Resolve and
+   Premiere show tracking quality differently; this is our own read-out.)
 
 Points and corners are ordinary keyframes after analysis, so a bad frame can be fixed by typing a
 value at that frame. Agents can set the same things with `comp.track.setPoints`,
@@ -42,6 +53,13 @@ resize points, redraw the region or resize the comp while an analysis runs, its 
 written (it belongs to the old setup): analyse again. A Tracker's match move and stabilise run on
 the GPU; a corner pin and anything a Planar Tracker draws (it is in perspective) render on the
 CPU for now, so playback of such a comp is slower.
+
+Trackers inside a group (open the group first) analyse the same way. **[Fork]** The picture
+tracked is the tracker's input as the group sees it in the comp: a Group Input brings in
+whatever feeds the group, and settings put on the group apply. The result lands in the tracker
+inside the group, still one undo step. Agents pass the group path as `group` to
+`comp.track.analyse` and `comp.track.cancel`. If the group is deleted or ungrouped while the
+analysis runs, nothing is written: analyse again.
 
 ## Placing tracker points and the plane on the viewer [Fork] [Resolve-style]
 

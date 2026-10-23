@@ -116,8 +116,8 @@ fn clamp_to_tracks(tracks: &[&Param], t: Tick) -> Tick {
 /// nothing has been analysed (or the solve fails at `t`).
 pub fn plan(kind: &CompKind, rate: FrameRate, t: Tick, size: (f64, f64), has_fg: bool) -> Option<TrackPlan> {
     let (warp, op) = match kind {
-        CompKind::Tracker { points, operation, smooth_radius, reference, method } => {
-            (tracker_warp(points, *operation, *smooth_radius, *reference, *method, rate, t, size), *operation)
+        CompKind::Tracker { points, operation, smooth_radius, reference, method, corner_points } => {
+            (tracker_warp(points, corner_points, *operation, *smooth_radius, *reference, *method, rate, t, size), *operation)
         }
         CompKind::PlanarTracker { region, quad, reference, corners, operation, .. } => {
             let region: Vec<Vec2> = region.vertices.iter().map(|v| v.p).collect();
@@ -150,6 +150,7 @@ pub fn reference_quad(quad: &[Vec2; 4], region: &[Vec2], (w, h): (f64, f64)) -> 
 #[allow(clippy::too_many_arguments)]
 fn tracker_warp(
     points: &[TrackerPoint],
+    corner_points: &[u32],
     op: TrackOperation,
     radius: u32,
     reference: Tick,
@@ -165,8 +166,15 @@ fn tracker_warp(
     let t = clamp_to_tracks(&tracks, t);
     match op {
         TrackOperation::CornerPin => {
-            // the picture's corners onto points 1-4 (held outside their analysed time)
-            let dst: Vec<Vec2> = tracks.iter().take(4).map(|p| held_at(p, t)).collect::<Option<_>>()?;
+            // the picture's corners onto the four chosen points (LO.5), else points 1-4 (held
+            // outside their analysed time); a chosen point that isn't analysed gives no warp
+            let dst: Vec<Vec2> = match filmcraft_project::comp::valid_corner_points(corner_points, points.len()) {
+                Some(four) => four
+                    .iter()
+                    .map(|&i| points.get(i).map(|p| &p.track).filter(|p| !p.keyframes.is_empty()).and_then(|p| held_at(p, t)))
+                    .collect::<Option<_>>()?,
+                None => tracks.iter().take(4).map(|p| held_at(p, t)).collect::<Option<_>>()?,
+            };
             (dst.len() == 4).then(|| fit_homography(&frame_quad(w, h), &dst)).flatten().map(TrackWarp::Projective)
         }
         TrackOperation::MatchMove => {
@@ -217,7 +225,9 @@ fn planar_warp(quad: &[Vec2; 4], reference: Tick, corners: &[Param], op: TrackOp
 pub fn follow_warp(kind: &CompKind, rate: FrameRate, t: Tick, size: (f64, f64), output: &str) -> Option<TrackWarp> {
     let whole = output.is_empty() || output.eq_ignore_ascii_case("transform");
     let warp = match kind {
-        CompKind::Tracker { points, reference, method, .. } if whole => tracker_warp(points, TrackOperation::MatchMove, 0, *reference, *method, rate, t, size),
+        CompKind::Tracker { points, reference, method, .. } if whole => {
+            tracker_warp(points, &[], TrackOperation::MatchMove, 0, *reference, *method, rate, t, size)
+        }
         CompKind::Tracker { points, reference, .. } => {
             let p = points.iter().find(|p| p.name == output)?;
             if p.track.keyframes.is_empty() {

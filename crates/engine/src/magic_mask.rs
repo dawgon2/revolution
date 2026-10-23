@@ -129,6 +129,7 @@ fn fingerprint_with(project: &Project, item: &TrackItem, effects: u64) -> u64 {
             serde_json::to_string(&m.interpret).unwrap_or_default().hash(&mut h);
         }
         Some(k @ ItemKind::Subclip { .. }) => serde_json::to_string(k).unwrap_or_default().hash(&mut h),
+        Some(ItemKind::Sequence(seq)) => nested_picture_hash(project, seq, 0, &mut h),
         _ => {}
     }
     item.speed.to_bits().hash(&mut h);
@@ -138,11 +139,34 @@ fn fingerprint_with(project: &Project, item: &TrackItem, effects: u64) -> u64 {
     h.finish()
 }
 
+/// How deep [`nested_picture_hash`] follows sequences nested in nested sequences.
+const MAX_NEST_DEPTH: usize = 8;
+
+/// A nested sequence's picture (LO.6): its settings and video tracks (items, their effects and
+/// grades), and the media or sequences those items show, [`MAX_NEST_DEPTH`] levels down.
+fn nested_picture_hash(project: &Project, seq: &filmcraft_project::Sequence, depth: usize, h: &mut DefaultHasher) {
+    serde_json::to_string(&(&seq.settings, &seq.video_tracks)).unwrap_or_default().hash(h);
+    if depth >= MAX_NEST_DEPTH {
+        return;
+    }
+    for it in seq.video_tracks.iter().flat_map(|t| &t.items) {
+        match project.item(it.item).map(|p| &p.kind) {
+            Some(ItemKind::Media(m)) => {
+                serde_json::to_string(&m.media).unwrap_or_default().hash(h);
+                serde_json::to_string(&m.interpret).unwrap_or_default().hash(h);
+            }
+            Some(k @ ItemKind::Subclip { .. }) => serde_json::to_string(k).unwrap_or_default().hash(h),
+            Some(ItemKind::Sequence(inner)) => nested_picture_hash(project, inner, depth + 1, h),
+            _ => {}
+        }
+    }
+}
+
 /// What the clip's own picture at a clip time depends on, as far as a matte is concerned: the
 /// media (and its interpretation), the intrinsic effects that move it (Motion, crop, time
 /// remapping…; not Opacity), speed, reverse, holds and frame scaling. A change hides the mattes
-/// until the clip is tracked again. (A nested sequence counts by its id only: edits inside it
-/// don't invalidate.)
+/// until the clip is tracked again. A nested sequence counts with what it shows (edits inside it
+/// invalidate, LO.6).
 pub fn picture_fingerprint(project: &Project, item: &TrackItem) -> u64 {
     fingerprint_with(project, item, effects_hash(item))
 }
@@ -165,7 +189,8 @@ pub fn owner_hash(mask: &MagicMask, at: Tick, picture: u64) -> u64 {
 }
 
 /// The prompt of the strokes drawn at `at`: their points (the newest [`MAX_POINTS`]) and the
-/// newest box.
+/// newest box; Person mode asks for the whole figure when the strokes are points only
+/// ([`Prompt::prefer_whole`]).
 fn stroke_prompt(mask: &MagicMask, at: Tick) -> Prompt {
     let mut points: Vec<Point> = Vec::new();
     let mut rect = None;
@@ -177,7 +202,7 @@ fn stroke_prompt(mask: &MagicMask, at: Tick) -> Prompt {
     }
     let extra = points.len().saturating_sub(MAX_POINTS);
     points.drain(..extra);
-    Prompt { points, rect, prior: None }
+    Prompt { points, rect, prior: None, prefer_whole: matches!(mask.mode, MagicMaskMode::Person) }
 }
 
 /// A segment in the model's grid rebuilt from a cached matte (the prior for continuing a run
@@ -1062,7 +1087,12 @@ pub(crate) mod gpu_sam {
             let (w, h) = (320, 200);
             let inside = |x: usize, y: usize| (110..210).contains(&x) && (50..150).contains(&y);
             let img = RgbImage::new(w, h, (0..w * h).flat_map(|i| if inside(i % w, i / w) { [220, 60, 40] } else { [40, 90, 160] }).collect()).unwrap();
-            let p = Prompt { points: vec![Point { x: 0.5, y: 0.5, positive: true }], rect: Some(Rect { x0: 0.3, y0: 0.2, x1: 0.7, y1: 0.8 }), prior: None };
+            let p = Prompt {
+                points: vec![Point { x: 0.5, y: 0.5, positive: true }],
+                rect: Some(Rect { x0: 0.3, y0: 0.2, x1: 0.7, y1: 0.8 }),
+                prior: None,
+                prefer_whole: false,
+            };
             let a = shared.segment(&shared.embed(&img).unwrap(), &p).unwrap().matte(w, h).unwrap();
             let b = cpu.segment(&cpu.embed(&img).unwrap(), &p).unwrap().matte(w, h).unwrap();
             let iou = a.iou(&b).unwrap();

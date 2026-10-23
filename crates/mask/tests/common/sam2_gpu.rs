@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use filmcraft_gpu::sam2::{GpuBlock, Sam2Gpu, Sam2GpuSpec, Weight};
 use filmcraft_mask::MaskError;
-use filmcraft_mask::sam2::weights::{HEAVY_PREFIXES, Sam2Weights};
-use filmcraft_mask::sam2::{Sam2Compute, Sam2Features};
+use filmcraft_mask::sam2::weights::{DECODER_PREFIXES, HEAVY_PREFIXES, Sam2Weights};
+use filmcraft_mask::sam2::{DecoderInput, DecoderRaw, Sam2Compute, Sam2Features};
 
 pub struct GpuCompute(pub Sam2Gpu);
 
@@ -39,7 +39,9 @@ pub fn spec(w: &Sam2Weights) -> Result<Sam2GpuSpec, MaskError> {
 
 pub fn open(w: &Sam2Weights) -> Result<GpuCompute, MaskError> {
     let spec = spec(w)?;
-    let plain: HashMap<String, Weight> = w.plain_with(&HEAVY_PREFIXES)?.into_iter().map(|(k, t)| (k, Weight { shape: t.shape, data: t.data })).collect();
+    let mut prefixes = HEAVY_PREFIXES.to_vec();
+    prefixes.extend(DECODER_PREFIXES);
+    let plain: HashMap<String, Weight> = w.plain_with(&prefixes)?.into_iter().map(|(k, t)| (k, Weight { shape: t.shape, data: t.data })).collect();
     Sam2Gpu::open(&spec, &plain).map(GpuCompute).map_err(failed)
 }
 
@@ -59,5 +61,15 @@ impl Sam2Compute for GpuCompute {
 
     fn memory_encoder(&self, feat: &[f32], mask: &[f32]) -> Result<Vec<f32>, MaskError> {
         self.0.memory_encoder(feat, mask).map_err(failed)
+    }
+
+    fn mask_decoder(&self, i: &DecoderInput<'_>) -> Option<Result<DecoderRaw, MaskError>> {
+        let d = self.0.decoder()?;
+        Some(d.decode(i.pix, i.s0, i.s1, i.tokens, i.dense).map_err(failed).map(|o| DecoderRaw {
+            masks: o.masks.chunks(filmcraft_gpu::sam2::decoder::MASK_SIDE * filmcraft_gpu::sam2::decoder::MASK_SIDE).map(<[f32]>::to_vec).collect(),
+            ious: o.ious,
+            tokens: o.tokens.chunks(256).map(<[f32]>::to_vec).collect(),
+            object_score: o.score,
+        }))
     }
 }

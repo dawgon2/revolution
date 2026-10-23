@@ -73,10 +73,11 @@ Right after Revolution 0.3.0 is published (after G4). Same recipe as AI2, on eve
 Y2 VFR, G3 Magic Mask + A3.7 voice isolation, C3 trackers / planar / roto / paint, C4 expressions / groups /
 templates, G4's grading tools. 1. **Data:** extend `tools/explainer-train/` with those node / tool cases (template
 explainer facts → target sentences), keeping all older data. 2. **Fact checker** knows the new controls. 3.
-**Held-out set 5** for the new features; sets 1–4 must not regress. 4. **Train** `smol360-v4` on the RX 6700 XT
+**Held-out sets 6 and 7** for the new features ("set 5" was taken by AI2's branch set: set 6 = G4's
+node tools, `eval_cases_v6`; set 7 = C3 / C4 comp nodes); sets 1–5 must not regress. 4. **Train** `smol360-v4` on the RX 6700 XT
 (TRAINING.md). 5. **Coach:** add questions for the new guide sections to `docs/fork/coach-eval/questions.toml`,
 re-measure `ai_pool` / coach floors (raise, never lower). 6. **Ship** as `explainer-smol360-v4` (§1a.33) if it
-beats v3 on sets 1–4 and covers set 5 at least as well as the template explainer. Tag `ai-2b`.
+beats v3 on sets 1–5 and covers sets 6–7 at least as well as the template explainer. Tag `ai-2b`.
 
 ## Phase AI3: the grading assistant, a model-backed "Ask the coach" (owner, 2026-10-14; ≈ 70–120 h)
 

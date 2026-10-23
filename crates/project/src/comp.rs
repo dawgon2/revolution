@@ -180,6 +180,11 @@ pub enum CompKind {
         reference: Tick,
         #[serde(default)]
         method: TrackMethod,
+        /// Corner Pin only (LO.5): the indices into `points` of the four points the corners go to
+        /// (top left, top right, bottom right, bottom left). Empty: the first four analysed points.
+        /// Anything but four distinct indices of existing points loads (and renders) as empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        corner_points: Vec<u32>,
     },
     /// Planar tracker (fork C3.5a): `region` (drawn at `reference`, comp pixels) tracked as a
     /// plane through input 0; `quad` (at `reference`) follows it as the keyframed `corners`.
@@ -292,6 +297,15 @@ pub struct TrackerPoint {
     pub confidence: Vec<(Tick, f32)>,
 }
 
+/// A Tracker's chosen Corner Pin points (LO.5) as indices, when they are four distinct indices
+/// below `points`; None otherwise (then the first four analysed points are used).
+pub fn valid_corner_points(corner_points: &[u32], points: usize) -> Option<[usize; 4]> {
+    let [a, b, c, d] = corner_points else { return None };
+    let four = [*a, *b, *c, *d].map(|i| usize::try_from(i).unwrap_or(usize::MAX));
+    let distinct = (0..4).all(|i| (i + 1..4).all(|j| four.get(i) != four.get(j)));
+    (distinct && four.iter().all(|&i| i < points)).then_some(four)
+}
+
 fn default_pattern() -> Vec2 {
     Vec2::new(16.0, 16.0)
 }
@@ -393,6 +407,7 @@ impl CompKind {
                 smooth_radius: 0,
                 reference: Tick::ZERO,
                 method: TrackMethod::default(),
+                corner_points: Vec::new(),
             },
             "planarTracker" => CompKind::PlanarTracker {
                 region: MaskPath::default(),
@@ -461,11 +476,60 @@ impl CompNode {
         Self { id, kind, label: String::new(), bypass: false, params: BTreeMap::new(), pos: [0.0, 0.0] }
     }
 
-    /// A parameter's value at comp time `t`: the stored one, else the schema default.
+    /// A parameter's value at comp time `t`: the stored one, else the schema default (LO.4: a
+    /// Color node's are its grade's, a Text node's its layer's, see [`CompNode::param_store`]).
     pub fn value_at(&self, key: &str, t: Tick) -> Option<ParamValue> {
-        match self.params.get(key) {
+        match self.param_store().get(key) {
             Some(p) => Some(p.value_at(t)),
-            None => params(&self.kind).into_iter().find(|d| d.id == key).map(|d| d.default),
+            None => self.param_default(key),
+        }
+    }
+
+    /// Where the node keeps its parameters (LO.4): a Color node's grade node's settings, a Text
+    /// node's layer settings, every other node's own `params`. Expressions, `value_at` and
+    /// [`ExprFrame`] read parameters here.
+    pub fn param_store(&self) -> &BTreeMap<String, Param> {
+        match &self.kind {
+            CompKind::Color { node } => &node.params,
+            CompKind::Text { layer } => &layer.params,
+            _ => &self.params,
+        }
+    }
+
+    /// [`CompNode::param_store`] mutably.
+    pub fn param_store_mut(&mut self) -> &mut BTreeMap<String, Param> {
+        match &mut self.kind {
+            CompKind::Color { node } => &mut node.params,
+            CompKind::Text { layer } => &mut layer.params,
+            _ => &mut self.params,
+        }
+    }
+
+    /// Parameter `key`'s schema default: a grade setting's identity (number or wheel; None for a
+    /// curve or an unknown key), a text layer setting's default, else the kind's schema.
+    pub fn param_default(&self, key: &str) -> Option<ParamValue> {
+        match &self.kind {
+            CompKind::Color { .. } => match crate::grade::node_param(key).map(|p| p.kind)? {
+                crate::grade::NodeParamKind::Float { identity, .. } => Some(ParamValue::Float(f64::from(identity))),
+                crate::grade::NodeParamKind::Wheel { .. } => Some(ParamValue::Color([0.0; 4])),
+                crate::grade::NodeParamKind::Curve => None,
+            },
+            CompKind::Text { layer } => layer.def().and_then(|d| d.param(key)).map(|d| d.default.clone()),
+            kind => params(kind).into_iter().find(|d| d.id == key).map(|d| d.default),
+        }
+    }
+
+    /// How many entries parameter `key` has when it is a menu (an expression's result is kept
+    /// within them).
+    fn param_choices(&self, key: &str) -> Option<usize> {
+        let kind = match &self.kind {
+            CompKind::Color { .. } => return None,
+            CompKind::Text { layer } => layer.def().and_then(|d| d.param(key)).map(|d| d.kind.clone())?,
+            kind => params(kind).into_iter().find(|d| d.id == key).map(|d| d.kind)?,
+        };
+        match kind {
+            crate::effect::ParamKind::Choice(names) => Some(names.len()),
+            _ => None,
         }
     }
 
@@ -495,6 +559,8 @@ impl CompNode {
                 if node.params.len() > MAX_PARAMS * 4 {
                     node.params = std::mem::take(&mut node.params).into_iter().take(MAX_PARAMS * 4).collect();
                 }
+                // (LO.4: grade settings take expressions)
+                node.params.values_mut().for_each(Param::cap_expression);
             }
             CompKind::Text { layer } => {
                 if layer.params.len() > MAX_PARAMS {
@@ -510,11 +576,14 @@ impl CompNode {
             }
             // offsets within a day either way, so adding them to a time can't overflow
             CompKind::MediaIn { offset, .. } => clamp_day(offset),
-            CompKind::Tracker { points, smooth_radius, reference, .. } => {
+            CompKind::Tracker { points, smooth_radius, reference, corner_points, .. } => {
                 points.truncate(MAX_TRACK_POINTS);
                 points.iter_mut().for_each(TrackerPoint::sanitize);
                 *smooth_radius = (*smooth_radius).min(MAX_SMOOTH_RADIUS);
                 clamp_day(reference);
+                if valid_corner_points(corner_points, points.len()).is_none() {
+                    corner_points.clear();
+                }
             }
             CompKind::PlanarTracker { region, quad, reference, corners, confidence, .. } => {
                 region.vertices.truncate(MAX_REGION_POINTS);
@@ -717,14 +786,15 @@ impl ExprFrame<'_> {
     /// None when the node has no expression (read it as it is).
     pub fn node(&self, id: NodeId) -> Option<CompNode> {
         let n = self.comp.node(id)?;
-        let keys: Vec<String> = n.params.keys().filter(|k| n.expression(k).is_some()).cloned().collect();
+        let keys: Vec<String> = n.param_store().keys().filter(|k| n.expression(k).is_some()).cloned().collect();
         if keys.is_empty() {
             return None;
         }
         let mut out = n.clone();
         for k in keys {
             let (v, _) = self.param_at(id, &k);
-            out.params.insert(k, Param::new(v));
+            // (LO.4: a Color node's grade setting / a Text node's layer setting where it lives)
+            out.param_store_mut().insert(k, Param::new(v));
         }
         Some(out)
     }
@@ -780,10 +850,7 @@ impl ExprFrame<'_> {
         if let Ok(mut s) = self.stack.try_borrow_mut() {
             s.pop();
         }
-        let choices = params(&node.kind).into_iter().find(|d| d.id == key).and_then(|d| match d.kind {
-            crate::effect::ParamKind::Choice(names) => Some(names.len()),
-            _ => None,
-        });
+        let choices = node.param_choices(key);
         let mut out = crate::expr::to_param(r?, &base, choices).map_err(|e| ExprError::general(format!("`{name}.{key}`: {}", e.message)))?;
         // An "auto" (NaN) point the expression gave back as it read it stays auto; any other
         // result is a plain point (auto read as the comp centre, ADR 0009 §1.5).
@@ -806,9 +873,10 @@ impl CompNode {
         if self.label.is_empty() { format!("node {}", self.id) } else { self.label.clone() }
     }
 
-    /// Parameter `key`'s expression, if it has a non-blank one.
+    /// Parameter `key`'s expression, if it has a non-blank one (LO.4: in
+    /// [`CompNode::param_store`]).
     pub fn expression(&self, key: &str) -> Option<&str> {
-        self.params.get(key).and_then(|p| p.expression.as_deref()).filter(|s| !s.trim().is_empty())
+        self.param_store().get(key).and_then(|p| p.expression.as_deref()).filter(|s| !s.trim().is_empty())
     }
 }
 
@@ -894,7 +962,7 @@ impl Comp {
 
     fn varying(&self, id: NodeId, key: &str, depth: u32, seen: &mut Vec<(NodeId, String)>, budget: &mut u32) -> bool {
         use crate::expr::{ExprKind, Func, Name};
-        let Some(p) = self.node(id).and_then(|n| n.params.get(key)) else { return false };
+        let Some(p) = self.node(id).and_then(|n| n.param_store().get(key)) else { return false };
         if p.is_animated() {
             return true;
         }
@@ -931,7 +999,7 @@ impl Comp {
     pub fn node_expressions_static(&self, id: NodeId) -> bool {
         use crate::expr::{ExprKind, Name};
         let Some(n) = self.node(id) else { return true };
-        n.params.iter().filter(|(_, p)| p.expression.is_some()).all(|(k, p)| {
+        n.param_store().iter().filter(|(_, p)| p.expression.is_some()).all(|(k, p)| {
             let reads_outside = p.expression.as_deref().and_then(|s| crate::expr::parse_cached(s).ok()).is_some_and(|e| {
                 e.any(&mut |x| matches!(&x.kind, ExprKind::Param { node: Some(_), .. } | ExprKind::Name(Name::Fps | Name::Width | Name::Height)))
             });
@@ -1138,8 +1206,14 @@ mod tests {
         let mut pt = TrackerPoint::at("A", Vec2::new(10.0, 20.0));
         pt.track.put_keyframe(Tick(5), ParamValue::Vec2(Vec2::new(11.0, 21.0)));
         pt.confidence.push((Tick(5), 0.9));
-        let kind =
-            CompKind::Tracker { points: vec![pt], operation: TrackOperation::Stabilise, smooth_radius: 8, reference: Tick(5), method: TrackMethod::Position };
+        let kind = CompKind::Tracker {
+            points: vec![pt],
+            operation: TrackOperation::Stabilise,
+            smooth_radius: 8,
+            reference: Tick(5),
+            method: TrackMethod::Position,
+            corner_points: Vec::new(),
+        };
         let back: CompKind = serde_json::from_str(&serde_json::to_string(&kind).unwrap()).unwrap();
         assert_eq!(back, kind);
         for op in TrackOperation::ALL {
@@ -1165,11 +1239,13 @@ mod tests {
                 smooth_radius: u32::MAX,
                 reference: Tick(i64::MIN),
                 method: TrackMethod::Position,
+                corner_points: vec![0, 1, 2, u32::MAX],
             },
         );
         n.sanitize();
-        let CompKind::Tracker { points, smooth_radius, reference, .. } = &n.kind else { panic!() };
+        let CompKind::Tracker { points, smooth_radius, reference, corner_points, .. } = &n.kind else { panic!() };
         assert_eq!((points.len(), *smooth_radius), (MAX_TRACK_POINTS, MAX_SMOOTH_RADIUS));
+        assert!(corner_points.is_empty(), "an index past the points is dropped");
         assert!(reference.0 > i64::MIN / 2);
         let p = &points[0];
         assert_eq!(p.name.chars().count(), MAX_LABEL);
@@ -1214,5 +1290,20 @@ mod tests {
                 let _ = c.validate();
             }
         }
+    }
+
+    /// LO.5: the chosen Corner Pin points are kept only as four distinct existing indices; old
+    /// saves (no field) load as empty and save without it.
+    #[test]
+    fn corner_points_validate_and_old_saves_keep_their_shape() {
+        assert_eq!(valid_corner_points(&[3, 0, 1, 2], 4), Some([3, 0, 1, 2]));
+        for bad in [&[0, 1, 2][..], &[0, 1, 2, 2], &[0, 1, 2, 4], &[0, 1, 2, 3, 4], &[]] {
+            assert_eq!(valid_corner_points(bad, 4), None, "{bad:?}");
+        }
+        let old = serde_json::json!({"type": "tracker", "points": [], "operation": "cornerPin", "smooth_radius": 0, "reference": 0, "method": "Position"});
+        let k: CompKind = serde_json::from_value(old.clone()).unwrap();
+        let CompKind::Tracker { corner_points, .. } = &k else { panic!() };
+        assert!(corner_points.is_empty());
+        assert!(serde_json::to_value(&k).unwrap().get("corner_points").is_none(), "saved without the field");
     }
 }

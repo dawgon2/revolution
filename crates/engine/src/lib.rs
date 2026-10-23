@@ -740,6 +740,7 @@ impl Session {
         let prefs_path = cfg.data_dir.join("preferences.json");
         self.prefs = autosave::Preferences::load(&prefs_path);
         self.prefs.apply_hardware_decoding();
+        self.magic_mask.model = self.prefs.color.magic_mask;
         self.media.set_proxy_mode(self.prefs.media.proxies);
         self.shortcuts.set_dir(&cfg.data_dir);
         self.presets.set_dir(&cfg.data_dir);
@@ -829,7 +830,12 @@ impl Session {
         // AI explanations switched off (or another model chosen), e.g. by the Settings dialog's
         // OK: free the model's memory as `ai.setEnabled` does (never waits)
         let release_ai = (old_ai.enabled && !new_ai.enabled) || old_ai.model != new_ai.model;
+        // the Magic Mask model follows its preference when that changes (LO.6)
+        let mask_model = (self.prefs.color.magic_mask != p.color.magic_mask).then_some(p.color.magic_mask);
         self.prefs = p;
+        if let Some(m) = mask_model {
+            self.magic_mask.model = m;
+        }
         if release_ai {
             self.ai.release();
         }

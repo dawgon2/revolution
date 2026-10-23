@@ -22,6 +22,10 @@ struct Driver {
 
 impl Driver {
     fn demo() -> Self {
+        // never this computer's own data folder: installed models (the assistant, the meaning
+        // search) would load into each test (12 GB each, two at once ran ci out of memory: LO)
+        let data = std::env::temp_dir().join(format!("fc-coach-ui-data-{}", std::process::id()));
+        filmcraft_engine::autosave::set_launch_data_dir(&data);
         let mut session = Session::default();
         // the lessons are written for the Premiere workflow (the fork build defaults to Resolve)
         session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
@@ -889,6 +893,11 @@ fn walked() -> (Driver, BTreeSet<String>) {
 /// check (a dynamic id) or a literal automation id in the UI source.
 const NOT_WALKED: &[(&str, &str)] = &[
     ("grade.window.0.track.clearPlanar", "shown only on a window that follows a planar track (grade_ui covers it)"),
+    ("grade.warper.strength.anim", "shown once the node has a warper (grade_ui covers it)"),
+    ("grade.warper.range.anim", "shown once the node has a warper (grade_ui covers it)"),
+    ("program.qual3d.stroke.0", "drawn only after a 3D qualifier stroke (grade_ui covers it)"),
+    ("effectControls.gaussian_blur.mask0.track.planar", "a Gaussian Blur effect mask's row (masks_ui covers it)"),
+    ("effectControls.gaussian_blur.mask0.track.clearPlanar", "shown only on an effect mask that follows a planar track (masks_ui covers it)"),
     ("comp.canvas.saveTemplate", "the comp canvas's right-click menu (comp_templates_ui covers it)"),
     ("comp.canvas.insertTemplate", "the comp canvas's right-click menu (comp_templates_ui covers it)"),
     ("pageBar.saveLayout.reset", "Save Layout's right-click menu (pages_ui covers it)"),
@@ -1130,7 +1139,10 @@ fn ask_assistant(d: &mut Driver, question: &str) {
     d.harness.state_mut().ui.coach_ask.input = question.into();
     d.frames(1);
     d.click("coach.ask.go");
-    for _ in 0..200 {
+    // the answer comes from a background thread: wait by the clock, not a frame count, so a loaded
+    // machine (the full ci) gets the same answer (LO.2; 200 × 10 ms timed out under load)
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
         d.frames(1);
         if d.harness.state().ui.coach_ask.assist_id.is_none() {
             break;

@@ -254,7 +254,7 @@ pub fn expressions(c: &Comp, t: Tick) -> Vec<ExpressionLine> {
     let frame = c.expr_frame(t);
     let mut out = Vec::new();
     for n in &c.nodes {
-        for k in n.params.keys() {
+        for k in n.param_store().keys() {
             let Some(src) = n.expression(k) else { continue };
             let (value, error) = frame.param_at(n.id, k);
             out.push(ExpressionLine { node: n.id, name: node_name(n), param: k.clone(), expression: src.to_string(), value, error });
@@ -415,11 +415,14 @@ impl CompFacts {
         {
             let base = Self::Roto { node: node.clone(), input: input.clone(), shapes: *shapes, matte: *matte, following: Vec::new(), dangling: 0 }.text(k);
             let mut out = base;
-            if !following.is_empty() {
-                out.push_str(&format!(" Its shapes follow the motion {} measured.", following.join(", ")));
-            }
-            if *dangling > 0 {
-                out.push_str(&format!(" {dangling} shape(s) follow a tracker that is gone, so they stay where they were drawn."));
+            // (one sentence when both apply: the checker allows two per line, AI2b)
+            match (following.is_empty(), *dangling) {
+                (false, 0) => out.push_str(&format!(" Its shapes follow the motion {} measured.", following.join(", "))),
+                (true, d) => out.push_str(&format!(" {d} shape(s) follow a tracker that is gone, so they stay where they were drawn.")),
+                (false, d) => out.push_str(&format!(
+                    " Its shapes follow the motion {} measured, but {d} shape(s) follow a tracker that is gone, so they stay where they were drawn.",
+                    following.join(", ")
+                )),
             }
             return out;
         }
@@ -780,9 +783,180 @@ pub fn comp_eval_cases() -> Vec<CompEvalCase> {
     out
 }
 
+/// Held-out set 7 (fork AI2b): fixed comps with C3's and C4's nodes: a roto cut-out, a roto matte
+/// whose shapes follow an analysed tracker (one follows a tracker that is gone), paint with a
+/// reveal source, a planar corner pin with an insert, an unanalysed tracker, a group with an
+/// exposed control and a plain group; only those nodes' lines. Labels `c7_…`; never in the
+/// training data.
+pub fn comp_eval_cases_v7() -> Vec<CompEvalCase> {
+    use filmcraft_geom::Vec2;
+    use filmcraft_project::comp::group::{expose, group_nodes};
+    use filmcraft_project::comp::{RotoOutput, TrackOperation, TrackerPoint};
+    use filmcraft_project::paint::PaintStroke;
+    use filmcraft_project::roto::{RotoShape, TrackLink};
+    let layer = |track: u32| CompKind::MediaIn { source: MediaInSource::Layer { track }, offset: Tick::ZERO };
+    let kind = |key: &str| CompKind::from_key(key).unwrap_or(CompKind::Blur);
+    let analysed = |at: Vec2| {
+        let mut p = TrackerPoint::at("A", at);
+        p.track.put_keyframe(Tick::ZERO, ParamValue::Vec2(at));
+        p
+    };
+    let shapes = |n: usize, links: &[Option<&str>]| {
+        (0..n)
+            .map(|i| RotoShape {
+                name: format!("Shape {}", i + 1),
+                track_link: links.get(i).copied().flatten().map(|t| TrackLink { tracker: t.to_string(), output: "transform".to_string() }),
+                ..RotoShape::default()
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut comps: Vec<(&str, Comp)> = Vec::new();
+
+    let mut c = empty_comp();
+    c.nodes.push(new_node(2, layer(0), "Actor"));
+    let mut roto = kind("roto");
+    if let CompKind::Roto { roto: r, .. } = &mut roto {
+        r.shapes = shapes(2, &[]);
+    }
+    c.nodes.push(new_node(3, roto, "Cut-out"));
+    link(&mut c, 2, 3, 0);
+    link(&mut c, 3, 1, 0);
+    comps.push(("roto_cutout", c));
+
+    let mut c = empty_comp();
+    c.nodes.push(new_node(2, layer(0), "Plate"));
+    let mut tracker = kind("tracker");
+    if let CompKind::Tracker { points, operation, .. } = &mut tracker {
+        *points = vec![analysed(Vec2::new(900.0, 400.0)), analysed(Vec2::new(1000.0, 420.0))];
+        *operation = TrackOperation::Stabilise;
+    }
+    c.nodes.push(new_node(3, tracker, "Face track"));
+    let mut roto = kind("roto");
+    if let CompKind::Roto { roto: r, output } = &mut roto {
+        r.shapes = shapes(3, &[Some("3"), Some("3"), Some("999")]);
+        *output = RotoOutput::Matte;
+    }
+    c.nodes.push(new_node(4, roto, ""));
+    link(&mut c, 2, 3, 0);
+    link(&mut c, 3, 4, 0);
+    link(&mut c, 4, 1, 0);
+    comps.push(("roto_follows_tracker", c));
+
+    let mut c = empty_comp();
+    c.nodes.push(new_node(2, layer(0), "Plate"));
+    c.nodes.push(new_node(3, layer(1), "Clean plate"));
+    let mut paint = kind("paint");
+    if let CompKind::Paint { paint: p } = &mut paint {
+        p.strokes = vec![PaintStroke::default(), PaintStroke::default()];
+    }
+    c.nodes.push(new_node(4, paint, "Wire removal"));
+    link(&mut c, 2, 4, 0);
+    link(&mut c, 3, 4, 1);
+    link(&mut c, 4, 1, 0);
+    comps.push(("paint_reveal", c));
+
+    let mut c = empty_comp();
+    c.nodes.push(new_node(2, layer(0), "Phone"));
+    c.nodes.push(new_node(3, CompKind::Solid, "Screen insert"));
+    let mut planar = kind("planarTracker");
+    if let CompKind::PlanarTracker { corners, operation, .. } = &mut planar {
+        *corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].iter().map(|[x, y]| analysed(Vec2::new(*x * 400.0, *y * 300.0)).track).collect();
+        *operation = TrackOperation::CornerPin;
+    }
+    c.nodes.push(new_node(4, planar, ""));
+    link(&mut c, 2, 4, 0);
+    link(&mut c, 3, 4, 1);
+    link(&mut c, 4, 1, 0);
+    comps.push(("planar_screen", c));
+
+    let mut c = empty_comp();
+    c.nodes.push(new_node(2, CompKind::Gradient, ""));
+    let mut tracker = kind("tracker");
+    if let CompKind::Tracker { points, .. } = &mut tracker {
+        *points = vec![TrackerPoint::at("A", Vec2::new(10.0, 10.0))];
+    }
+    c.nodes.push(new_node(3, tracker, ""));
+    link(&mut c, 2, 3, 0);
+    link(&mut c, 3, 1, 0);
+    comps.push(("tracker_unanalysed", c));
+
+    let mut c = empty_comp();
+    c.nodes.push(new_node(2, layer(0), ""));
+    c.nodes.push(with_float(new_node(3, CompKind::Blur, "Soften"), 0, 0.3));
+    c.nodes.push(with_float(new_node(4, CompKind::Transform, ""), 0, 0.7));
+    link(&mut c, 2, 3, 0);
+    link(&mut c, 3, 4, 0);
+    link(&mut c, 4, 1, 0);
+    if let Ok(g) = group_nodes(&mut c, &[3, 4], "Look") {
+        let key = float_params(&CompKind::Blur).first().map(|(k, ..)| *k).unwrap_or("radius");
+        let _ = expose(&mut c, g, 3, key, "Softness");
+    }
+    comps.push(("group_with_control", c));
+
+    let mut c = empty_comp();
+    c.nodes.push(new_node(2, layer(1), ""));
+    c.nodes.push(new_node(3, CompKind::Color { node: filmcraft_project::grade::GradeNode::new(1) }, ""));
+    link(&mut c, 2, 3, 0);
+    link(&mut c, 3, 1, 0);
+    let _ = group_nodes(&mut c, &[3], "");
+    comps.push(("group_plain", c));
+
+    let project = Project::default();
+    let mut out = Vec::new();
+    for (name, c) in comps {
+        for (i, facts) in comp_facts(&c, &project, Tick::ZERO).into_iter().enumerate() {
+            // only the new nodes' lines: the others are set 4's kinds (and in the training data)
+            if matches!(
+                facts,
+                CompFacts::Roto { .. } | CompFacts::Paint { .. } | CompFacts::Tracker { .. } | CompFacts::PlanarTracker { .. } | CompFacts::Group { .. }
+            ) {
+                out.push(CompEvalCase { label: format!("c7_{name}_{i}"), template: facts.sentence(), facts });
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod facts_tests {
     use super::*;
+
+    #[test]
+    fn set_7_covers_c3_and_c4_and_every_phrasing_passes() {
+        let cases = comp_eval_cases_v7();
+        assert_eq!(cases, comp_eval_cases_v7(), "deterministic");
+        let mut labels: Vec<&str> = cases.iter().map(|c| c.label.as_str()).collect();
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), cases.len());
+        let set4: Vec<CompFacts> = comp_eval_cases().into_iter().map(|c| c.facts).collect();
+        let json: Vec<String> = cases.iter().map(|c| serde_json::to_string(&c.facts).unwrap_or_default()).collect();
+        for kind in ["roto", "paint", "tracker", "planar_tracker", "group"] {
+            assert!(json.iter().any(|j| j.contains(&format!("\"kind\":\"{kind}\""))), "{kind}: {json:#?}");
+        }
+        for needle in
+            ["\"following\":[\"Face track\"]", "\"dangling\":1", "\"controls\":[\"Softness\"]", "\"matte\":true", "\"analysed\":true", "\"analysed\":false"]
+        {
+            assert!(json.iter().any(|j| j.contains(needle)), "{needle}: {json:#?}");
+        }
+        for c in &cases {
+            let p = c.facts.phrasings();
+            assert_eq!(p.first(), Some(&c.template));
+            for s in &p {
+                assert_eq!(check_comp_explanation(&c.facts, s), Ok(()), "{}: {s}", c.label);
+            }
+            assert!(c.label.starts_with("c7_"));
+            assert!(
+                matches!(
+                    c.facts,
+                    CompFacts::Roto { .. } | CompFacts::Paint { .. } | CompFacts::Tracker { .. } | CompFacts::PlanarTracker { .. } | CompFacts::Group { .. }
+                ),
+                "{}",
+                c.label
+            );
+            assert!(!set4.contains(&c.facts), "{} repeats set 4", c.label);
+        }
+    }
 
     #[test]
     fn lines_are_built_from_the_facts_and_every_phrasing_passes() {
@@ -826,7 +1000,8 @@ mod facts_tests {
                 let mut c = empty_comp();
                 c.nodes.push(new_node(2, CompKind::Gradient, "Plate"));
                 c.nodes.push(new_node(4, CompKind::Solid, "Logo"));
-                let kind = CompKind::Tracker { points, operation: op, smooth_radius: 0, reference: Tick::ZERO, method: Default::default() };
+                let kind =
+                    CompKind::Tracker { points, operation: op, smooth_radius: 0, reference: Tick::ZERO, method: Default::default(), corner_points: Vec::new() };
                 c.nodes.push(new_node(3, kind, ""));
                 let corners = vec![analysed.track.clone(); 4];
                 let planar = CompKind::PlanarTracker {

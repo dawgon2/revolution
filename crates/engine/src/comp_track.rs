@@ -27,7 +27,7 @@ use filmcraft_time::{TICKS_PER_SECOND, Tick};
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, always, bad, bool_p, str_p, u64_p};
-use crate::comp::{comp_of, edit_comp, target, top_level_only};
+use crate::comp::{comp_at, comp_of, edit_comp, group_p, target};
 use crate::{EngineError, Result, Session};
 
 /// Most frames one analysis tracks after its first (the keyframe cap of a track).
@@ -52,10 +52,10 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             ANALYSE,
             "Analyse Tracker",
-            r#"{"comp":id?,"node":id,"from":ticks? (comp time; default: the node's reference),"to":ticks? (default: the comp's last frame, or 0 backward),"direction":"forward"|"backward"?,"clip":id? (the comp clip whose lower tracks Layer sources read; default: the selected comp clip),"wait":bool?}"#,
+            r#"{"comp":id?,"group":[id]?,"node":id,"from":ticks? (comp time; default: the node's reference),"to":ticks? (default: the comp's last frame, or 0 backward),"direction":"forward"|"backward"?,"clip":id? (the comp clip whose lower tracks Layer sources read; default: the selected comp clip),"wait":bool?}"#,
             analyse,
         ),
-        CommandSpec { journal: false, ..spec("comp.track.cancel", "Stop Tracker Analysis", r#"{"comp":id?,"node":id?}"#, cancel) },
+        CommandSpec { journal: false, ..spec("comp.track.cancel", "Stop Tracker Analysis", r#"{"comp":id?,"group":[id]?,"node":id?}"#, cancel) },
         spec(
             "comp.track.setPoints",
             "Set Tracker Points",
@@ -65,7 +65,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "comp.track.setOptions",
             "Tracker Settings",
-            r#"{"comp":id?,"group":[id]?,"node":id,"operation":"matchMove"|"stabilise"|"cornerPin"?,"smoothRadius":n? (frames),"reference":ticks?,"method":"position"|"positionRotation"|"positionScaleRotation"?}"#,
+            r#"{"comp":id?,"group":[id]?,"node":id,"operation":"matchMove"|"stabilise"|"cornerPin"?,"smoothRadius":n? (frames),"reference":ticks?,"method":"position"|"positionRotation"|"positionScaleRotation"?,"cornerPoints":[i,i,i,i]|[]? (Corner Pin: point indices, top left, top right, bottom right, bottom left; [] = the first four)}"#,
             set_options,
         ),
         spec(
@@ -82,6 +82,8 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
 pub struct Pending {
     pub job: u64,
     pub comp: ItemId,
+    /// The group path the node is inside (LO.4; empty: the comp's own nodes).
+    pub group: Vec<NodeId>,
     pub node: NodeId,
     /// The requested span (comp time, low ..= high): keyframes in it are replaced.
     span: (Tick, Tick),
@@ -232,8 +234,12 @@ fn set_points(s: &mut Session, p: &Value) -> Result<Value> {
     let merge = gesture_key(s, p, CMD, node)?;
     edit_comp(s, p, CMD, "Set Tracker Points", merge, |c| {
         let n = c.node_mut(node).ok_or_else(|| bad(CMD, format!("no node {node}")))?;
-        let CompKind::Tracker { points, .. } = &mut n.kind else { return Err(bad(CMD, format!("node {node} is not a Tracker node"))) };
+        let CompKind::Tracker { points, corner_points, .. } = &mut n.kind else { return Err(bad(CMD, format!("node {node} is not a Tracker node"))) };
         *points = list;
+        // the chosen Corner Pin points (LO.5) are indices: dropped when they no longer fit
+        if comp::valid_corner_points(corner_points, points.len()).is_none() {
+            corner_points.clear();
+        }
         Ok(())
     })?;
     Ok(Value::Null)
@@ -262,17 +268,36 @@ fn set_options(s: &mut Session, p: &Value) -> Result<Value> {
         None if p.get("method").is_some() => return Err(bad(CMD, "`method` is a name")),
         None => None,
     };
+    let corners = match p.get("cornerPoints") {
+        None => None,
+        Some(Value::Array(a)) if a.is_empty() || a.len() == 4 => Some(
+            a.iter()
+                .map(|v| v.as_u64().and_then(|i| u32::try_from(i).ok()))
+                .collect::<Option<Vec<u32>>>()
+                .ok_or_else(|| bad(CMD, "`cornerPoints` are point indices"))?,
+        ),
+        Some(_) => return Err(bad(CMD, "`cornerPoints` is four point indices (top left, top right, bottom right, bottom left) or []")),
+    };
     let merge = gesture_key(s, p, CMD, node)?;
     edit_comp(s, p, CMD, "Tracker Settings", merge, |c| {
         let n = c.node_mut(node).ok_or_else(|| bad(CMD, format!("no node {node}")))?;
         match &mut n.kind {
-            CompKind::Tracker { operation, smooth_radius, reference: r, method: m, .. } => {
+            CompKind::Tracker { operation, smooth_radius, reference: r, method: m, points, corner_points } => {
+                if let Some(cp) = &corners {
+                    if !cp.is_empty() && comp::valid_corner_points(cp, points.len()).is_none() {
+                        return Err(bad(CMD, format!("`cornerPoints` must name four different points of the {} this Tracker has", points.len())));
+                    }
+                    corner_points.clone_from(cp);
+                }
                 *operation = op.unwrap_or(*operation);
                 *smooth_radius = radius.unwrap_or(*smooth_radius);
                 *r = reference.unwrap_or(*r);
                 *m = method.unwrap_or(*m);
             }
             CompKind::PlanarTracker { operation, reference: r, .. } => {
+                if corners.is_some() {
+                    return Err(bad(CMD, "a Planar Tracker pins its own four corners (`cornerPoints` is for a Tracker)"));
+                }
                 if radius.is_some() || method.is_some() {
                     return Err(bad(CMD, "a Planar Tracker has no smoothing radius or method (it tracks a whole plane)"));
                 }
@@ -380,8 +405,11 @@ fn cancel(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "comp.track.cancel";
     let comp = if p.get("comp").is_some() || p.get("node").is_some() { Some(target(s, p, CMD)?) } else { None };
     let node = u64_p(p, "node");
+    // (a node is named with its group path, LO.4)
+    let group = group_p(p, CMD)?;
+    let same_group = |j: &Pending| (node.is_none() && p.get("group").is_none()) || j.group == group;
     let mut stopped = 0u64;
-    for pj in s.comp_track_jobs.iter().filter(|j| comp.is_none_or(|c| c == j.comp) && node.is_none_or(|n| n == j.node)) {
+    for pj in s.comp_track_jobs.iter().filter(|j| comp.is_none_or(|c| c == j.comp) && node.is_none_or(|n| n == j.node) && same_group(j)) {
         if let Some(j) = s.jobs.iter().find(|j| j.id == pj.job) {
             j.progress.cancel.store(true, Ordering::Relaxed);
             stopped += 1;
@@ -416,12 +444,13 @@ pub(crate) fn context(s: &Session, p: &Value, comp: ItemId, cmd: &str) -> Result
 }
 
 fn analyse(s: &mut Session, p: &Value) -> Result<Value> {
-    top_level_only(p, ANALYSE, "Tracker analysis")?;
-    let comp_id = target(s, p, ANALYSE)?;
+    // LO.4: inside a group (`group`), the node's input as it is evaluated in place
+    let group = group_p(p, ANALYSE)?;
+    let (comp_id, c) = comp_at(s, p, ANALYSE)?;
+    let c = c.clone();
     let node = node_p(p, ANALYSE)?;
-    let c = comp_of(&s.project, comp_id).ok_or_else(|| bad(ANALYSE, "the comp is gone"))?.clone();
     let kind = tracker_kind(&c, node, ANALYSE)?.clone();
-    if s.comp_track_jobs.iter().any(|j| j.comp == comp_id && j.node == node) {
+    if s.comp_track_jobs.iter().any(|j| j.comp == comp_id && j.group == group && j.node == node) {
         return Err(bad(ANALYSE, "this node is already being analysed"));
     }
     // what is analysed: whatever feeds input 0
@@ -520,10 +549,11 @@ fn analyse(s: &mut Session, p: &Value) -> Result<Value> {
     job.progress.total.store(steps as u64, Ordering::Relaxed);
     let found: Arc<Mutex<Found>> = Arc::default();
     let (prog, res, out) = (job.progress.clone(), job.result.clone(), found.clone());
+    let path = group.clone();
     let run = move || {
         let started = web_time::Instant::now();
         let frame = |t: Tick| -> Option<Arc<Prepared>> {
-            let img = filmcraft_render::render_comp_node_at(&project, comp_id, input, clip, t, size, &provider)?;
+            let img = filmcraft_render::render_comp_group_node_at(&project, comp_id, &path, input, clip, t, size, &provider)?;
             Some(Arc::new(Prepared::new(Gray::from_rgba8(img.w, img.h, &img.to_rgba8()))))
         };
         let mut done = 0u64;
@@ -634,7 +664,7 @@ fn analyse(s: &mut Session, p: &Value) -> Result<Value> {
     let run = crate::export_tools::guard_job(job.progress.clone(), job.result.clone(), run);
     let setup = setup_of(&c, node);
     s.jobs.push(job);
-    s.comp_track_jobs.push(Pending { job: id, comp: comp_id, node, span, setup, found });
+    s.comp_track_jobs.push(Pending { job: id, comp: comp_id, group, node, span, setup, found });
     if bool_p(p, "wait").unwrap_or(false) || cfg!(target_arch = "wasm32") {
         run();
         poll(s);
@@ -714,12 +744,22 @@ pub fn poll(s: &mut Session) {
         if found.points.iter().all(Vec::is_empty) && found.plane.is_empty() {
             continue;
         }
-        let now = comp_of(&s.project, pj.comp).map(|c| setup_of(c, pj.node));
-        if now.as_ref().is_some_and(|v| *v != pj.setup) {
+        // (LO.4: inside its group; a comp or group deleted meanwhile: nothing is written)
+        let now = comp_of(&s.project, pj.comp)
+            .and_then(|c| if pj.group.is_empty() { Some(c) } else { comp::group::inner(c, &pj.group).ok() })
+            .map(|c| setup_of(c, pj.node));
+        let Some(now) = now else {
+            s.error_toast(ANALYSE, "the tracker's comp or group was deleted while it was being analysed: nothing was written".to_string());
+            continue;
+        };
+        if now != pj.setup {
             s.error_toast(ANALYSE, "the tracker was changed while it was being analysed: nothing was written; analyse it again".to_string());
             continue;
         }
-        let p = json!({"comp": pj.comp.0});
+        let mut p = json!({"comp": pj.comp.0});
+        if !pj.group.is_empty() {
+            p["group"] = json!(pj.group);
+        }
         if let Err(e) = edit_comp(s, &p, ANALYSE, "Analyse Tracker", None, |c| write(c, pj.node, pj.span, &found)) {
             s.error_toast(ANALYSE, e.to_string());
         }

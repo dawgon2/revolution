@@ -3633,3 +3633,186 @@
 	On a network share: {share}; plays from its local copy	ネットワーク共有上: {share}。ローカルコピーから再生します
 	App icon	アプリのアイコン
 	Rounded (macOS style)	角丸（macOS スタイル）
+
+# Compositor (fork C3 / C4), Magic Mask (G3) and grade (G4) strings (LO.4); written from the plain meaning of the English text.
+	Create linear gradient mask	線形グラデーションマスクを作成
+	Planar	平面
+	Stop planar tracking (keeps what was tracked)	平面トラッキングを停止 (トラッキング済みの部分は保持)
+	✕ planar	✕ 平面
+	Enabled	有効
+	New Comp Clip	新規コンプクリップ
+	Comp	コンプ
+	Select a comp clip to edit its nodes.	コンプクリップを選択すると、そのノードを編集できます。
+	Media Out	Media Out
+	Operation	演算
+	Smooth radius	スムージング半径
+	Set to playhead	再生ヘッドに設定
+	Clear track	トラッキングをクリア
+	Add point	ポイントを追加
+	Plane corners	平面のコーナー
+	Add shape	シェイプを追加
+	Strokes	ストローク
+	Reveal	リビール
+	Erase	消去
+	Single frame	単一フレーム
+	Follow tracker	トラッカーに追従
+	Missing tracker	トラッカーがありません
+	Magic Mask	Magic Mask
+	Add Magic Mask	Magic Mask を追加
+	Remove Magic Mask	Magic Mask を削除
+	Remove the Magic Mask from this node	このノードから Magic Mask を削除
+	A whole person: the strokes pick which one	人物全体: ストロークでどの人物かを指定
+	Whatever the strokes cover	ストロークで覆った範囲すべて
+	Object	オブジェクト
+	Person	人物
+	Clean Black	ブラックをクリーンに
+	Clean White	ホワイトをクリーンに
+	Clear Frame	フレームをクリア
+	Remove the strokes drawn on this frame	このフレームに描いたストロークを削除
+	Remove every stroke of this mask	このマスクのストロークをすべて削除
+	click or drag on the Program picture · Esc ends	プログラム画像をクリックまたはドラッグ · Esc で終了
+	Click the subject in the Program picture, or drag a box round it (Alt-click: leave out)	プログラム画像で被写体をクリックするか、枠をドラッグして囲みます (Alt+クリック: 除外)
+	Click what the mask should leave out	マスクから除外したい部分をクリック
+	Follow the subject both ways from the strokes	ストロークを起点に被写体を前後両方向に追従
+	Follow the subject from the strokes towards the end of the clip	ストロークを起点に被写体をクリップの終わりへ向けて追従
+	Follow the subject from the strokes towards the start of the clip	ストロークを起点に被写体をクリップの先頭へ向けて追従
+	Grow / Shrink	拡張 / 縮小
+	Magic Mask finds the subject you mark with a few strokes and follows it through the shot, so this node only changes that.	Magic Mask は、いくつかのストロークで示した被写体を見つけてショット全体で追従するので、このノードはその部分だけを変更します。
+	{n} strokes, {here} on this frame	ストローク {n} 本、このフレームに {here} 本
+	Show matte	マットを表示
+	Tint the tracked matte over the Program picture (frames not tracked yet show none)	トラッキング済みのマットをプログラム画像に色付きで重ねて表示 (未トラッキングのフレームには表示されません)
+	Stop tracking (the frames done so far are kept)	トラッキングを停止 (ここまで処理したフレームは保持されます)
+	Stroke +	ストローク +
+	Stroke −	ストローク −
+	The strokes changed while tracking: track again	トラッキング中にストロークが変更されました: もう一度トラッキングしてください
+	Track	トラッキング
+	Track Backward	後方へトラッキング
+	Track Forward	前方へトラッキング
+	Tracked {frames} frames ({segmented} by the model, {reused} already done)	{frames} フレームをトラッキングしました (モデル処理 {segmented}、処理済み {reused})
+	Tracking… {done} of {frames} frames	トラッキング中… {done} / {frames} フレーム
+	Tracking failed	トラッキングに失敗しました
+	Tracking progress	トラッキングの進行状況
+	Tracking stopped	トラッキングを停止しました
+	Waiting to track…	トラッキングを待機中…
+	Clear Magic Mask Strokes	Magic Mask のストロークをクリア
+	Magic Mask Stroke	Magic Mask ストローク
+	Refine Magic Mask	Magic Mask を調整
+	Track Magic Mask	Magic Mask をトラッキング
+	Better	高品質
+	Faster	高速
+	Auto ({model})	自動 ({model})
+	Model: {model}	モデル: {model}
+	Better on a discrete GPU when SAM 2.1 Large is installed, else MobileSAM	専用 GPU で SAM 2.1 Large がインストールされていれば高品質、なければ MobileSAM
+	SAM 2.1 Large on the GPU: the most accurate, about 0.9 s a frame	GPU 上の SAM 2.1 Large: 最も高精度で、1 フレームあたり約 0.9 秒
+	SAM 2.1 Base+ on the GPU: a little less accurate, a little quicker	GPU 上の SAM 2.1 Base+: 精度はやや低めですが、やや高速
+	MobileSAM, frame by frame: quickest and needs no discrete GPU, but weaker when similar objects touch	MobileSAM (フレームごと): 最速で専用 GPU も不要ですが、似た物体が接していると精度が落ちます
+	Render Voice Isolation	ボイス分離をレンダリング
+	Bézier	ベジェ
+	B-Spline	Bスプライン
+	Click to add control points. Click the first point (or press Enter) to close.	クリックしてコントロールポイントを追加します。最初のポイントをクリック (または Enter キー) すると閉じます。
+	Click to add points, drag to curve them. Click the first point (or press Enter) to close.	クリックでポイントを追加し、ドラッグで曲線にします。最初のポイントをクリック (または Enter キー) すると閉じます。
+	Click to add region points around the flat area. Click the first point (or press Enter) to close.	平らな領域の周囲をクリックして領域のポイントを追加します。最初のポイントをクリック (または Enter キー) すると閉じます。
+	Drag a point, its pattern box corner or its search box corner. Ctrl-click (Cmd-click) adds a point.	ポイント、そのパターンボックスの角、または検索ボックスの角をドラッグします。Ctrl+クリック (Cmd+クリック) でポイントを追加します。
+	Drag points, handles or a shape. Alt-drag a point moves its shape; Alt-click makes it smooth or sharp.	ポイント、ハンドル、シェイプをドラッグします。Alt+ドラッグでポイントのシェイプごと移動、Alt+クリックでスムーズ/シャープを切り替えます。
+	Drag the region's points, or the plane's four corners at the reference frame.	基準フレームで、領域のポイントまたは平面の 4 つのコーナーをドラッグします。
+	Drag to paint; each drag is one stroke.	ドラッグしてペイントします。ドラッグ 1 回が 1 ストロークです。
+	Drag to paint; each drag is one stroke. Alt-click picks where Clone copies from.	ドラッグしてペイントします。ドラッグ 1 回が 1 ストロークです。Alt+クリックでクローンのコピー元を指定します。
+	Draw region	領域を描画
+	Hardness	硬さ
+	This frame only	このフレームのみ
+	The tracker this shape follows has no usable motion at this frame, so the shape can't be edited here.	このシェイプが追従するトラッカーには、このフレームで使える動きがないため、ここではシェイプを編集できません。
+	Open Group	グループを開く
+	Expose	公開
+	Exposed	公開済み
+	That node is not a group.	そのノードはグループではありません。
+	No settings on this group yet: open it and expose an inner node's setting.	このグループにはまだ設定がありません。グループを開いて、内部ノードの設定を公開してください。
+	Group Input	グループ入力
+	Put on the group	グループに配置
+	This node has no settings that can be exposed.	このノードには公開できる設定がありません。
+	Expression	エクスプレッション
+	e.g. time * 10	例: time * 10
+	Save Selection as Template…	選択範囲をテンプレートとして保存…
+	Insert Template	テンプレートを挿入
+	Reading templates…	テンプレートを読み込み中…
+	No saved templates	保存済みのテンプレートはありません
+	Delete Template…	テンプレートを削除…
+	Delete Template	テンプレートを削除
+	Inserted template “{name}” ({count} nodes)	テンプレート「{name}」を挿入しました (ノード {count} 個)
+	{count} Media In node(s) that read a clip will be left out; templates can't hold your clips.	クリップを読み込む Media In ノード {count} 個は除外されます。テンプレートにクリップは含められません。
+	Media Out is never saved in a template.	Media Out はテンプレートに保存されません。
+	{count} selected node(s)	選択中のノード {count} 個
+	Replace a template with this name	同じ名前のテンプレートを置き換える
+	Delete the template “{name}”? Comps that used it keep their nodes.	テンプレート「{name}」を削除しますか？ これを使用したコンプのノードはそのまま残ります。
+	Deleted template “{name}”	テンプレート「{name}」を削除しました
+	HDR zone wheels: exposure in stops from mid grey, per tonal zone	HDR ゾーンホイール: 中間グレーからのストップ単位の露出を、トーンゾーンごとに調整
+	Reset All	すべてリセット
+	Reset every HDR wheel	すべての HDR ホイールをリセット
+	Where the zone ends, in stops from mid grey	ゾーンの終端位置 (中間グレーからのストップ単位)
+	How soft the zone's edge is, in stops	ゾーンの境界の柔らかさ (ストップ単位)
+	Exposure in stops	露出 (ストップ単位)
+	How much each zone acts at each brightness (stops from mid grey)	各ゾーンが明るさごとにどれだけ作用するか (中間グレーからのストップ)
+hdr	Global	全体
+hdr	Black	ブラック
+hdr	Dark	ダーク
+hdr	Shadow	シャドウ
+hdr	Light	ライト
+hdr	Highlight	ハイライト
+hdr	Specular	スペキュラ
+	Reset HDR Wheels	HDR ホイールをリセット
+	Warper	ワーパー
+	Hue-Sat	色相-彩度
+	Chroma-Luma	クロマ-輝度
+	Move colours round the hue circle and in or out in saturation	色を色相環に沿って動かし、彩度を上げ下げします
+	Change the saturation and brightness of colours by how saturated and bright they are	色の彩度と明るさを、その色の現在の彩度と明るさに応じて変更します
+	Remove the colour warper from this node	このノードからカラーワーパーを削除
+	Remove Colour Warper	カラーワーパーを削除
+	Colour warper	カラーワーパー
+	Point	ポイント
+	Pin	ピン留め
+	A pinned point stays put when its neighbours move	ピン留めしたポイントは、隣のポイントを動かしても動きません
+	Reset Point	ポイントをリセット
+	Reset Mesh	メッシュをリセット
+	Sat	彩度
+	Falloff range	減衰範囲
+	Preserve luma	輝度を維持
+	Hue-Sat moves keep each colour's brightness	色相-彩度の移動でも各色の明るさを維持します
+	Hue columns	色相の列
+	Saturation rings	彩度のリング
+	Chroma columns	クロマの列
+	Luma rows	輝度の行
+	A new grid size starts this mesh afresh	グリッドサイズを変えると、このメッシュは最初からやり直しになります
+	Set Colour Warper	カラーワーパーを設定
+	Move Warper Point	ワーパーのポイントを移動
+	Pin Warper Point	ワーパーのポイントをピン留め
+	Reset Colour Warper	カラーワーパーをリセット
+	HSL	HSL
+	3D	3D
+	Select by hue, saturation and luminance ranges	色相・彩度・輝度の範囲で選択
+	Select the colours you paint strokes over in the Program picture	プログラム画像でストロークをなぞった色を選択
+	Include	含める
+	Exclude	除外
+	Drag over colours in the Program picture to select them (Alt: exclude)	プログラム画像で色の上をドラッグして選択します (Alt: 除外)
+	Drag over colours in the Program picture to leave them out	プログラム画像で色の上をドラッグして除外します
+	drag over the Program picture · Esc cancels	プログラム画像上をドラッグ · Esc で取り消し
+	colours picked	色を選択済み
+	left out	除外済み
+	Despill	スピル除去
+	Clear Include	「含める」をクリア
+	Clear Exclude	「除外」をクリア
+	Add 3D Qualifier Stroke	3D クオリファイアのストロークを追加
+	Set 3D Qualifier	3D クオリファイアを設定
+	Clear 3D Qualifier	3D クオリファイアをクリア
+	Pulls the picked colour's tint out of what the node corrects; use with Invert for green or blue screen spill	選んだ色の色かぶりを、ノードが補正する対象から取り除きます。グリーン/ブルースクリーンのスピルには「反転」と併用します
+	Include stroke	含めるストローク
+	Exclude stroke	除外ストローク
+	Track the mask as a plane (a sign, a screen, a wall), both ways from the playhead	マスクを平面 (看板、画面、壁など) としてトラッキングします (再生ヘッドから前後両方向)
+	Clear the planar track (the mask stays where it is seen)	平面トラッキングをクリア (マスクは現在見えている位置に残ります)
+	Point {n}	ポイント {n}
+	Confidence	信頼度
+	not analysed here	ここでは未解析
+	{now} here, lowest {low} %	ここで {now}、最低 {low} %
+	not analysed yet	未解析
+	Top left	左上
+	Top right	右上
+	Bottom right	右下
+	Bottom left	左下

@@ -138,6 +138,8 @@ fn add_stroke(s: &mut Session, p: &Value) -> Result<Value> {
         let mut k = n.qual3d.take().unwrap_or_default();
         k.mode = QualMode::ThreeD;
         let used = k.add_samples(&samples, exclude);
+        // (where it was painted, to draw it on the Program picture: fork LO.3)
+        k.add_path(&pts, exclude);
         n.qual3d = Some(k.cleaned());
         switch_on(n, mt);
         Ok((used, n.qual3d.clone()))
@@ -201,9 +203,19 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         Some("3d") => Some(QualMode::ThreeD),
         Some(m) => return Err(bad(CMD, format!("unknown mode `{m}` (hsl or 3d)"))),
     };
-    let (softness, despill) = (num(p, "softness", CMD)?, num(p, "despill", CMD)?);
+    let (mut softness, mut despill) = (num(p, "softness", CMD)?, num(p, "despill", CMD)?);
     if mode.is_none() && softness.is_none() && despill.is_none() {
         return Err(bad(CMD, "need one of `mode`, `softness`, `despill`"));
+    }
+    // (softness / despill made keyframable, a node parameter, are set there: fork LO.3)
+    let mut vals = [("q3d.softness", softness), ("q3d.despill", despill)];
+    if crate::grade::set_keyed(s, p, CMD, &mut vals)? {
+        [softness, despill] = vals.map(|(_, v)| v);
+        if mode.is_none() && softness.is_none() && despill.is_none() {
+            let (c, current) = current_for(s, p, CMD)?;
+            let (id, q) = peek(s, c, node_arg(p, CMD)?, current, CMD)?;
+            return Ok(result(c.0, id, &q));
+        }
     }
     let merge = str_p(p, "merge").map(str::to_string);
     edit_q3(s, p, CMD, "Change 3D Qualifier", merge.as_deref(), |slot| {
@@ -243,6 +255,8 @@ fn clear(s: &mut Session, p: &Value) -> Result<Value> {
                     return Err(nothing());
                 }
                 v.clear();
+                let exclude = side == "exclude";
+                k.paths.retain(|p| p.exclude != exclude);
                 Ok(())
             }
         }

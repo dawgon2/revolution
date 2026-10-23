@@ -497,6 +497,18 @@ impl MpegSource {
         let first = shown.first().copied().flatten();
         let times: Option<Vec<Tick>> = shown.iter().map(|p| Some(Tick::from_rational(p.as_ref()?.checked_sub(first?)?, 1, 90_000))).collect();
         if let Some(times) = times.filter(|t| t.len() >= 2 && t.windows(2).all(|w| w[0] < w[1])) {
+            // a repeating cadence (soft-telecined film: 3:2 pulldown flags) is a constant rate
+            // (LO.7): the frames on that rate's grid, not "Variable"
+            if let Some(c) = FrameTiming::cadence_rate(times.iter().map(|t| t.0), filmcraft_time::TICKS_PER_SECOND as f64) {
+                if c != rate {
+                    self.info.duration = c.tick_of(times.len() as i64);
+                    if let Some(v) = self.info.video.as_mut() {
+                        v.frame_rate = c;
+                    }
+                    self.clock = FrameClock::Grid(c);
+                }
+                return Ok(());
+            }
             let vfr = FrameTiming::detect(times.iter().map(|t| t.0), filmcraft_time::TICKS_PER_SECOND as f64);
             let clock = FrameClock::from_starts(times.iter().copied(), rate);
             if let (Some(vfr), FrameClock::Times(all)) = (vfr, &clock)

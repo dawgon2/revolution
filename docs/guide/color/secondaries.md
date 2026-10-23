@@ -114,7 +114,10 @@ colours you painted.
 3. Click **Include** {ui:grade.qual3d.include}, then drag across the colour you want in the
    Program picture: a short line over the lit and the shaded part of it is better than one
    click. Each stroke is one undo step (`grade.qual3d.addStroke`); the first one switches the
-   qualifier on. A click without dragging picks one spot.
+   qualifier on. A click without dragging picks one spot. While the Qualifier tab shows the 3D
+   key, the strokes you made stay drawn on the Program picture (**[Fork]**): include strokes as
+   solid green lines, exclude strokes as dashed red ones, a single spot as a dot (green) or a
+   ring (red) {ui:program.qual3d.stroke.0}, so you can see what you have already picked.
 4. Set **View** to **Matte** {ui:grade.qual.show.2} or **Selection** {ui:grade.qual.show.1} to
    see what is selected. Paint more **Include** strokes over the parts that are still missing.
 5. If it selects something you don't want, click **Exclude** {ui:grade.qual3d.exclude} (or hold
@@ -136,7 +139,10 @@ colours you painted.
 - **Strokes or ranges.** Strokes are faster for a colour with a natural spread (skin in mixed light, foliage,
   a screen) and when two colours are close in hue but differ in saturation or brightness. The ranges
   are easier to tweak by number and to explain, and keyframes (its ranges are node parameters);
-  the 3D strokes are not keyframed. Beginners often begin with 3D strokes and only reach for
+  the 3D strokes are not keyframed, but **Softness** and **Despill** are (**[Fork]**): click the
+  diamond after the slider {ui:grade.qual3d.softness.anim} {ui:grade.qual3d.despill.anim}
+  (`grade.toggleAnimation` with `param` `q3d.softness` / `q3d.despill`), then move the
+  playhead and change the value to add a keyframe there. Beginners often begin with 3D strokes and only reach for
   the range sliders when they need a precise range.
 - **Few long strokes, not many clicks.** A stroke samples every pixel it crosses, so one drag
   across the light and shade of an object teaches the key more than ten clicks.
@@ -144,7 +150,8 @@ colours you painted.
   other tints stay). To change the colour itself (hue, saturation), grade it on the node.
 - For scripts: `grade.qual3d.addStroke` takes `points` (`[[x, y], …]`, 0…1 of the frame) and
   `exclude`; `grade.qual3d.set` takes `mode` (`"hsl"` / `"3d"`), `softness` (0.001…0.5) and
-  `despill` (0…1). The node keeps at most 64 colour clusters each for include and exclude, and a stroke uses at
+  `despill` (0…1); once a setting is animated, `grade.qual3d.set` (or `grade.setParam`) sets a
+  keyframe at `time` (else the playhead). The node keeps at most 64 colour clusters each for include and exclude, and a stroke uses at
   most 4096 samples (a longer stroke is sampled evenly along its length).
 
 ### If you know Resolve
@@ -154,8 +161,10 @@ colours you painted.
 - Like Resolve's 3D qualifier: strokes on the viewer pick colours, strokes of another colour
   take colours out, a soft edge around the selection, despill, and the same matte blur, invert,
   highlight view and key output as the other qualifiers.
-- Differences (**[Fork]**): the strokes are not drawn on the viewer once they're made (the matte
-  view shows the result); you can't select or delete one stroke, only clear the include or
+- Differences (**[Fork]**): the strokes are drawn on the viewer while the Qualifier tab shows
+  the 3D key, but the node keeps only the newest 32 of them for drawing (each thinned to 64
+  points; the selection itself keeps every stroke's colours); you can't select or delete one
+  stroke, only clear the include or
   exclude strokes; no "show paths" or colour-space choice (it always works on the node's input as
   the grading signal in a fixed opponent space where brightness counts half as much as
   colour); softness is one value; despill acts inside the node's matte, as the node's first
@@ -244,7 +253,7 @@ window from frame to frame and keyframes the window's shape.
 
 ## Planar-tracked windows
 
-> id: color.secondaries.planar | does: makes a window stick to a flat surface (sign, screen, wall) as the camera moves, perspective included | ui: grade.window.0.track.planar, grade.window.0.track.clearPlanar | cmd: masks.trackPlanar, masks.clearPlanar | resolve: Tracker (Window), Perspective 3D | premiere: none (mask tracking has no perspective) | when: a window on something flat that the camera moves around or past | see: color.secondaries.tracking, color.secondaries.windows
+> id: color.secondaries.planar | does: makes a window stick to a flat surface (sign, screen, wall) as the camera moves, perspective included | ui: grade.window.0.track.planar, grade.window.0.track.clearPlanar | cmd: masks.trackPlanar, masks.clearPlanar | resolve: Tracker (Window), Perspective 3D | premiere: none (mask tracking has no perspective) | when: a window on something flat that the camera moves around or past, so it moves in perspective | see: color.secondaries.tracking, color.secondaries.windows
 
 **[Resolve-style]** · fork G4.4
 
@@ -293,6 +302,9 @@ never pile up over a long shot.
 
 - `masks.trackPlanar` `{"node": id, "mask": n, "direction": "both"|"forward"|"backward", "frames": n, "wait": true}`
   (any mask works, an effect's too: pass `effect` instead of `node`). `jobs.cancel` stops it.
+- **[Fork]** An effect's mask has the same buttons in **Effect Controls**, on its **Mask Path**
+  row: **Planar** {ui:effectControls.gaussian_blur.mask0.track.planar} and **✕ planar**
+  {ui:effectControls.gaussian_blur.mask0.track.clearPlanar} (here a Gaussian Blur's first mask).
 - `masks.list` shows a tracked mask's `planar` (`reference`, `keys`, `from`, `to`) and its
   `shownPath` (where it is at `time`). Its `path` is the shape on the frame it was tracked from;
   `masks.translate`, `masks.moveVertex` and `masks.addVertex` take positions where it is seen.
@@ -314,7 +326,7 @@ never pile up over a long shot.
 
 ## Magic Mask
 
-> id: color.secondaries.magic-mask | does: finds what you mark with strokes and follows it through the shot, so a node acts on just that | ui: grade.tab.magicMask, grade.magicMask.* | cmd: grade.magicMask.* | resolve: Magic Mask | when: neither a qualifier nor a window can isolate it | see: color.secondaries.qualifier, color.secondaries.tracking
+> id: color.secondaries.magic-mask | does: finds the person or object you mark with strokes and tracks it through the shot, so a node acts on just that | ui: grade.tab.magicMask, grade.magicMask.* | cmd: grade.magicMask.* | resolve: Magic Mask | when: neither a qualifier nor a window can isolate it | see: color.secondaries.qualifier, color.secondaries.tracking
 
 **[Resolve-style]** **[Fork]**
 
@@ -340,8 +352,9 @@ With a window or qualifier on the same node, the node acts only where all of the
 4. Pick the **Model** (see the trade-offs below): **Auto** {ui:grade.magicMask.model.auto}
    (its label says what it will use, for example "Auto (Better)"), **Better**
    {ui:grade.magicMask.model.better}, **Faster** {ui:grade.magicMask.model.faster} or
-   **MobileSAM** {ui:grade.magicMask.model.mobileSam}. The choice holds for this session; a
-   `grade.magicMask.track` call can also name one with `model`.
+   **MobileSAM** {ui:grade.magicMask.model.mobileSam}. Revolution remembers the choice for the
+   next time you open it (preference `color.magicMask`); a `grade.magicMask.track` call can also
+   name one with `model` for that track only.
 5. Click **Track** {ui:grade.magicMask.track} (both directions), **Track Forward**
    {ui:grade.magicMask.trackForward} or **Track Backward** {ui:grade.magicMask.trackBackward}
    (`grade.magicMask.track`). A bar shows the progress and a line under it says how it went and
@@ -364,15 +377,27 @@ With a window or qualifier on the same node, the node acts only where all of the
 
 ### Options and trade-offs
 
+- **Object or Person.** With a box the two behave the same: the box says how much you mean.
+  With clicks only, one click on a shirt could mean the shirt or the person wearing it: **Object**
+  takes the shape the model is surest of (often just the shirt), **Person** takes the whole
+  figure (the largest of the model's answers that it is nearly as sure of; one it is much less
+  sure of, which usually spills into the background, is never taken). **[Fork]** Beginners
+  marking a person: pick Person and click once on the body. To isolate one part (a face, a
+  jacket), pick Object, or draw a box round just that part.
 - **Few strokes or many.** A box and a point or two is quickest and often enough; an extra stroke
   on a hard frame (the subject turns, something passes in front) costs a re-track of the frames
   near it only. Beginners: start with a box; add points only where it fails.
-- **Which model.** Times are for one frame on an RX 6700 XT; yours will differ.
-  - **Better** (SAM 2.1 Large, GPU): about 0.9 s a frame. It remembers the subject across
+- **Which model.** Times are for one frame on an RX 6700 XT, estimated from the parts measured
+  separately (not yet timed over a whole track); yours will differ.
+  - **Better** (SAM 2.1 Large, GPU): about 0.75 s a frame. It remembers the subject across
     frames, so it holds on through turns, overlaps and similar things touching it. Pick it for
     the final grade or a hard shot.
-  - **Faster** (SAM 2.1 Base+, GPU): about 0.6 to 0.75 s a frame, the same memory, a little
+  - **Faster** (SAM 2.1 Base+, GPU): about 0.5 to 0.6 s a frame, the same memory, a little
     less exact at the edges. A good middle when you track long ranges.
+  - **[Fork]** With Better and Faster every part of the model runs on the GPU, including the
+    last step that turns what it knows into the mask (about 12 ms there instead of about 100 ms
+    on the CPU). If that step ever fails on the GPU it moves to the CPU for the rest of the
+    session and the track carries on, just a little slower.
   - **MobileSAM**: about 0.2 to 0.3 s a frame with its image encoder on the GPU (slower on the
     CPU alone). It looks at each frame on its own, so it is weaker when similar objects touch
     (two people side by side, a hand on a face). Good for quick looks, short shots or a machine
@@ -403,7 +428,8 @@ With a window or qualifier on the same node, the node acts only where all of the
   painted lines); the mattes are not saved with the project but **regenerated from the strokes**
   (a reopened project needs Track again, and an export uses the frames tracked by then); a frame
   that hasn't been tracked yet shows the node **nowhere** (no correction there) rather than
-  everywhere; changing Motion, speed or the media hides the mattes until the clip is tracked again.
+  everywhere; changing Motion, speed or the media hides the mattes until the clip is tracked again
+  (on a nested sequence's clip, so does an edit to the picture inside the nest).
 - The models are not bundled; they are files you install in the data folder. SAM 2.1 goes in
   `models/sam2/` (Better: `sam2.1_hiera_large.pt` and `sam2.1_hiera_l.yaml`; Faster:
   `sam2.1_hiera_base_plus.pt` and `sam2.1_hiera_b+.yaml`), MobileSAM in `models/mobilesam/`
@@ -449,7 +475,11 @@ It has two meshes, and both apply on the node (hue-sat first):
    it, in mesh steps: 0 (the default) moves only the colours between the point and its
    neighbours; 2 or 3 moves a wider band of colours more gently. Pinned points never follow.
 6. **Strength** {ui:grade.warper.strength} scales every move (dial a look back without
-   re-dragging). **Preserve luma** {ui:grade.warper.preserveLuma} keeps each colour's brightness
+   re-dragging). Strength and Falloff range keyframe (**[Fork]**): click the diamond after the
+   slider {ui:grade.warper.strength.anim} {ui:grade.warper.range.anim} to animate it from its
+   value (`grade.toggleAnimation`, `param` `warp.strength` / `warp.range`), then move the
+   playhead and drag the slider to add a keyframe, for example to fade a look in over a shot.
+   **Preserve luma** {ui:grade.warper.preserveLuma} keeps each colour's brightness
    when hue-sat moves change it (a yellow pushed to blue would otherwise get darker).
 7. Undo a point with **Reset Point** {ui:grade.warper.resetPoint}, the shown mesh with **Reset
    Mesh** {ui:grade.warper.resetMesh}, everything with **Remove** {ui:grade.warper.remove}
@@ -482,6 +512,7 @@ It has two meshes, and both apply on the node (hue-sat first):
   picture's own colours (no vectorscope trace yet); there is no lasso multi-select, no
   "pin all / invert pins" or keyboard nudges yet (drag one point at a time); the chroma-luma
   mesh is saturation × luma for all hues (not per hue); grid sizes are 6–16 × 4–8 (hue-sat)
-  and 4–8 × 4–8 (chroma-luma); warper settings are not keyframed. The maths is our own: HSV of
+  and 4–8 × 4–8 (chroma-luma); the mesh points are not keyframed (Strength and Falloff range
+  are). The maths is our own: HSV of
   the grading signal (DaVinci Intermediate in a DaVinci Wide Gamut project), the mesh smoothed
   with Catmull-Rom splines into a fine table, and colours outside the moved cells left bit-exact.

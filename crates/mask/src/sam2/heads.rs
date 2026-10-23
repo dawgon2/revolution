@@ -7,13 +7,15 @@
 //! and optionally the frame's previous low-resolution logits as a mask prompt.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use candle_core::{Device, IndexOp, Tensor};
 
+pub use super::DecoderRaw;
 use super::config::{D_MODEL, EMBED_SIDE, IMAGE_SIZE};
 use super::cpu::{R, conv, failed, guarded, layer_norm, layer_norm2d, linear, sdpa};
 use super::weights::Sam2Weights;
-use super::{EMBED_TOKENS, S0_DIM, S0_SIDE, S1_DIM, S1_SIDE, dense_pe};
+use super::{DecoderInput, EMBED_TOKENS, S0_DIM, S0_SIDE, S1_DIM, S1_SIDE, Sam2Compute, dense_pe};
 use crate::{LOW_RES, MaskError};
 
 /// [`Sam2Heads::forward`]'s `prefer` applies only when the best-scored candidate overlaps the
@@ -22,6 +24,20 @@ pub const PREFER_GATE: f32 = 0.7;
 
 /// SAM 2's "no object" logit (`NO_OBJ_SCORE`).
 pub const NO_OBJ_SCORE: f32 = -1024.0;
+
+/// How [`Sam2Heads::forward`] picks among the multimask candidates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pick<'a> {
+    /// The best predicted IoU (the reference).
+    Best,
+    /// Predicted IoU + `weight` × overlap with `mask` (the previous frame's), but only when the
+    /// best-scored candidate overlaps it less than [`PREFER_GATE`]: a tracked subject doesn't
+    /// flip to one of its parts when the decoder scores the part a little higher.
+    Consistent { mask: &'a [f32], weight: f32 },
+    /// Magic Mask's Person mode: the largest candidate within [`crate::WHOLE_MARGIN`] of the
+    /// best-scored ([`crate::choose_candidate`]).
+    Whole,
+}
 
 /// A point for the prompt encoder, in the 1024 square, with SAM's label: 0 negative, 1
 /// positive, 2 / 3 box corners, −1 padding.
@@ -58,20 +74,15 @@ pub fn mask_overlap(a: &[f32], b: &[f32]) -> f32 {
     if u == 0 { 1.0 } else { i as f32 / u as f32 }
 }
 
-/// The decoder's raw outputs (all four masks), for parity tests.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DecoderRaw {
-    pub masks: Vec<Vec<f32>>,
-    pub ious: Vec<f32>,
-    pub tokens: Vec<Vec<f32>>,
-    pub object_score: f32,
-}
-
 pub struct Sam2Heads {
     w: Arc<Sam2Weights>,
     dev: Device,
     /// The dense positional encoding (1, 256, 64, 64).
     image_pe: Tensor,
+    /// A device that runs the mask decoder (the GPU), see [`Sam2Heads::with_decoder`].
+    device: Option<Arc<dyn Sam2Compute>>,
+    /// Set when the device's decoder failed: the CPU decodes from then on.
+    device_failed: AtomicBool,
 }
 
 impl std::fmt::Debug for Sam2Heads {
@@ -86,7 +97,19 @@ impl Sam2Heads {
         let g = w.plain("sam_prompt_encoder.pe_layer.positional_encoding_gaussian_matrix")?;
         let pe = dense_pe(&g.data, EMBED_SIDE);
         let image_pe = Tensor::from_vec(pe, (1, D_MODEL, EMBED_SIDE, EMBED_SIDE), &dev).map_err(failed)?;
-        Ok(Self { w, dev, image_pe })
+        Ok(Self { w, dev, image_pe, device: None, device_failed: AtomicBool::new(false) })
+    }
+
+    /// Runs the mask decoder on `device` ([`Sam2Compute::mask_decoder`]) when it has one; the
+    /// CPU stays the fallback (a device error switches to it for good, with a warning).
+    pub fn with_decoder(mut self, device: Arc<dyn Sam2Compute>) -> Self {
+        self.device = Some(device);
+        self
+    }
+
+    /// Whether the decoder last ran (or will run) on the device.
+    pub fn decoder_on_device(&self) -> bool {
+        self.device.is_some() && !self.device_failed.load(Ordering::Relaxed)
     }
 
     pub fn weights(&self) -> &Arc<Sam2Weights> {
@@ -192,24 +215,35 @@ impl Sam2Heads {
         }
     }
 
-    /// `MaskDecoder.predict_masks`: every mask token's mask, the IoU predictions, the mask
-    /// tokens and the object score.
-    fn predict(&self, pix: &[f32], s0: &[f32], s1: &[f32], points: &[HeadPoint], mask: Option<&[f32]>) -> R<DecoderRaw> {
+    /// The transformer's input tokens for a prompt (1, t, 256: output tokens, then the sparse
+    /// embeddings); the dense embedding is [`Sam2Heads::dense`].
+    fn prompt(&self, points: &[HeadPoint], mask: Option<&[f32]>) -> R<Tensor> {
         let d = "sam_mask_decoder";
-        if pix.len() != EMBED_TOKENS * D_MODEL || s0.len() != S0_SIDE * S0_SIDE * S0_DIM || s1.len() != S1_SIDE * S1_SIDE * S1_DIM {
-            candle_core::bail!("decoder inputs of {} / {} / {} values", pix.len(), s0.len(), s1.len());
-        }
         if mask.is_some_and(|m| m.len() != LOW_RES * LOW_RES) {
             candle_core::bail!("a mask prompt of the wrong size");
         }
         let sparse = self.sparse(points)?;
-        let dense = self.dense(mask)?;
         let out_tokens = Tensor::cat(
             &[self.t(&format!("{d}.obj_score_token.weight"))?, self.t(&format!("{d}.iou_token.weight"))?, self.t(&format!("{d}.mask_tokens.weight"))?],
             0,
         )?
         .unsqueeze(0)?;
-        let tokens = Tensor::cat(&[out_tokens, sparse], 1)?;
+        Tensor::cat(&[out_tokens, sparse], 1)
+    }
+
+    fn check_inputs(pix: &[f32], s0: &[f32], s1: &[f32]) -> R<()> {
+        if pix.len() != EMBED_TOKENS * D_MODEL || s0.len() != S0_SIDE * S0_SIDE * S0_DIM || s1.len() != S1_SIDE * S1_SIDE * S1_DIM {
+            candle_core::bail!("decoder inputs of {} / {} / {} values", pix.len(), s0.len(), s1.len());
+        }
+        Ok(())
+    }
+
+    /// `MaskDecoder.predict_masks` on the CPU: every mask token's mask, the IoU predictions,
+    /// the mask tokens and the object score.
+    fn predict(&self, pix: &[f32], s0: &[f32], s1: &[f32], tokens: &Tensor, dense: &Tensor) -> R<DecoderRaw> {
+        let d = "sam_mask_decoder";
+        Self::check_inputs(pix, s0, s1)?;
+        let tokens = tokens.clone();
         let img = Tensor::from_slice(pix, (1, EMBED_SIDE, EMBED_SIDE, D_MODEL), &self.dev)?.permute((0, 3, 1, 2))?;
         let src = (img + dense)?;
         // TwoWayTransformer
@@ -268,19 +302,56 @@ impl Sam2Heads {
         })
     }
 
-    /// The decoder's raw outputs (parity tests / diagnostics).
+    /// The decoder's raw outputs: on the device given to [`Sam2Heads::with_decoder`] when it
+    /// has a decoder (and it hasn't failed), else on the CPU.
     pub fn decode_raw(&self, pix: &[f32], s0: &[f32], s1: &[f32], points: &[HeadPoint], mask: Option<&[f32]>) -> Result<DecoderRaw, MaskError> {
-        guarded("the mask decoder", || self.predict(pix, s0, s1, points, mask).map_err(failed))
+        guarded("the mask decoder", || {
+            Self::check_inputs(pix, s0, s1).map_err(failed)?;
+            let tokens = self.prompt(points, mask).map_err(failed)?;
+            if let Some(dev) = self.device.as_ref().filter(|_| !self.device_failed.load(Ordering::Relaxed)) {
+                let tok = tokens.flatten_all().and_then(|t| t.to_vec1::<f32>()).map_err(failed)?;
+                // without a mask prompt every pixel gets the same `no_mask_embed`
+                let dense_hwc = match mask {
+                    None => self.t("sam_prompt_encoder.no_mask_embed.weight").and_then(|t| t.flatten_all()?.to_vec1::<f32>()),
+                    Some(_) => self.dense(mask).and_then(|d| d.permute((0, 2, 3, 1))?.flatten_all()?.to_vec1::<f32>()),
+                }
+                .map_err(failed)?;
+                let input = DecoderInput { pix, s0, s1, tokens: &tok, dense: &dense_hwc };
+                match dev.mask_decoder(&input) {
+                    Some(Ok(raw)) => match raw.check() {
+                        Ok(()) => return Ok(raw),
+                        Err(e) => self.device_off(&e),
+                    },
+                    Some(Err(e)) => self.device_off(&e),
+                    None => {}
+                }
+            }
+            let dense = self.dense(mask).map_err(failed)?;
+            self.predict(pix, s0, s1, &tokens, &dense).map_err(failed)
+        })
+    }
+
+    /// The decoder's raw outputs on the CPU (the reference: parity tests).
+    pub fn decode_raw_cpu(&self, pix: &[f32], s0: &[f32], s1: &[f32], points: &[HeadPoint], mask: Option<&[f32]>) -> Result<DecoderRaw, MaskError> {
+        guarded("the mask decoder", || {
+            let tokens = self.prompt(points, mask).map_err(failed)?;
+            let dense = self.dense(mask).map_err(failed)?;
+            self.predict(pix, s0, s1, &tokens, &dense).map_err(failed)
+        })
+    }
+
+    fn device_off(&self, e: &MaskError) {
+        if !self.device_failed.swap(true, Ordering::Relaxed) {
+            log::warn!("Magic Mask (SAM 2): the mask decoder moves to the CPU: {e}");
+        }
     }
 
     /// `_forward_sam_heads`: the mask SAM 2 keeps for the frame (multimask: the best-scored of
     /// three; else the single mask unless it is unstable, as the video predictor's
     /// `dynamic_multimask_via_stability`), the object score and the object pointer.
     ///
-    /// `prefer` (not in the reference): with multimask, pick the candidate maximising predicted
-    /// IoU + `prefer.1` × its overlap with the mask `prefer.0` (the previous frame's), so a
-    /// tracked subject doesn't flip to one of its parts when the decoder scores the part a
-    /// little higher.
+    /// `pick` (not in the reference unless [`Pick::Best`]) chooses among the multimask
+    /// candidates.
     #[allow(clippy::too_many_arguments)]
     pub fn forward(
         &self,
@@ -290,9 +361,13 @@ impl Sam2Heads {
         points: &[HeadPoint],
         mask: Option<&[f32]>,
         multimask: bool,
-        prefer: Option<(&[f32], f32)>,
+        pick: Pick<'_>,
     ) -> Result<HeadOutput, MaskError> {
         let raw = self.decode_raw(pix, s0, s1, points, mask)?;
+        let prefer = match pick {
+            Pick::Consistent { mask, weight } => Some((mask, weight)),
+            Pick::Best | Pick::Whole => None,
+        };
         guarded("the mask decoder", || {
             let iou_of = |i: usize| raw.ious.get(i).copied().unwrap_or(f32::MIN);
             let overlap: Vec<f32> = (0..4).map(|i| prefer.map_or(0.0, |(p, _)| raw.masks.get(i).map_or(0.0, |m| mask_overlap(m, p)))).collect();
@@ -304,7 +379,12 @@ impl Sam2Heads {
                 weight = 0.0;
             }
             let score = |i: usize| iou_of(i) + weight * overlap.get(i).copied().unwrap_or(0.0);
-            let best_multi = (1..4).fold(1usize, |b, i| if score(i) > score(b) { i } else { b });
+            let best_multi = if pick == Pick::Whole {
+                let keys: Vec<(f32, usize)> = (1..4).map(|i| (iou_of(i), raw.masks.get(i).map_or(0, |m| m.iter().filter(|v| **v > 0.0).count()))).collect();
+                1 + crate::choose_candidate(&keys, true).unwrap_or(0)
+            } else {
+                (1..4).fold(1usize, |b, i| if score(i) > score(b) { i } else { b })
+            };
             let candidates = (1..4).map(|i| (iou_of(i), overlap.get(i).copied().unwrap_or(0.0))).collect();
             let (pick, token) = if multimask {
                 (best_multi, best_multi)
@@ -368,7 +448,13 @@ mod tests {
         t.insert("sam_mask_decoder.output_upscaling.0.bias".into(), b.clone());
         // shapes don't match the checkpoint's, so bypass the shape check for this one test
         let weights = Arc::new(Sam2Weights::from_tensors_unchecked(cfg, t));
-        let h = Sam2Heads { w: weights, dev: dev.clone(), image_pe: Tensor::zeros((1, 1), DType::F32, &dev).unwrap() };
+        let h = Sam2Heads {
+            w: weights,
+            dev: dev.clone(),
+            image_pe: Tensor::zeros((1, 1), DType::F32, &dev).unwrap(),
+            device: None,
+            device_failed: AtomicBool::new(false),
+        };
         let side = 5;
         let x = Tensor::randn(0f32, 1.0, (side * side, 24), &dev).unwrap();
         let ours = h.up2x2(&x, side, 0).unwrap();

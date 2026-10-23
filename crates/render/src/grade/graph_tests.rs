@@ -439,7 +439,7 @@ fn key_out_reads_the_denoised_input() {
     let nr = super::denoise(&n1, Tick(0), 1.0).unwrap();
     nr.apply(&mut den);
     let den = chain(&den, gs().encode_ops());
-    let key = vec![key_op(&n1, &n1.qualifier_at(Tick(0)).unwrap(), gs().is_hdr())];
+    let key = vec![key_op(&n1, &n1.qualifier_at(Tick(0)).unwrap(), gs().is_hdr(), Tick(0))];
     let k = |src: &Image| -> Vec<f32> {
         src.px
             .chunks(4)

@@ -777,3 +777,116 @@ fn sam2_faster_tracks_the_square_on_every_frame() {
     assert!(!crate::magic_mask_sam2::is_loaded(Sam2Size::BasePlus));
     assert!(f.matte(3).is_some());
 }
+
+/// LO.6: the Magic Mask model is a preference: a saved choice comes back, an unknown or hostile
+/// value loads as Auto (the rest of the preferences intact), and a changed preference sets the
+/// session's model while an unrelated change leaves a model set directly alone.
+#[test]
+fn the_magic_mask_model_is_remembered_in_the_preferences() {
+    use crate::autosave::Preferences;
+    use crate::magic_mask::MaskModel;
+    let mut p = Preferences::default();
+    p.color.magic_mask = MaskModel::Faster;
+    let v = serde_json::to_value(&p).unwrap();
+    assert_eq!(v["color"]["magicMask"], json!("faster"));
+    assert_eq!(Preferences::from_value(v.clone()).color.magic_mask, MaskModel::Faster);
+    for bad in [json!("sam9"), json!(42), json!(null), json!({"a": [1]})] {
+        let mut w = v.clone();
+        w["color"]["magicMask"] = bad.clone();
+        let q = Preferences::from_value(w);
+        assert_eq!(q.color.magic_mask, MaskModel::Auto, "{bad}");
+        assert_eq!(q.color.hdr_graphics_white, p.color.hdr_graphics_white, "{bad}: the rest loads");
+    }
+    let mut s = Session::default();
+    let mut next = s.prefs.clone();
+    next.color.magic_mask = MaskModel::Better;
+    s.set_prefs(next).unwrap();
+    assert_eq!(s.magic_mask.model, MaskModel::Better);
+    s.magic_mask.model = MaskModel::MobileSam;
+    let mut next = s.prefs.clone();
+    next.color.coach.hints = !next.color.coach.hints;
+    s.set_prefs(next).unwrap();
+    assert_eq!(s.magic_mask.model, MaskModel::MobileSam, "an unrelated preference change keeps it");
+}
+
+/// LO.6: a Magic Mask on a nested sequence's clip is hidden by edits inside the nest (they change
+/// its picture), not only by edits of the nest clip itself; nests inside nests count too.
+#[test]
+fn edits_inside_a_nested_sequence_change_the_picture_fingerprint() {
+    use crate::magic_mask::picture_fingerprint;
+    use filmcraft_project::ItemId;
+    let mut s = Session::default();
+    s.execute("file.openDemoProject", json!({})).unwrap();
+    let first = s.active_sequence().and_then(|q| q.video_tracks.first()).and_then(|t| t.items.first()).map(|i| i.id.0).unwrap();
+    s.execute("timeline.select", json!({"clips": [first]})).unwrap();
+    let inner = ItemId(s.execute("clip.nest", json!({"name": "Inner"})).unwrap()["sequence"].as_u64().unwrap());
+    let fp = |s: &Session| {
+        let q = s.active_sequence().unwrap();
+        let it = q.video_tracks.iter().flat_map(|t| &t.items).find(|i| i.item == inner).expect("the nest clip");
+        picture_fingerprint(&s.project, it)
+    };
+    let before = fp(&s);
+    assert_eq!(fp(&s), before, "stable");
+    // an edit inside the nest: its clip plays at half speed
+    let mut p = (*s.project).clone();
+    let q = p.sequence_mut(inner).unwrap();
+    q.video_tracks[0].items[0].speed = 0.5;
+    s.project = Arc::new(p);
+    let after = fp(&s);
+    assert_ne!(after, before, "an edit inside the nest changes its picture");
+    // the nest's own audio doesn't
+    let mut p = (*s.project).clone();
+    let q = p.sequence_mut(inner).unwrap();
+    q.audio_tracks.iter_mut().for_each(|t| t.items.clear());
+    s.project = Arc::new(p);
+    assert_eq!(fp(&s), after, "audio inside the nest leaves the picture alone");
+}
+
+/// Person mode asks for the whole figure: a segmenter whose candidates for an ambiguous prompt
+/// are the subject's left half (best scored), the whole subject (a little lower) and the whole
+/// frame (far lower). One click on the square, no box: Object keeps the half, Person the whole
+/// square (fork LO.6; the mode used to change only the cache hash).
+struct Parts(Bright);
+
+impl Segmenter for Parts {
+    fn embed(&self, image: &RgbImage) -> Result<Embedding, MaskError> {
+        self.0.embed(image)
+    }
+    fn segment(&self, e: &Embedding, prompt: &Prompt) -> Result<Segment, MaskError> {
+        filmcraft_mask::segment_by_candidates(self, e, prompt)
+    }
+    fn candidates(&self, e: &Embedding, prompt: &Prompt, multimask: bool) -> Result<Vec<Segment>, MaskError> {
+        let mut whole = self.0.segment(e, prompt)?;
+        if !multimask {
+            return Ok(vec![whole]);
+        }
+        let xs: Vec<usize> = whole.logits.iter().enumerate().filter(|(_, v)| **v > 0.0).map(|(i, _)| i % LOW_RES).collect();
+        let mid = (xs.iter().min().copied().unwrap_or(0) + xs.iter().max().copied().unwrap_or(0)) / 2;
+        let mut part = whole.clone();
+        part.logits.iter_mut().enumerate().filter(|(i, _)| i % LOW_RES > mid).for_each(|(_, v)| *v = -10.0);
+        part.score = 0.95;
+        whole.score = 0.9;
+        let mut all = Segment::empty((1.0, 1.0));
+        all.logits.iter_mut().for_each(|v| *v = 10.0);
+        all.score = 0.4;
+        Ok(vec![part, whole, all])
+    }
+}
+
+#[test]
+fn person_mode_asks_for_the_whole_figure() {
+    let iou = |mode: &str| {
+        let mut f = fixture(3, None);
+        f.s.magic_mask.segmenter = Some(Arc::new(Parts(Bright { calls: f.calls.clone() })));
+        f.run("grade.magicMask.add", json!({"mode": mode}));
+        let x0 = square_x(0, None).unwrap() as f32;
+        let (cx, cy) = ((x0 + SIDE as f32 / 2.0) / W as f32, 48.0 / H as f32);
+        f.run("grade.magicMask.stroke", json!({"frame": 0, "points": [{"x": cx, "y": cy}]}));
+        let st = f.track(json!({}));
+        assert_eq!(st["state"], "done", "{st}");
+        f.matte(0).expect("frame 0 tracked").iou(&truth(0)).unwrap()
+    };
+    let (object, person) = (iou("object"), iou("person"));
+    assert!(object < 0.7, "Object keeps the best-scored part: IoU {object}");
+    assert!(person > 0.9, "Person keeps the whole square: IoU {person}");
+}

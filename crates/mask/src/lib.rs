@@ -35,6 +35,13 @@ pub const MAX_SIDE: usize = 16_384;
 /// Most prompt points accepted in one request.
 pub const MAX_POINTS: usize = 64;
 
+/// [`Prompt::prefer_whole`] (Magic Mask's Person mode): among the decoder's candidates for an
+/// ambiguous prompt, the largest one whose predicted IoU is at most this far below the best one
+/// is kept. SAM scores a good whole figure and its shirt within a few hundredths of each other
+/// (around 0.85–0.98), while a candidate that spilt into the background scores clearly lower;
+/// 0.1 takes the whole figure over its parts without taking such a spill.
+pub const WHOLE_MARGIN: f32 = 0.1;
+
 /// Why a mask could not be made. Every variant says why in plain language.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MaskError {
@@ -142,6 +149,11 @@ pub struct Prompt {
     pub rect: Option<Rect>,
     /// The previous frame's mask (propagation), in the same model's low-resolution grid.
     pub prior: Option<Segment>,
+    /// Ask for the whole figure (Magic Mask's Person mode): when the prompt leaves the extent
+    /// open (points only: one click on a shirt could mean the shirt or the person), keep the
+    /// largest candidate within [`WHOLE_MARGIN`] of the best-scored one instead of the
+    /// best-scored one. No effect with a box or a previous mask.
+    pub prefer_whole: bool,
 }
 
 impl Prompt {
@@ -288,6 +300,41 @@ impl Matte {
     }
 }
 
+/// Which candidate to keep, from each one's (predicted IoU, area in grid pixels): the
+/// best-scored (the first of equals), or with `prefer_whole` the largest whose score is within
+/// [`WHOLE_MARGIN`] of the best (equal areas: the better score). Non-finite scores never win
+/// (all non-finite: the first). `None` without candidates.
+pub fn choose_candidate(cands: &[(f32, usize)], prefer_whole: bool) -> Option<usize> {
+    let best = cands.iter().enumerate().filter(|(_, c)| c.0.is_finite()).fold(None, |b: Option<(usize, f32)>, (i, c)| match b {
+        Some((_, s)) if s >= c.0 => b,
+        _ => Some((i, c.0)),
+    });
+    let Some((mut pick, top)) = best else { return (!cands.is_empty()).then_some(0) };
+    if prefer_whole {
+        for (i, (s, a)) in cands.iter().enumerate() {
+            let Some((ps, pa)) = cands.get(pick).copied() else { continue };
+            if s.is_finite() && *s >= top - WHOLE_MARGIN && (*a > pa || (*a == pa && *s > ps)) {
+                pick = i;
+            }
+        }
+    }
+    Some(pick)
+}
+
+/// How a single-image segmenter answers a prompt from its [`Segmenter::candidates`] (MobileSAM's
+/// `segment`): an ambiguous prompt (one point; with [`Prompt::prefer_whole`] any points without
+/// a box or previous mask) asks for several candidates, then [`choose_candidate`] keeps one.
+pub fn segment_by_candidates<S: Segmenter + ?Sized>(model: &S, embedding: &Embedding, prompt: &Prompt) -> Result<Segment, MaskError> {
+    let (points, rect) = prompt.checked()?;
+    let open = rect.is_none() && prompt.prior.is_none() && !points.is_empty();
+    let whole = prompt.prefer_whole && open;
+    let multimask = whole || (open && points.len() == 1);
+    let all = model.candidates(embedding, prompt, multimask)?;
+    let keys: Vec<(f32, usize)> = all.iter().map(|s| (s.score, s.logits.iter().filter(|v| **v > 0.0).count())).collect();
+    let i = choose_candidate(&keys, whole).ok_or_else(|| MaskError::Failed("the decoder gave no mask".into()))?;
+    all.into_iter().nth(i).ok_or_else(|| MaskError::Failed("the decoder gave no mask".into()))
+}
+
 /// A promptable segmentation model.
 pub trait Segmenter: Send + Sync {
     /// Prepare a frame (the expensive part, once per frame).
@@ -314,7 +361,7 @@ pub fn follow_prompt(previous: &Segment, frame_size: (usize, usize)) -> Option<P
     let gx = ((b.x1 - b.x0) * 0.15).max(0.04);
     let gy = ((b.y1 - b.y0) * 0.15).max(0.04);
     let rect = Rect { x0: b.x0 - gx, y0: b.y0 - gy, x1: b.x1 + gx, y1: b.y1 + gy }.sorted()?;
-    Some(Prompt { points: Vec::new(), rect: Some(rect), prior: Some(previous.clone()) })
+    Some(Prompt { points: Vec::new(), rect: Some(rect), prior: Some(previous.clone()), prefer_whole: false })
 }
 
 #[cfg(test)]

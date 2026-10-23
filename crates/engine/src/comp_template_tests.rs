@@ -329,6 +329,37 @@ fn list_cap_counts_templates_not_other_files() {
     assert_eq!(names(&mut s), vec!["Zed".to_string()]);
 }
 
+/// LO.4 (C4-TESTS): `comp.template.list` reads at most [`super::LIST_BUDGET`] bytes of templates;
+/// past it the rest are listed by name with unknown counts (no file read).
+#[test]
+fn list_stops_reading_at_its_byte_budget() {
+    let mut s = demo("ctmpl-budget");
+    let (c, [_, k, ..]) = build(&mut s);
+    s.execute("comp.template.save", json!({"comp": c, "nodes": [k], "name": "Zed"})).unwrap();
+    let dir = super::templates_dir(&s).unwrap();
+    let mut big = std::fs::read(super::path_of(&dir, "Zed")).unwrap();
+    // a valid template padded with JSON whitespace to just under the 4 MiB file cap
+    let size = filmcraft_project::comp_template::MAX_BYTES - 1;
+    assert!(big.len() < size);
+    big.resize(size, b' ');
+    for i in 0..20 {
+        std::fs::write(super::path_of(&dir, &format!("T{i:02}")), &big).unwrap();
+    }
+    let v = s.execute("comp.template.list", json!({})).unwrap();
+    let list = v["templates"].as_array().unwrap();
+    assert_eq!(list.len(), 21, "{v}");
+    // 16 files leave 16 bytes; the 17th is read and spends the rest; then names only
+    let read = (super::LIST_BUDGET / size as u64 + 1) as usize;
+    assert_eq!(read, 17);
+    for (i, t) in list.iter().enumerate() {
+        assert_eq!(t["nodes"].is_null(), i >= read, "{i}: {t}");
+    }
+    assert_eq!(list[20]["name"], "Zed");
+    for t in list {
+        std::fs::remove_file(super::path_of(&dir, t["name"].as_str().unwrap())).unwrap();
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_failed_save_leaves_no_temporary_file() {

@@ -454,9 +454,71 @@ pub const GRAPH_PARAMS: &[NodeParam] = graph_params!(0 1 2 3 4 5 6 7 8 9 10 11 1
 // one entry per mixer input
 const _: () = assert!(GRAPH_PARAMS.len() == 3 + 5 * MAX_MIX_INPUTS as usize);
 
+/// The keyframable settings of a node's colour warper and 3D qualifier (fork LO.3). The warper
+/// and 3D qualifier keep their own static value; a node parameter under one of these keys (made
+/// by `grade.toggleAnimation`, then set by `grade.setParam`, `grade.warper.set` or
+/// `grade.qual3d.set`) overrides it, so it keyframes like any node parameter. Old projects have
+/// no such key and render as before. Kept apart from [`NODE_PARAMS`]; [`node_param`] finds them.
+pub const KEYED_PARAMS: &[NodeParam] = &[
+    NodeParam { key: "warp.strength", label: "Warper strength", kind: NodeParamKind::Float { identity: 1.0, min: 0.0, max: 1.0 } },
+    NodeParam { key: "warp.range", label: "Warper falloff range", kind: NodeParamKind::Float { identity: 0.0, min: 0.0, max: crate::warper::MAX_RANGE } },
+    NodeParam {
+        key: "q3d.softness",
+        label: "3D qualifier softness",
+        kind: NodeParamKind::Float { identity: crate::qual3d::DEFAULT_SOFTNESS, min: *crate::qual3d::SOFTNESS.start(), max: *crate::qual3d::SOFTNESS.end() },
+    },
+    NodeParam { key: "q3d.despill", label: "3D qualifier despill", kind: NodeParamKind::Float { identity: 0.0, min: 0.0, max: 1.0 } },
+];
+
 /// The schema entry for `key`.
 pub fn node_param(key: &str) -> Option<&'static NodeParam> {
-    NODE_PARAMS.iter().chain(GRAPH_PARAMS).find(|p| p.key == key)
+    NODE_PARAMS.iter().chain(GRAPH_PARAMS).chain(KEYED_PARAMS).find(|p| p.key == key)
+}
+
+impl GradeNode {
+    /// The static value of keyframable warper / 3D qualifier setting `key` ([`KEYED_PARAMS`]) as
+    /// the warper or 3D qualifier stores it (as loaded), or None when the node has neither or
+    /// `key` isn't one. What animating the setting starts from.
+    pub fn keyed_base(&self, key: &str) -> Option<f32> {
+        match key {
+            "warp.strength" => self.warper.as_ref().map(crate::warper::Warper::effective_strength),
+            "warp.range" => self.warper.as_ref().map(crate::warper::Warper::effective_range),
+            "q3d.softness" => self.qual3d.as_ref().map(crate::qual3d::Qual3d::effective_softness),
+            "q3d.despill" => self.qual3d.as_ref().map(crate::qual3d::Qual3d::effective_despill),
+            _ => None,
+        }
+    }
+
+    /// Keyframable setting `key` at clip time `t`: the node parameter when there is one, else
+    /// `base` (the static value).
+    pub fn keyed_at(&self, key: &str, base: f32, t: Tick) -> f32 {
+        if self.params.contains_key(key) { self.float_at(key, t) } else { base }
+    }
+
+    /// The colour warper with its strength and falloff range at clip time `t` (fork LO.3).
+    pub fn warper_at(&self, t: Tick) -> Option<std::borrow::Cow<'_, crate::warper::Warper>> {
+        let w = self.warper.as_ref()?;
+        if !self.params.keys().any(|k| k.starts_with("warp.")) {
+            return Some(std::borrow::Cow::Borrowed(w));
+        }
+        let mut w = w.clone();
+        w.strength = self.keyed_at("warp.strength", w.effective_strength(), t);
+        w.range = self.keyed_at("warp.range", w.effective_range(), t);
+        Some(std::borrow::Cow::Owned(w))
+    }
+
+    /// The 3D qualifier when the node keys with it, with its softness and despill at clip time
+    /// `t` (fork LO.3).
+    pub fn qual3d_active_at(&self, t: Tick) -> Option<std::borrow::Cow<'_, crate::qual3d::Qual3d>> {
+        let q = self.qual3d_active()?;
+        if !self.params.keys().any(|k| k.starts_with("q3d.")) {
+            return Some(std::borrow::Cow::Borrowed(q));
+        }
+        let mut q = q.clone();
+        q.softness = self.keyed_at("q3d.softness", q.effective_softness(), t);
+        q.despill = self.keyed_at("q3d.despill", q.effective_despill(), t);
+        Some(std::borrow::Cow::Owned(q))
+    }
 }
 
 /// The most curve points a node curve keeps when compiled.
@@ -1240,5 +1302,47 @@ mod tests {
         n.params.insert("layer.mode.1".into(), Param::new(ParamValue::Float(f64::NAN)));
         assert_eq!([n.float_at("key.offset", t), n.float_at("layer.mode.1", t)], [-1.0, 0.0]);
         assert!(NODE_PARAMS.iter().all(|p| GRAPH_PARAMS.iter().all(|g| g.key != p.key)));
+    }
+
+    #[test]
+    fn warper_and_qual3d_settings_keyframe() {
+        let mut n = GradeNode::new(1);
+        let t1 = Tick(254_016_000_000);
+        assert!(n.warper_at(Tick::ZERO).is_none() && n.qual3d_active_at(Tick::ZERO).is_none());
+        n.warper = Some(crate::warper::Warper { strength: 0.4, ..Default::default() });
+        n.qual3d = Some(crate::qual3d::Qual3d { despill: 0.3, ..Default::default() });
+        // no parameter: the static values
+        assert_eq!(n.warper_at(t1).map(|w| w.strength), Some(0.4));
+        assert_eq!(n.qual3d_active_at(t1).map(|q| q.despill), Some(0.3));
+        assert_eq!(n.keyed_base("warp.strength"), Some(0.4));
+        assert_eq!(n.keyed_base("nope"), None);
+        // animated: the value at the time, clamped to the schema
+        let mut p = Param::new(ParamValue::Float(0.0));
+        p.toggle_animation(Tick::ZERO);
+        p.set_at(t1, ParamValue::Float(1.0));
+        assert!(p.is_animated());
+        n.params.insert("warp.strength".into(), p.clone());
+        n.params.insert("q3d.despill".into(), p);
+        n.params.insert("q3d.softness".into(), Param::new(ParamValue::Float(99.0)));
+        let s = n.warper_at(Tick(t1.0 / 2)).map(|w| w.strength).unwrap_or(-1.0);
+        assert!(s > 0.0 && s < 1.0, "{s}");
+        assert_eq!(n.warper_at(t1).map(|w| w.strength), Some(1.0));
+        assert_eq!(n.qual3d_active_at(Tick::ZERO).map(|q| q.despill), Some(0.0));
+        assert_eq!(n.qual3d_active_at(Tick::ZERO).map(|q| q.softness), Some(*crate::qual3d::SOFTNESS.end()));
+        assert!(KEYED_PARAMS.iter().all(|k| node_param(k.key).is_some() && NODE_PARAMS.iter().chain(GRAPH_PARAMS).all(|p| p.key != k.key)));
+    }
+
+    #[test]
+    fn an_old_node_with_a_warper_and_3d_qualifier_resaves_byte_identical() {
+        let json = r#"{"id":3,"warper":{"mode":"hueSat","hueSat":{"cols":12,"rows":6,"points":[{"index":8,"to":[0.3,0.4]}]},"chromaLuma":{"cols":8,"rows":8},"strength":0.5,"range":1.0},"qual3d":{"mode":"3d","include":[{"c":[0.5,0.4,0.6],"r":0.05,"n":3}],"softness":0.1,"despill":0.25}}"#;
+        let n: GradeNode = serde_json::from_str(json).unwrap();
+        assert!(n.params.is_empty());
+        let out = serde_json::to_string(&n).unwrap();
+        let again: GradeNode = serde_json::from_str(&out).unwrap();
+        assert_eq!(again, n);
+        assert_eq!(serde_json::to_string(&again).unwrap(), out, "re-saves byte-identical");
+        assert!(!out.contains("warp.") && !out.contains("q3d."));
+        assert_eq!(n.warper_at(Tick::ZERO).map(|w| w.strength), Some(0.5));
+        assert_eq!(n.qual3d_active_at(Tick::ZERO).map(|q| q.softness), Some(0.1));
     }
 }

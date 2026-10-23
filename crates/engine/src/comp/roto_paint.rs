@@ -32,7 +32,7 @@ pub(super) fn commands() -> Vec<CommandSpec> {
         spec(
             "comp.roto.setShapeKeyframe",
             "Set Roto Shape Keyframe",
-            r#"{"comp":id?,"group":[id]?,"node":id,"shape":n,"time":ticks,"path":path,"gesture":n?}"#,
+            r#"{"comp":id?,"group":[id]?,"node":id,"shape":n,"time":ticks,"path":path,"onScreen":bool? (a shape following a tracker: `path` is as seen at `time`, stored through the tracker's motion; default false = the tracker's reference frame, as stored),"gesture":n?}"#,
             set_keyframe,
         ),
         spec("comp.roto.removeShape", "Delete Roto Shape", r#"{"comp":id?,"group":[id]?,"node":id,"shape":n}"#, remove_shape),
@@ -192,8 +192,19 @@ fn set_keyframe(s: &mut Session, p: &Value) -> Result<Value> {
     let i = index_p(p, "shape", CMD)?;
     let time = ticks_p(p, "time", CMD)?.ok_or_else(|| bad(CMD, format!("need `time` (comp ticks, {TICKS_PER_SECOND}/s)")))?;
     let path = path_p(p, "path", CMD)?.ok_or_else(|| bad(CMD, "need `path`"))?;
+    let on_screen = match p.get("onScreen") {
+        None => false,
+        Some(v) => v.as_bool().ok_or_else(|| bad(CMD, "`onScreen` is true or false"))?,
+    };
     let merge = gesture_key(s, p, CMD, node)?;
     edit_comp(s, p, CMD, "Set Roto Shape Keyframe", merge, |c| {
+        // LO.5: a shape following a tracker stores its outline in the tracker's reference frame
+        let link = roto_of(c, node, CMD)?.shapes.get(i).and_then(|sh| sh.track_link.clone());
+        let path = match (on_screen, link) {
+            (true, Some(l)) => crate::comp_roto_track::screen_to_stored(c, &l, time, &path)
+                .ok_or_else(|| bad(CMD, "the tracker this shape follows has no usable motion at that time: track it there first"))?,
+            _ => path,
+        };
         let shape = roto_of(c, node, CMD)?.shapes.get_mut(i).ok_or_else(|| bad(CMD, format!("no shape {i}")))?;
         if shape.shape.keyframes.len() >= MAX_KEYFRAMES && !shape.shape.keyframes.iter().any(|k| k.time == time) {
             return Err(bad(CMD, format!("a roto shape keeps at most {MAX_KEYFRAMES} keyframes")));

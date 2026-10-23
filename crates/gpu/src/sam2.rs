@@ -1,7 +1,8 @@
 //! SAM 2.1's heavy parts on the GPU (fork G3.4, FORK-PLAN §1a.124): the Hiera image encoder +
 //! FPN neck, the memory attention (4 layers, 2-D axial RoPE) and the memory encoder, built from
 //! the [`crate::nn`] ops. `filmcraft-mask`'s candle code (`sam2::cpu`) is the reference these are
-//! tested against op for op; the prompt encoder / mask decoder stay on the CPU there.
+//! tested against op for op. The mask decoder is [`decoder`] (fork LO.6); the prompt encoder
+//! stays on the CPU there.
 //!
 //! Ported from github.com/facebookresearch/sam2 (Apache-2.0, Copyright (c) Meta Platforms,
 //! Inc. and affiliates; see `NOTICE`). This crate knows nothing of YAML or candle: the caller
@@ -776,8 +777,7 @@ fn plan_mem_attn(ids: &MemIds, n: usize, ptr: usize) -> Result<Ops> {
 
 /// SAM 2.1's heavy parts on a wgpu device, weights resident.
 pub struct Sam2Gpu {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    exec: Exec,
     nn: NnKernels,
     weights: Vec<wgpu::Buffer>,
     image_acts: Vec<wgpu::Buffer>,
@@ -788,8 +788,8 @@ pub struct Sam2Gpu {
     mem_ids: MemIds,
     mem_acts: Vec<wgpu::Buffer>,
     mem_plans: Mutex<HashMap<(usize, usize), Arc<Vec<NnStep>>>>,
-    /// Held for a whole call (the activation buffers are shared); also the read-back buffer.
-    run: Mutex<Option<wgpu::Buffer>>,
+    /// The mask decoder, when its weights were given (see [`decoder`]).
+    decoder: Option<decoder::Sam2GpuDecoder>,
     name: String,
     discrete: bool,
 }
@@ -857,34 +857,7 @@ impl Sam2Gpu {
     /// [`Sam2Gpu::new`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fn open(spec: &Sam2GpuSpec, weights: &HashMap<String, Weight>) -> Result<Self> {
-        if wgpu::Instance::enabled_backend_features().is_empty() {
-            return Err(err("this build has no GPU backend"));
-        }
-        let instance = wgpu::Instance::default();
-        let adapter = match crate::adapter_pick::choose(&instance, wgpu::Backends::all()) {
-            Some(a) => a,
-            None => {
-                let opts = wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() };
-                pollster::block_on(instance.request_adapter(&opts)).map_err(|e| err(format!("no GPU adapter: {e}")))?
-            }
-        };
-        let info = adapter.get_info();
-        if info.device_type == wgpu::DeviceType::Cpu {
-            return Err(err(format!("{} is a CPU renderer", info.name)));
-        }
-        let limits = adapter.limits();
-        let desc = wgpu::DeviceDescriptor {
-            label: Some("filmcraft magic mask sam2"),
-            required_limits: wgpu::Limits {
-                max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
-                max_buffer_size: limits.max_buffer_size,
-                ..wgpu::Limits::default()
-            },
-            ..Default::default()
-        };
-        let (device, queue) = pollster::block_on(adapter.request_device(&desc)).map_err(|e| err(format!("GPU device: {e}")))?;
-        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| log::warn!("Magic Mask (SAM 2) GPU error: {e}")));
-        device.set_device_lost_callback(|reason, msg| log::warn!("Magic Mask (SAM 2) GPU device lost ({reason:?}): {msg}"));
+        let (device, queue, info) = open_device("filmcraft magic mask sam2")?;
         let mut gpu = Self::new(&device, &queue, spec, weights)?;
         gpu.name = format!("{} ({:?})", info.name, info.backend);
         gpu.discrete = info.device_type == wgpu::DeviceType::DiscreteGpu;
@@ -911,7 +884,15 @@ impl Sam2Gpu {
             return Err(err(format!("out of GPU memory: {e}")));
         }
         waited.map_err(|e| err(format!("upload: {e}")))?;
-        built
+        let mut built = built?;
+        if weights.contains_key(decoder::PROBE) {
+            // the decoder is optional: without it (or if it can't be built) the CPU decodes
+            match decoder::Sam2GpuDecoder::new(device, queue, weights) {
+                Ok(d) => built.decoder = Some(d),
+                Err(e) => log::warn!("Magic Mask (SAM 2): the mask decoder stays on the CPU: {e}"),
+            }
+        }
+        Ok(built)
     }
 
     fn build(device: &wgpu::Device, queue: &wgpu::Queue, reg: Reg, image: Ops, enc: Ops, mem_ids: MemIds, mem_max: Ops) -> Result<Self> {
@@ -938,8 +919,7 @@ impl Sam2Gpu {
         // check the largest plan binds
         let _ = steps(&nn, &mem_max.ops, &mem_acts, &weights, rope)?;
         Ok(Self {
-            device: device.clone(),
-            queue: queue.clone(),
+            exec: Exec::new(device, queue),
             nn,
             weights,
             image_acts,
@@ -950,7 +930,7 @@ impl Sam2Gpu {
             mem_ids,
             mem_acts,
             mem_plans: Mutex::new(HashMap::new()),
-            run: Mutex::new(None),
+            decoder: None,
             name: String::from("GPU"),
             discrete: false,
         })
@@ -966,13 +946,18 @@ impl Sam2Gpu {
         self.discrete
     }
 
+    /// The mask decoder on this device, when its weights were given at [`Sam2Gpu::new`].
+    pub fn decoder(&self) -> Option<&decoder::Sam2GpuDecoder> {
+        self.decoder.as_ref()
+    }
+
     /// The image encoder: (s0 256²×32, s1 128²×64, feat 64²×256), HWC.
     pub fn image(&self, input: &[f32]) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         if input.len() != INPUT_LEN {
             return Err(err(format!("an input of {} values, expected {INPUT_LEN}", input.len())));
         }
         let reads = [(I_S0, S0_LEN), (I_S1, S1_LEN), (I_FEAT, FEAT_LEN)];
-        let mut out = self.run(&self.image_acts, &[(I_INP, input)], &[(&self.image_steps, &reads)])?;
+        let mut out = self.exec.run(&self.image_acts, &[(I_INP, input)], &[(&self.image_steps, &reads)])?;
         let feat = out.pop().ok_or_else(|| err("no output"))?;
         let s1 = out.pop().ok_or_else(|| err("no output"))?;
         let s0 = out.pop().ok_or_else(|| err("no output"))?;
@@ -992,7 +977,7 @@ impl Sam2Gpu {
             from = end;
         }
         let refs: Vec<(&[NnStep], &[(usize, usize)])> = segs.iter().map(|(s, r)| (*s, r.as_slice())).collect();
-        let outs = self.run(&self.image_acts, &[(I_INP, input)], &refs)?;
+        let outs = self.exec.run(&self.image_acts, &[(I_INP, input)], &refs)?;
         Ok(self.image_marks.iter().map(|m| m.name.clone()).zip(outs).collect())
     }
 
@@ -1017,7 +1002,7 @@ impl Sam2Gpu {
                 }
             }
         };
-        let mut out = self.run(&self.mem_acts, &[(M_CUR, feat), (M_MEM, memory), (M_MPOS, memory_pos)], &[(&plan, &[(M_OUT, FEAT_LEN)])])?;
+        let mut out = self.exec.run(&self.mem_acts, &[(M_CUR, feat), (M_MEM, memory), (M_MPOS, memory_pos)], &[(&plan, &[(M_OUT, FEAT_LEN)])])?;
         out.pop().ok_or_else(|| err("no output"))
     }
 
@@ -1026,13 +1011,27 @@ impl Sam2Gpu {
         if feat.len() != FEAT_LEN || mask.len() != MASK_SIDE * MASK_SIDE {
             return Err(err(format!("memory encoder inputs of {} / {} values", feat.len(), mask.len())));
         }
-        let mut out = self.run(&self.enc_acts, &[(E_FEAT, feat), (E_MASK, mask)], &[(&self.enc_steps, &[(E_OUT, TOKENS * MEM)])])?;
+        let mut out = self.exec.run(&self.enc_acts, &[(E_FEAT, feat), (E_MASK, mask)], &[(&self.enc_steps, &[(E_OUT, TOKENS * MEM)])])?;
         out.pop().ok_or_else(|| err("no output"))
+    }
+}
+
+/// A device and queue with the read-back buffer, held for a whole call (the caller's activation
+/// buffers are shared between calls).
+struct Exec {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    read: Mutex<Option<wgpu::Buffer>>,
+}
+
+impl Exec {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self { device: device.clone(), queue: queue.clone(), read: Mutex::new(None) }
     }
 
     /// Uploads `inputs`, runs each segment's steps and reads its `(activation, len)` outputs.
     fn run(&self, acts: &[wgpu::Buffer], inputs: &[(usize, &[f32])], segments: &[(&[NnStep], &[(usize, usize)])]) -> Result<Vec<Vec<f32>>> {
-        let mut guard = self.run.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.read.lock().unwrap_or_else(PoisonError::into_inner);
         if inputs.iter().any(|(_, v)| v.iter().any(|x| !x.is_finite())) {
             return Err(err("an input has non-finite values"));
         }
@@ -1117,6 +1116,44 @@ impl Sam2Gpu {
         Ok(outs)
     }
 }
+
+/// A device of its own on the adapter Settings ▸ Playback ▸ Graphics device picks
+/// ([`crate::adapter_pick`]), else the high-performance one (CPU adapters are refused).
+#[cfg(not(target_arch = "wasm32"))]
+fn open_device(label: &'static str) -> Result<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
+    if wgpu::Instance::enabled_backend_features().is_empty() {
+        return Err(err("this build has no GPU backend"));
+    }
+    let instance = wgpu::Instance::default();
+    let adapter = match crate::adapter_pick::choose(&instance, wgpu::Backends::all()) {
+        Some(a) => a,
+        None => {
+            let opts = wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() };
+            pollster::block_on(instance.request_adapter(&opts)).map_err(|e| err(format!("no GPU adapter: {e}")))?
+        }
+    };
+    let info = adapter.get_info();
+    if info.device_type == wgpu::DeviceType::Cpu {
+        return Err(err(format!("{} is a CPU renderer", info.name)));
+    }
+    let limits = adapter.limits();
+    let desc = wgpu::DeviceDescriptor {
+        label: Some(label),
+        required_limits: wgpu::Limits {
+            max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
+            max_buffer_size: limits.max_buffer_size,
+            ..wgpu::Limits::default()
+        },
+        ..Default::default()
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&desc)).map_err(|e| err(format!("GPU device: {e}")))?;
+    device.on_uncaptured_error(Arc::new(|e: wgpu::Error| log::warn!("Magic Mask (SAM 2) GPU error: {e}")));
+    device.set_device_lost_callback(|reason, msg| log::warn!("Magic Mask (SAM 2) GPU device lost ({reason:?}): {msg}"));
+    Ok((device, queue, info))
+}
+
+#[path = "sam2_decoder.rs"]
+pub mod decoder;
 
 #[cfg(test)]
 mod tests {

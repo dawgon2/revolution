@@ -2,13 +2,14 @@
 //!
 //! ```text
 //! cargo run --release -p filmcraft-render --example explain_traindata -- \
-//!     --out-dir ~/Apps/filmcraft-train/runs/<name> [--grades 2600] [--per-grade 2] [--seed 1] [--val 0.05] [--subtle 0.3]
+//!     --out-dir ~/Apps/filmcraft-train/runs/<name> [--grades 2600] [--per-grade 2] [--seed 1] [--val 0.05] [--subtle 0.3] [--g4 0.25]
 //! ```
 //!
 //! Builds many random one-node grades on synthetic frames (every control family of the 36-case
 //! evaluation set: wheels, contrast, saturation, temperature / tint, curves, qualifier incl.
 //! inverted, windows incl. inverted, LUT, grain, noise reduction, highlight roll-off, disabled,
-//! matte view, identity), measures each with [`explain_node`], and writes chat examples:
+//! matte view, identity; with `--g4` also G4's HDR zone wheels, colour warper and 3D qualifier, fork
+//! AI2b), measures each with [`explain_node`], and writes chat examples:
 //! system + user = `filmcraft_llm::explain_prompt(facts, template)` (exactly the prompt the app
 //! and `llm_eval` use), assistant = an explanation written by a small rule-based *realizer* from
 //! the verified facts (several phrasings per grade). **Every target passes
@@ -30,10 +31,12 @@ use filmcraft_project::grade::{Grade, GradeNode};
 use filmcraft_project::grade::{NodeKind, SOURCE};
 use filmcraft_project::keyframe::ParamValue;
 use filmcraft_project::mask::Mask;
+use filmcraft_project::qual3d::Qual3d;
+use filmcraft_project::warper::{WarpMode, Warper};
 use filmcraft_project::{MaskPath, Param};
 use filmcraft_render::Image;
-use filmcraft_render::grade::{GradeCtx, compile_fx, qualifier_hsl};
-use filmcraft_render::grade_explain::cases::{eval_cases, eval_cases_v2, eval_cases_v3};
+use filmcraft_render::grade::{GradeCtx, compile_fx, qual3d_point, qualifier_hsl};
+use filmcraft_render::grade_explain::cases::{eval_cases, eval_cases_v2, eval_cases_v3, eval_cases_v6};
 use filmcraft_render::grade_explain::{BranchFacts, FactMismatch, NodeFacts, branch_facts, check_branch_explanation, check_explanation_labeled, explain_node};
 use filmcraft_time::Tick;
 
@@ -273,8 +276,79 @@ fn add_qualifier(rng: &mut Rng, n: &mut GradeNode, patches: &[[f32; 3]; 4]) {
     }
 }
 
-/// A random one-node grade and the names of its families.
-fn random_grade(rng: &mut Rng, patches: &[[f32; 3]; 4], luts: &[String], subtle: f64) -> (GradeNode, String) {
+/// One of G4's grading tools on `n` (fork AI2b): an HDR zone wheel, the colour warper or the 3D
+/// qualifier (only on a node without another qualifier; it falls back to an HDR zone).
+fn g4_family(rng: &mut Rng, n: &mut GradeNode, patches: &[[f32; 3]; 4]) -> &'static str {
+    let pick = rng.below(3);
+    if pick == 1 {
+        let mut w = Warper::default();
+        for _ in 0..1 + rng.below(3) {
+            let mode = if rng.chance(0.75) { WarpMode::HueSat } else { WarpMode::ChromaLuma };
+            let len = w.mesh(mode).len() as usize;
+            let index = rng.below(len) as u32;
+            if let Some(o) = w.mesh(mode).original(mode, index) {
+                let to = [o[0] + rng.range(-0.12, 0.12) as f32, o[1] + rng.range(-0.25, 0.25) as f32];
+                w.mesh_mut(mode).set_point(mode, index, to, None);
+            }
+        }
+        if rng.chance(0.3) {
+            w.strength = rng.range(0.3, 1.0) as f32;
+        }
+        if rng.chance(0.3) {
+            w.range = rng.range(0.5, 2.0) as f32;
+        }
+        w.preserve_luma = rng.chance(0.3);
+        n.warper = Some(w.cleaned());
+        return "warper";
+    }
+    if pick == 2 && !n.params.contains_key("qual.on") {
+        let mut k = Qual3d::default();
+        let stroke = |rng: &mut Rng, k: &mut Qual3d, exclude: bool| {
+            let c = qual3d_point(WS, patches.get(rng.below(4)).copied().unwrap_or(SKIN)).unwrap_or_default();
+            let samples: Vec<[f32; 3]> = (0..8 + rng.below(24)).map(|_| c.map(|v| v + rng.range(-0.04, 0.04) as f32)).collect();
+            k.add_samples(&samples, exclude);
+        };
+        stroke(rng, &mut k, false);
+        if rng.chance(0.3) {
+            stroke(rng, &mut k, false);
+        }
+        if rng.chance(0.25) {
+            stroke(rng, &mut k, true);
+        }
+        if rng.chance(0.4) {
+            k.softness = rng.range(0.01, 0.2) as f32;
+        }
+        if rng.chance(0.3) {
+            k.despill = rng.range(0.2, 1.0) as f32;
+        }
+        n.qual3d = Some(k.cleaned());
+        setf(n, "qual.on", 1.0);
+        if rng.chance(0.25) {
+            setf(n, "qual.invert", 1.0);
+        }
+        return "qualifier_3d";
+    }
+    let zone = rng.word(&["global", "black", "dark", "shadow", "light", "highlight", "specular"]);
+    let what = 1 + rng.below(7);
+    if what & 1 != 0 {
+        setf(n, &format!("hdr.{zone}.exposure"), rng.range(-1.5, 1.5));
+    }
+    if what & 2 != 0 {
+        setf(n, &format!("hdr.{zone}.sat"), rng.range(0.3, 1.8));
+    }
+    if what & 4 != 0 {
+        let mut b = [0.0f32; 4];
+        if let Some(x) = b.get_mut(rng.below(3)) {
+            *x = rng.range(-0.3, 0.3) as f32;
+        }
+        set(n, &format!("hdr.{zone}.balance"), ParamValue::Color(b));
+    }
+    "hdr_zone"
+}
+
+/// A random one-node grade and the names of its families. With probability `g4` it also gets one
+/// of G4's tools (`g4` 0 draws no extra random numbers, so older data sets regenerate unchanged).
+fn random_grade(rng: &mut Rng, patches: &[[f32; 3]; 4], luts: &[String], subtle: f64, g4: f64) -> (GradeNode, String) {
     let mut n = GradeNode::new(1);
     let roll = rng.f();
     if roll < 0.02 {
@@ -305,6 +379,9 @@ fn random_grade(rng: &mut Rng, patches: &[[f32; 3]; 4], luts: &[String], subtle:
             n.windows.push(window(rng, inv));
             fams.push(if inv { "window_inverted" } else { "window" });
         }
+    }
+    if g4 > 0.0 && rng.chance(g4) {
+        fams.push(g4_family(rng, &mut n, patches));
     }
     if rng.chance(0.06) {
         n.enabled = false;
@@ -929,11 +1006,22 @@ struct Args {
     samples: usize,
     subtle: f64,
     branch_grades: usize,
+    g4: f64,
 }
 
 fn parse_args() -> Result<Args, Box<dyn Error>> {
-    let mut a =
-        Args { out_dir: std::path::PathBuf::new(), grades: 2600, per_grade: 2, seed: 1, val: 0.05, tries: 48, samples: 0, subtle: 0.0, branch_grades: 0 };
+    let mut a = Args {
+        out_dir: std::path::PathBuf::new(),
+        grades: 2600,
+        per_grade: 2,
+        seed: 1,
+        val: 0.05,
+        tries: 48,
+        samples: 0,
+        subtle: 0.0,
+        branch_grades: 0,
+        g4: 0.0,
+    };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut v = || it.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -947,11 +1035,12 @@ fn parse_args() -> Result<Args, Box<dyn Error>> {
             "--samples" => a.samples = v()?.parse::<usize>()?.min(1000),
             "--subtle" => a.subtle = v()?.parse::<f64>()?.clamp(0.0, 1.0),
             "--branch-grades" => a.branch_grades = v()?.parse::<usize>()?.min(1_000_000),
+            "--g4" => a.g4 = v()?.parse::<f64>()?.clamp(0.0, 1.0),
             other => return Err(format!("unknown argument {other}").into()),
         }
     }
     if a.out_dir.as_os_str().is_empty() {
-        return Err("usage: explain_traindata --out-dir <dir> [--grades N] [--per-grade K] [--seed S] [--val F] [--tries T] [--samples N] [--subtle F] [--branch-grades N]".into());
+        return Err("usage: explain_traindata --out-dir <dir> [--grades N] [--per-grade K] [--seed S] [--val F] [--tries T] [--samples N] [--subtle F] [--branch-grades N] [--g4 F]".into());
     }
     Ok(a)
 }
@@ -967,8 +1056,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(&args.out_dir)?;
     let mut rng = Rng(args.seed ^ 0x6772_6164_6532_6262);
     let held_out: BTreeSet<String> =
-        // (every held-out set: sets 2 and 3 judge v2 tunes, AI1.6)
-        eval_cases().iter().chain(eval_cases_v2().iter()).chain(eval_cases_v3().iter()).filter_map(|c| serde_json::to_string(&c.facts).ok()).map(|s| filmcraft_llm::compact_facts(&s)).collect();
+        // (every held-out set: sets 2 and 3 judge v2 tunes, AI1.6; set 6 G4's tools, AI2b)
+        eval_cases().iter().chain(eval_cases_v2().iter()).chain(eval_cases_v3().iter()).chain(eval_cases_v6().iter()).filter_map(|c| serde_json::to_string(&c.facts).ok()).map(|s| filmcraft_llm::compact_facts(&s)).collect();
     let luts: Vec<String> = {
         let all: Vec<String> = filmcraft_render::luts::builtins().iter().map(|b| format!("builtin:{}", b.id)).collect();
         // looks more often than camera conversions
@@ -999,7 +1088,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         let gamma = if rng.chance(0.5) { 2.0 } else { rng.range(1.0, 3.0) as f32 };
         let src = frame(patches, gamma);
-        let (node, fam) = random_grade(&mut rng, &patches, &luts, args.subtle);
+        let (node, fam) = random_grade(&mut rng, &patches, &luts, args.subtle, args.g4);
         let mut out = src.clone();
         let g = Grade { nodes: vec![node.clone()], bypass: false, ..Default::default() };
         for op in compile_fx(&g, Tick(0), WS, GradeCtx::default(), src.w, src.h) {

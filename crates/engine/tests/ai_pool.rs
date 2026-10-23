@@ -40,8 +40,8 @@ const POOL_COACH_FLOOR: usize = 149;
 /// 1055 with feature-layout; 1054 measured 2026-10-22 when C3.5a (compositor-trackers.nodes) and C3.5b
 /// (compositor.roto) merged: each alone holds 1055, together they push `pool-c3-grade-per-clip` out of
 /// its top 5 (no guide text tuned); 1055 with C3.11's BM25 b 0.5 → 0.6 (`coach_ask::B`; the
-/// `see:` link lift leaves the top 5 alone).
-const POOL_RETRIEVAL_FLOOR: usize = 1055;
+/// `see:` link lift leaves the top 5 alone); 1056 with G4's HDR section wording (LO.3 raised it).
+const POOL_RETRIEVAL_FLOOR: usize = 1056;
 /// Token-set similarity at or above which a training question counts as a near-copy of a test one.
 const NEAR_COPY: f64 = 0.7;
 
@@ -555,7 +555,8 @@ struct WithOrigin {
 /// for a plan's "which tracker" part (a flat sign, a logo on a wall, a planar screen replacement:
 /// `pool-cr3-billboard-occlusion`, `pool-cr2-remove-sign`, `pool-cr3-phone-resolve`) it is accepted
 /// through `alt_sources` for `tracking.what` (580); the guide wording isn't tuned to the items.
-const CREATIVE_COVERAGE_FLOOR: usize = 580;
+/// 581 again after AI2b's guide pages (measured 581, LO.3 restored the floor; never lower it).
+const CREATIVE_COVERAGE_FLOOR: usize = 581;
 
 /// AI-PLAN AI4 item 5c: a creative question needs a section for each sub-task, not one best match,
 /// so it is scored by how many of its plan's sections the model is sent (coverage), apart from the

@@ -22,6 +22,11 @@ struct Driver {
 impl Driver {
     fn demo() -> Self {
         let mut session = Session::default();
+        // these tests measure the Premiere-style Color Grading layout; the fork build defaults to
+        // the Resolve workflow (feature `fork-resolve-default`, on in a workspace build), where
+        // the same tabs are laid out differently (LO.2: the ci failures). Tests of the Resolve
+        // Color page set it themselves.
+        session.prefs.workflow = filmcraft_engine::settings::Workflow::Premiere;
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         Self::from_session(session)
     }
@@ -51,6 +56,36 @@ impl Driver {
             eframe::App::raw_input_hook(self.harness.state_mut(), &ctx, &mut raw);
             *self.harness.input_mut() = raw;
             self.harness.step();
+        }
+    }
+
+    /// Steps until the frame workers have been idle for a few frames (LO.2): in an optimized build
+    /// the Program picture and the panels that follow it land mid-gesture and move what a drag
+    /// measured, so a drag waits for the layout to come to rest first.
+    fn settle(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut idle = 0;
+        while idle < 4 && std::time::Instant::now() < deadline {
+            self.frames(1);
+            idle = if self.harness.state().frames.queue_len() == 0 { idle + 1 } else { 0 };
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+    }
+
+    /// [`Self::settle`], then steps until `id`'s rectangle stays the same for three looks in a
+    /// row (LO.2: under a loaded ci, panels still moved between measuring and dragging after the
+    /// frame workers were idle).
+    fn settle_on(&mut self, id: &str) {
+        self.settle();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let (mut last, mut same) = (serde_json::Value::Null, 0);
+        while same < 3 && std::time::Instant::now() < deadline {
+            let v = self.ok("ui.elements", json!({"prefix": id}));
+            let rect = v.as_array().and_then(|a| a.iter().find(|e| e["id"] == id)).map(|e| e["rect"].clone()).unwrap_or_default();
+            same = if rect == last && !rect.is_null() { same + 1 } else { 0 };
+            last = rect;
+            self.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(15));
         }
     }
 
@@ -789,6 +824,39 @@ fn warper_tab_drags_and_pins_mesh_points() {
     assert!(d.element("grade.warper.point.24").is_some(), "5 × 5 chroma-luma mesh");
 }
 
+/// Fork LO.3: the Warper's Strength and the 3D qualifier's Despill have keyframe toggles; a
+/// click animates the setting (a `warp.*` / `q3d.*` node parameter starting from the value).
+#[test]
+fn warper_and_3d_qualifier_settings_have_keyframe_toggles() {
+    let mut session = Session::default();
+    session.execute("file.openDemoProject", json!({})).expect("demo project");
+    // (tall enough that the rows below the warper plane are on screen)
+    let mut d = Driver::from_session_sized(session, egui::vec2(1600.0, 1500.0));
+    d.ok("ui.set", json!({"workspace": "Color Grading"}));
+    d.frames(3);
+    let clip = select_first_clip(&mut d);
+    d.frames(3);
+    d.click("grade.addFirst");
+    let node = grade(&mut d, clip)["nodes"][0]["id"].as_u64().unwrap();
+    d.exec("grade.warper.set", json!({"clip": clip, "node": node, "strength": 0.7}));
+    d.click("grade.tab.warper");
+    d.frames(2);
+    assert!(d.element("grade.warper.range.anim").is_some(), "{:?}", d.ids("grade.warper."));
+    d.click("grade.warper.strength.anim");
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    let p = &g["nodes"][0]["params"]["warp.strength"];
+    assert_eq!(p["keyframes"].as_array().map(Vec::len), Some(1), "{g}");
+    // the 3D qualifier's despill
+    d.exec("grade.qual3d.set", json!({"clip": clip, "node": node, "mode": "3d"}));
+    d.click("grade.tab.qualifier");
+    d.frames(2);
+    d.click("grade.qual3d.despill.anim");
+    d.frames(2);
+    let g = grade(&mut d, clip);
+    assert_eq!(g["nodes"][0]["params"]["q3d.despill"]["keyframes"].as_array().map(Vec::len), Some(1), "{g}");
+}
+
 /// Fork G4.4: the Windows tab's **Planar** button starts a planar track of that window (both
 /// ways, in the background; clicking it again stops it), and a planar-tracked window gets
 /// **✕ planar**, which clears the track. (The tracker's accuracy is the engine's tests.)
@@ -810,12 +878,11 @@ fn planar_button_tracks_a_window_and_clear_removes_it() {
     if !d.harness.state().session.planar_jobs.is_empty() {
         d.click("grade.window.0.track.planar");
     }
-    for _ in 0..3000 {
-        if d.harness.state().session.planar_jobs.is_empty() {
-            break;
-        }
+    // (by the clock: under a loaded parallel test run the job takes a while to wind down)
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !d.harness.state().session.planar_jobs.is_empty() && std::time::Instant::now() < deadline {
         d.frames(1);
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(d.harness.state().session.planar_jobs.is_empty(), "the job ended");
     // a window that follows a plane (set directly when the demo picture gave none)
@@ -873,6 +940,7 @@ fn hdr_tab_edits_the_zone_wheels() {
     let g = grade(&mut d, clip);
     assert!(g["nodes"][0]["params"]["hdr.shadow.balance"].is_object(), "{g}");
     // drag the Highlight exposure: one parameter, one undo step
+    d.settle_on("grade.hdr.highlight.exposure");
     let [x, top, w, h] = d.element("grade.hdr.highlight.exposure").expect("exposure box");
     let cy = top + h / 2.0;
     d.ok("ui.drag", json!({"from": {"x": x + w * 0.5, "y": cy}, "to": {"x": x + w * 0.5 + 60.0, "y": cy}, "steps": 8}));
@@ -917,7 +985,7 @@ fn qualifier_3d_strokes_on_the_program_picture() {
     assert_eq!(g["nodes"][0]["qual3d"]["mode"], json!("3d"), "{g}");
     assert!(d.element("grade.param.qual.hueWidth").is_none(), "the HSL ranges hide with the 3D key");
     d.click("grade.qual3d.include");
-    d.frames(2);
+    d.settle_on("program.picture");
     let pic = d.element("program.picture").unwrap_or_else(|| panic!("no picture: {:?}", d.ids("program.")));
     let (y, x0, x1) = (pic[1] + pic[3] * 0.5, pic[0] + pic[2] * 0.4, pic[0] + pic[2] * 0.6);
     d.ok("ui.drag", json!({"from": {"x": x0, "y": y}, "to": {"x": x1, "y": y}, "steps": 10}));
@@ -925,12 +993,19 @@ fn qualifier_3d_strokes_on_the_program_picture() {
     let g = grade(&mut d, clip);
     let inc = g["nodes"][0]["qual3d"]["include"].as_array().map(Vec::len).unwrap_or(0);
     assert!(inc >= 1, "the stroke picked colours: {g}");
+    // fork LO.3: the stroke is drawn on the picture where it was painted
+    d.frames(2);
+    let st = d.element("program.qual3d.stroke.0").unwrap_or_else(|| panic!("no stroke drawn: {:?}", d.ids("program.")));
+    assert!(st[0] <= x0 + 6.0 && st[0] + st[2] >= x1 - 6.0 && st[1] <= y && st[1] + st[3] >= y, "{st:?} covers the drag");
+    assert!(d.element("program.qual3d.stroke.1").is_none());
     assert!(float_param(&g, g["nodes"][0]["id"].as_u64().unwrap(), "qual.on").is_some_and(|v| v >= 0.5), "{g}");
     d.snapshot("grade-qualifier-3d", None);
     // one undo step for the stroke
     d.exec("edit.undo", json!({}));
     let g = grade(&mut d, clip);
     assert!(g["nodes"][0]["qual3d"]["include"].is_null(), "{g}");
+    d.frames(2);
+    assert!(d.element("program.qual3d.stroke.0").is_none(), "the undone stroke is not drawn");
     // an exclude click (the tool stays armed after a stroke)
     d.click("grade.qual3d.exclude");
     d.frames(2);
@@ -938,6 +1013,13 @@ fn qualifier_3d_strokes_on_the_program_picture() {
     d.frames(2);
     let g = grade(&mut d, clip);
     assert_eq!(g["nodes"][0]["qual3d"]["exclude"].as_array().map(Vec::len), Some(1), "{g}");
+    d.frames(2);
+    assert!(d.element("program.qual3d.stroke.0").is_some(), "the exclude spot is drawn");
+    // still drawn with the tool put down, while the tab shows the 3D key
+    d.ok("ui.key", json!({"key": "Escape"}));
+    d.frames(3);
+    assert!(d.harness.state().ui.qual3d_tool.is_none());
+    assert!(d.element("program.qual3d.stroke.0").is_some(), "drawn while the Qualifier tab shows 3D");
     d.click("grade.qual3d.clear.exclude");
     d.frames(2);
     let g = grade(&mut d, clip);
@@ -946,5 +1028,6 @@ fn qualifier_3d_strokes_on_the_program_picture() {
     d.click("grade.qual3d.mode.hsl");
     d.frames(2);
     assert!(d.element("grade.qual3d.include").is_none(), "the stroke tools hide with the HSL key");
+    assert!(d.element("program.qual3d.stroke.0").is_none(), "no strokes drawn with the HSL key");
     assert!(d.element("grade.param.qual.hueWidth").is_some());
 }

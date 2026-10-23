@@ -4508,3 +4508,18 @@ hdr	Specular	Especular
 	Set 3D Qualifier	Ajustar cualificador 3D
 	Clear 3D Qualifier	Borrar cualificador 3D
 	Pulls the picked colour's tint out of what the node corrects; use with Invert for green or blue screen spill	Quita el tinte del color elegido de lo que corrige el nodo; úsalo con Invertir para el derrame de pantalla verde o azul
+	Include stroke	Trazo de inclusión
+	Exclude stroke	Trazo de exclusión
+	Track the mask as a plane (a sign, a screen, a wall), both ways from the playhead	Seguir la máscara como un plano (un cartel, una pantalla, una pared), en ambos sentidos desde el cabezal
+	Clear the planar track (the mask stays where it is seen)	Borrar el seguimiento planar (la máscara se queda donde se ve)
+
+# Compositor tracker rows (fork LO.5): Corner Pin corners and Confidence.
+	Point {n}	Punto {n}
+	Confidence	Confianza
+	not analysed here	no analizado aquí
+	{now} here, lowest {low} %	{now} aquí, mínimo {low} %
+	not analysed yet	aún sin analizar
+	Top left	Arriba a la izquierda
+	Top right	Arriba a la derecha
+	Bottom right	Abajo a la derecha
+	Bottom left	Abajo a la izquierda

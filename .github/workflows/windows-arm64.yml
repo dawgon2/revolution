@@ -15,8 +15,7 @@ on:
       - "**/build.rs"
       - .github/workflows/windows-arm64.yml
       - packaging/windows/**
-  schedule:
-    - cron: "41 4 * * 1" # weekly, so drift in the runner images shows up
+  # FORK-ONLY: no schedule here (owner 2026-10-22: GitHub paused the fork's workflows over inherited scheduled runs); run it by hand.
   workflow_dispatch:
 
 concurrency:
@@ -32,6 +31,8 @@ env:
 
 jobs:
   package:
+    # FORK-ONLY: runs only in the public repo; the private one has a small free Actions quota (2026-10-22)
+    if: github.repository == 'dawgon2/revolution'
     name: package (cross-compiled on x64)
     runs-on: windows-latest
     timeout-minutes: 90

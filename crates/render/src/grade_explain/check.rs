@@ -2213,6 +2213,37 @@ mod tests {
         bad(&inv, "The selection brightens the midtones, the shadows get warmer.");
     }
 
+    /// Fork AI2b: G4's tools. A 3D qualifier (picked clusters, no hue ranges) licenses "the
+    /// selection" but never skin / sky; the warper and HDR zones aren't in the grammar, so naming
+    /// them is refused (the explainer words their measured effect instead).
+    #[test]
+    fn g4_tools_are_checked() {
+        let mut q = mixed();
+        q.controls.qualifier = Some(QualifierFact {
+            hue: 0.0,
+            hue_width: 1.0,
+            sat: [0.0, 1.0],
+            lum: [0.0, 1.0],
+            invert: false,
+            three_d: true,
+            words: "a 3D qualifier on 2 picked colour cluster(s)".into(),
+        });
+        q.matte_coverage = Some(0.2);
+        ok(&q, "The midtones in the selection get brighter, the shadows warmer.");
+        bad(&q, "In the selected skin tones, the midtones get brighter and the shadows warmer.");
+        bad(&q, "In the sky, the midtones get brighter and the shadows warmer.");
+        bad(&q, "Outside the selection, the midtones get brighter and the shadows warmer.");
+        let f = mixed();
+        for t in [
+            "The warper brightens the midtones, the shadows get warmer.",
+            "The HDR wheels brighten the midtones, the shadows get warmer.",
+            "The specular zone gets brighter.",
+            "The 3D qualifier brightens the midtones.",
+        ] {
+            bad(&f, t);
+        }
+    }
+
     #[test]
     fn labels_must_be_this_node() {
         let f = mixed();

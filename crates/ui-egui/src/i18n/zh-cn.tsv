@@ -4502,3 +4502,7 @@ hdr	Specular	镜面高光
 	Set 3D Qualifier	设置 3D 限定器
 	Clear 3D Qualifier	清除 3D 限定器
 	Pulls the picked colour's tint out of what the node corrects; use with Invert for green or blue screen spill	从节点校正的部分中去除所选颜色的色调；配合“反转”用于绿幕或蓝幕溢色
+	Include stroke	包含笔触
+	Exclude stroke	排除笔触
+	Track the mask as a plane (a sign, a screen, a wall), both ways from the playhead	将蒙版作为平面跟踪（标牌、屏幕、墙面），从播放头向前后两个方向
+	Clear the planar track (the mask stays where it is seen)	清除平面跟踪（蒙版保持在当前看到的位置）

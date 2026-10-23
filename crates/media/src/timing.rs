@@ -74,6 +74,43 @@ impl FrameTiming {
         [t.average_fps, t.min_fps, t.max_fps, t.typical_fps].iter().all(|f| f.is_finite() && *f > 0.0).then_some(t)
     }
 
+    /// A repeating cadence in `pts` (LO.7): gaps that differ by a field or more but repeat with a period of 2 to 5
+    /// frames, every run of that many gaps lasting the same (within a timebase unit per gap or
+    /// 0.2 %), as soft-telecined film (3:2 pulldown: 1.5 / 1 frame gaps at 29.97) is. Returns the
+    /// rate the frames really come at (standard rates within 0.2 % snap), or None for constant
+    /// spacing, a real variable rate, fewer than four periods or a bad timebase.
+    pub fn cadence_rate(pts: impl IntoIterator<Item = i64>, units_per_second: f64) -> Option<FrameRate> {
+        if !(units_per_second.is_finite() && units_per_second > 0.0) {
+            return None;
+        }
+        let mut times: Vec<i64> = pts.into_iter().take(MAX_TIMING_FRAMES).collect();
+        times.sort_unstable();
+        times.dedup();
+        let all: Vec<u64> = times.windows(2).filter_map(|w| w[1].checked_sub(w[0])).map(|g| g as u64).collect();
+        // the stream's first and last gaps may break the pattern (a cut, the muxer's last frame)
+        let gaps = all.get(1..all.len().saturating_sub(1)).unwrap_or_default();
+        let (lo, hi) = (*gaps.iter().min()?, *gaps.iter().max()?);
+        // gaps within 20 % of each other are timestamp jitter, not a field cadence (pulldown
+        // gaps differ by half a frame or more)
+        if hi - lo <= (hi / 500).max(1) || hi.saturating_mul(5) < lo.saturating_mul(6) {
+            return None;
+        }
+        for period in 2..=5usize {
+            if gaps.len() < period * 4 {
+                break;
+            }
+            let sums: Vec<u64> = gaps.windows(period).map(|w| w.iter().sum()).collect();
+            let (smin, smax) = (*sums.iter().min()?, *sums.iter().max()?);
+            if smax - smin <= (smax / 500).max(period as u64) {
+                let mean = sums.iter().map(|s| *s as f64).sum::<f64>() / sums.len() as f64;
+                let fps = period as f64 * units_per_second / mean;
+                let snap = Self { average_fps: fps, min_fps: fps, max_fps: fps, typical_fps: fps, frames: 0 };
+                return snap.typical_rate();
+            }
+        }
+        None
+    }
+
     /// The clip's nominal rate: [`Self::typical_fps`] as the closest standard rate within 0.2 %
     /// (a ±1 ms jitter around 33.3 ms is 30 fps), else as it is. None when it isn't known.
     pub fn typical_rate(&self) -> Option<FrameRate> {
@@ -328,5 +365,44 @@ mod tests {
         for f in [i64::MIN, -3, 0, 3, i64::MAX] {
             let _ = FrameTimes::tick_of(&c, f);
         }
+    }
+
+    /// LO.7: soft-telecined film (3:2 pulldown, 90 kHz: 1.5 / 1 frame gaps at 29.97) is a
+    /// constant 23.976 cadence; plain CFR, a real rate switch and jitter are not cadences.
+    #[test]
+    fn a_pulldown_cadence_is_constant_film_rate() {
+        // 3 fields, 2 fields: 4504 / 4505 and 3003 units alternately
+        let mut t = 0i64;
+        let mut pts = Vec::new();
+        for i in 0..48 {
+            pts.push(t);
+            t += match i % 4 {
+                0 => 4505,
+                2 => 4504,
+                _ => 3003,
+            };
+        }
+        assert!(FrameTiming::detect(pts.iter().copied(), 90_000.0).is_some(), "the gaps alone look variable");
+        assert_eq!(FrameTiming::cadence_rate(pts.iter().copied(), 90_000.0), Some(FrameRate::new(24_000, 1001)));
+        // a broken last gap (the muxer's last frame) doesn't hide it
+        let mut edge = pts.clone();
+        if let Some(l) = edge.last_mut() {
+            *l -= 1501;
+        }
+        assert_eq!(FrameTiming::cadence_rate(edge, 90_000.0), Some(FrameRate::new(24_000, 1001)));
+        // constant: none
+        assert_eq!(FrameTiming::cadence_rate((0..40).map(|i| i * 3003), 90_000.0), None);
+        // 30 fps then 15 fps: none
+        let switch: Vec<i64> = (0..30).map(|i| i * 3000).chain((0..30).map(|i| 90_000 + i * 6000)).collect();
+        assert_eq!(FrameTiming::cadence_rate(switch, 90_000.0), None);
+        // ±1 ms jitter that repeats (period 3) is still jitter, not a cadence
+        let periodic: Vec<i64> = (0..60i64).map(|i| i * 3000 + (i % 3 - 1) * 90).collect();
+        assert_eq!(FrameTiming::cadence_rate(periodic, 90_000.0), None);
+        // irregular jitter: none
+        let jitter: Vec<i64> = (0..60i64).map(|i| i * 3000 + [0, 90, -60, 30, -90, 60, 0, -30][(i % 8) as usize] + i % 7 * 11).collect();
+        assert_eq!(FrameTiming::cadence_rate(jitter, 90_000.0), None);
+        // too short, or a bad timebase
+        assert_eq!(FrameTiming::cadence_rate(pts.iter().copied().take(6), 90_000.0), None);
+        assert_eq!(FrameTiming::cadence_rate(pts.iter().copied(), f64::NAN), None);
     }
 }

@@ -53,6 +53,8 @@ env:
 
 jobs:
   version:
+    # FORK-ONLY: runs only in the public repo; the private one has a small free Actions quota (2026-10-22)
+    if: github.repository == 'dawgon2/revolution'
     name: version
     runs-on: ubuntu-latest
     outputs:

@@ -55,7 +55,7 @@ fn point(p: Param) -> TrackerPoint {
 }
 
 fn tracker(points: Vec<TrackerPoint>, operation: TrackOperation, smooth_radius: u32) -> CompKind {
-    CompKind::Tracker { points, operation, smooth_radius, reference: Tick::ZERO, method: TrackMethod::Position }
+    CompKind::Tracker { points, operation, smooth_radius, reference: Tick::ZERO, method: TrackMethod::Position, corner_points: Vec::new() }
 }
 
 /// The picture of the comp's gradient node 2.
@@ -221,6 +221,42 @@ fn tracker_corner_pin_uses_four_points() {
     assert_eq!(p.warp, TrackWarp::Affine(Affine::IDENTITY));
 }
 
+/// LO.5: Corner Pin onto four chosen points of six (in corner order), not the first four; an
+/// invalid choice falls back to the first four; a chosen point that isn't analysed: identity.
+#[test]
+fn tracker_corner_pin_uses_the_chosen_points() {
+    let quad = |f: i64| plane(f);
+    let off = |f: i64| quad(f)[0] + Vec2::new(5.0, 3.0);
+    // points: 0, 1 = decoys; 2..6 = the plane's corners in the order br, tl, bl, tr
+    let mut pts: Vec<TrackerPoint> = vec![point(track(10, off)), point(track(10, move |f| off(f) + Vec2::new(9.0, 0.0)))];
+    for i in [2, 0, 3, 1] {
+        pts.push(point(track(10, move |f| quad(f)[i])));
+    }
+    let size = (W as f64, H as f64);
+    let mut kind = tracker(pts, TrackOperation::CornerPin, 0);
+    if let CompKind::Tracker { corner_points, .. } = &mut kind {
+        *corner_points = vec![3, 5, 2, 4];
+    }
+    let p = plan(&kind, RATE, RATE.tick_of(3), size, false).unwrap();
+    let TrackWarp::Projective(h) = p.warp else { panic!("{p:?}") };
+    for (c, q) in frame_quad(size.0, size.1).iter().zip(quad(3)) {
+        assert!((h.apply(*c).unwrap() - q).length() < 1e-6);
+    }
+    // an invalid choice: the first four (decoys included) still pin, differently
+    if let CompKind::Tracker { corner_points, .. } = &mut kind {
+        *corner_points = vec![3, 5, 2, 2];
+    }
+    let p = plan(&kind, RATE, RATE.tick_of(3), size, false).unwrap();
+    assert!(matches!(p.warp, TrackWarp::Projective(g) if g != h) || p.warp == TrackWarp::Affine(Affine::IDENTITY), "{p:?}");
+    // a chosen point without analysis: no pin
+    if let CompKind::Tracker { points, corner_points, .. } = &mut kind {
+        *corner_points = vec![3, 5, 2, 4];
+        points[4].track.keyframes.clear();
+    }
+    let p = plan(&kind, RATE, RATE.tick_of(3), size, false).unwrap();
+    assert_eq!(p.warp, TrackWarp::Affine(Affine::IDENTITY));
+}
+
 #[test]
 fn the_projective_draw_matches_the_affine_draw() {
     let c = comp(vec![gradient_node(2)], &[(2, 1, 0)]);
@@ -333,6 +369,7 @@ fn two_point_tracker() -> CompKind {
         smooth_radius: 0,
         reference: Tick::ZERO,
         method: TrackMethod::PositionRotation,
+        corner_points: Vec::new(),
     }
 }
 

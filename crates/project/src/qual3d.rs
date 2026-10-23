@@ -28,6 +28,42 @@ pub const MAX_COORD: f32 = 2.0;
 /// Softness range and default (opponent units).
 pub const SOFTNESS: std::ops::RangeInclusive<f32> = 0.001..=0.5;
 pub const DEFAULT_SOFTNESS: f32 = 0.05;
+/// Most stroke paths kept to draw on the Program picture (fork LO.3; the oldest go first).
+pub const MAX_PATHS: usize = 32;
+/// Most points a kept stroke path has (a longer stroke is thinned evenly).
+pub const MAX_PATH_POINTS: usize = 64;
+
+/// Where a stroke was painted (fork LO.3), kept only to draw it on the Program picture: the
+/// key itself is the clusters. Points are 0…1 of the sequence frame.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StrokePath {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exclude: bool,
+    #[serde(default)]
+    pub pts: Vec<[f32; 2]>,
+}
+
+impl StrokePath {
+    /// A path of `pts` (non-finite points dropped, the rest clamped to 0…1, evenly thinned to
+    /// [`MAX_PATH_POINTS`]); None without a point.
+    pub fn new(pts: &[[f32; 2]], exclude: bool) -> Option<Self> {
+        let good: Vec<[f32; 2]> = pts.iter().filter(|p| p.iter().all(|v| v.is_finite())).map(|p| p.map(|v| v.clamp(0.0, 1.0))).collect();
+        let n = good.len();
+        if n == 0 {
+            return None;
+        }
+        let pts = if n <= MAX_PATH_POINTS {
+            good
+        } else {
+            (0..MAX_PATH_POINTS).filter_map(|i| good.get(i.saturating_mul(n - 1) / (MAX_PATH_POINTS - 1)).copied()).collect()
+        };
+        Some(Self { exclude, pts })
+    }
+
+    fn cleaned(self) -> Option<Self> {
+        Self::new(&self.pts, self.exclude)
+    }
+}
 
 /// Which key a node's qualifier uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -100,6 +136,10 @@ pub struct Qual3d {
     /// How much of the picked colour's chroma the node pulls out of the pixels it corrects (0…1).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub despill: f32,
+    /// The strokes' paths on the picture, oldest first (fork LO.3; at most [`MAX_PATHS`]), to
+    /// draw them; projects before LO.3 have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<StrokePath>,
 }
 
 fn default_softness() -> f32 {
@@ -112,7 +152,7 @@ fn is_zero(v: &f32) -> bool {
 
 impl Default for Qual3d {
     fn default() -> Self {
-        Self { mode: QualMode::ThreeD, include: Vec::new(), exclude: Vec::new(), softness: DEFAULT_SOFTNESS, despill: 0.0 }
+        Self { mode: QualMode::ThreeD, include: Vec::new(), exclude: Vec::new(), softness: DEFAULT_SOFTNESS, despill: 0.0, paths: Vec::new() }
     }
 }
 
@@ -143,6 +183,15 @@ impl Qual3d {
 
     fn side_mut(&mut self, exclude: bool) -> &mut Vec<Cluster> {
         if exclude { &mut self.exclude } else { &mut self.include }
+    }
+
+    /// Keep a stroke's path to draw it (the oldest past [`MAX_PATHS`] dropped).
+    pub fn add_path(&mut self, pts: &[[f32; 2]], exclude: bool) {
+        if let Some(p) = StrokePath::new(pts, exclude) {
+            self.paths.push(p);
+        }
+        let extra = self.paths.len().saturating_sub(MAX_PATHS);
+        self.paths.drain(..extra);
     }
 
     /// Add picked colours (opponent coordinates) to one side: each finite sample (at most
@@ -188,15 +237,18 @@ impl Qual3d {
     }
 
     /// The 3D qualifier with hostile values removed: clusters cleaned (non-finite dropped, at
-    /// most [`MAX_CLUSTERS`] a side), softness and despill clamped.
+    /// most [`MAX_CLUSTERS`] a side), softness and despill clamped, stroke paths cleaned (the
+    /// newest [`MAX_PATHS`]).
     pub fn cleaned(self) -> Self {
         let side = |v: Vec<Cluster>| v.into_iter().filter_map(Cluster::cleaned).take(MAX_CLUSTERS).collect();
+        let skip = self.paths.len().saturating_sub(MAX_PATHS);
         Self {
             mode: self.mode,
             softness: self.effective_softness(),
             despill: self.effective_despill(),
             include: side(self.include),
             exclude: side(self.exclude),
+            paths: self.paths.into_iter().skip(skip).filter_map(StrokePath::cleaned).collect(),
         }
     }
 }
@@ -226,6 +278,7 @@ fn merge_closest(side: &mut Vec<Cluster>) {
 pub(crate) fn de_qual3d<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Qual3d>, D::Error> {
     let Some(mut v) = Option::<serde_json::Value>::deserialize(d)? else { return Ok(None) };
     let mut sides: [Vec<Cluster>; 2] = [Vec::new(), Vec::new()];
+    let mut paths: Vec<StrokePath> = Vec::new();
     if let Some(o) = v.as_object_mut() {
         for (side, key) in sides.iter_mut().zip(["include", "exclude"]) {
             if let Some(serde_json::Value::Array(items)) = o.remove(key) {
@@ -233,11 +286,17 @@ pub(crate) fn de_qual3d<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option
                 *side = items.into_iter().filter_map(|c| serde_json::from_value::<Cluster>(c).ok()).filter_map(Cluster::cleaned).take(MAX_CLUSTERS).collect();
             }
         }
+        // (a malformed path is dropped; only the newest MAX_PATHS are read)
+        if let Some(serde_json::Value::Array(items)) = o.remove("paths") {
+            let skip = items.len().saturating_sub(MAX_PATHS);
+            paths = items.into_iter().skip(skip).filter_map(|p| serde_json::from_value::<StrokePath>(p).ok()).collect();
+        }
     }
     let Ok(mut q) = serde_json::from_value::<Qual3d>(v) else { return Ok(None) };
     let [include, exclude] = sides;
     q.include = include;
     q.exclude = exclude;
+    q.paths = paths;
     Ok(Some(q.cleaned()))
 }
 
@@ -318,5 +377,36 @@ mod tests {
         assert_eq!(n.qual3d, None);
         let n: GradeNode = serde_json::from_str(r#"{"id":1,"qual3d":{}}"#).unwrap();
         assert_eq!(n.qual3d.map(|q| q.mode), Some(QualMode::Hsl), "a bare one keeps the HSL key");
+    }
+
+    /// Fork LO.3: stroke paths are kept (thinned, capped), round-trip, and load cleaned.
+    #[test]
+    fn stroke_paths_are_kept_capped_and_cleaned() {
+        let mut q = Qual3d::default();
+        let long: Vec<[f32; 2]> = (0..500).map(|i| [i as f32 / 500.0, 0.5]).collect();
+        q.add_path(&long, false);
+        q.add_path(&[[f32::NAN, 0.1], [2.0, -1.0]], true);
+        q.add_path(&[[f32::NAN, 0.1]], true);
+        assert_eq!(q.paths.len(), 2, "a path without a good point is not kept");
+        assert_eq!(q.paths[0].pts.len(), MAX_PATH_POINTS);
+        assert_eq!(q.paths[1], StrokePath { exclude: true, pts: vec![[1.0, 0.0]] });
+        for _ in 0..MAX_PATHS {
+            q.add_path(&[[0.2, 0.2]], false);
+        }
+        assert_eq!(q.paths.len(), MAX_PATHS);
+        assert!(!q.paths.iter().any(|p| p.exclude), "the oldest went first");
+        let n = GradeNode { qual3d: Some(q), ..GradeNode::new(1) };
+        let json = serde_json::to_string(&n).unwrap();
+        assert_eq!(serde_json::from_str::<GradeNode>(&json).unwrap(), n);
+        // hostile: out-of-range points clamp, malformed paths drop, too many keep the newest
+        let mut many: Vec<serde_json::Value> = (0..1000).map(|i| serde_json::json!({"pts": [[i as f64 / 1000.0, 5.0]]})).collect();
+        many.push(serde_json::json!({"pts": "nope"}));
+        many.push(serde_json::json!({"exclude": true, "pts": [[-3.0, 1e30]]}));
+        let n: GradeNode = serde_json::from_value(serde_json::json!({"id": 1, "qual3d": {"mode": "3d", "softness": 0.1, "paths": many}})).unwrap();
+        let q = n.qual3d.unwrap();
+        assert_eq!(q.softness, 0.1, "the rest of the qualifier survives");
+        assert_eq!(q.paths.len(), MAX_PATHS - 1);
+        assert_eq!(q.paths.last(), Some(&StrokePath { exclude: true, pts: vec![[0.0, 1.0]] }));
+        assert!(q.paths.iter().all(|p| p.pts.iter().all(|v| (0.0..=1.0).contains(&v[0]) && (0.0..=1.0).contains(&v[1]))));
     }
 }

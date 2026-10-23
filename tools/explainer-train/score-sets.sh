@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Score a tuned explainer on every held-out set (fork AI2 item 4; docs/fork/TRAINING.md):
-# sets 1-3 (node lines), 4 (comp lines) and 5 (branch notes), one eval + score per set.
+# sets 1-3 (node lines), 4 (comp lines), 5 (branch notes), 6 (G4's tools, AI2b) and 7 (C3 / C4
+# comp nodes, AI2b), one eval + score per set.
 #
 #   tools/explainer-train/score-sets.sh <name> [family]
 #     <name>    run name whose quantized weights are in $MODELS/tuned/<name>/<name>-<quant>.gguf
 #     [family]  llama (SmolLM2, default) | qwen2 (Qwen2.5)
 #
 # Environment (all optional):
-#   SETS="1 2 3 4 5"       sets to score
+#   SETS="1 2 3 4 5 6 7"   sets to score
 #   QUANTS=q8_0            quantizations to evaluate (space separated)
 #   REPEAT_PENALTY=1.0     eval generation setting (tuned models run without a penalty)
 #   MODELS, RUNS           as in run.sh
@@ -27,7 +28,7 @@ fi
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 MODELS="${MODELS:-$HOME/.local/share/filmcraft-fork/models}"
 RUNS="${RUNS:-$HOME/Apps/filmcraft-train/runs}"
-SETS="${SETS:-1 2 3 4 5}"
+SETS="${SETS:-1 2 3 4 5 6 7}"
 QUANTS="${QUANTS:-q8_0}"
 tuned="$MODELS/tuned/$name"
 out="$RUNS/$name/sets"
@@ -49,11 +50,11 @@ export FILMCRAFT_LLM_DIR="$MODELS"
 for s in $SETS; do
   cases="$out/cases-$s.jsonl"
   case "$s" in
-    1|2|3|5) cargo_bg run --release -q -p filmcraft-render --example explain_score -- --dump-cases "$cases" --set "$s"
+    1|2|3|5|6) cargo_bg run --release -q -p filmcraft-render --example explain_score -- --dump-cases "$cases" --set "$s"
              score_sel=(--set "$s") ;;
-    4)       cargo_bg run --release -q -p filmcraft-engine --example comp_traindata -- --dump-cases "$cases"
+    4|7)     cargo_bg run --release -q -p filmcraft-engine --example comp_traindata -- --dump-cases "$cases" --set "$s"
              score_sel=(--cases "$cases") ;;
-    *) echo "unknown set $s (1, 2, 3, 4 or 5)" >&2; exit 2 ;;
+    *) echo "unknown set $s (1 to 7)" >&2; exit 2 ;;
   esac
   cargo_bg run --release -q -p filmcraft-llm --features infer --example llm_eval -- \
     "$cases" "${locals[@]}" --repeat-penalty "${REPEAT_PENALTY:-1.0}" --out "$out/eval-$s.jsonl" \

@@ -222,7 +222,7 @@ fn node_changes(n: &GradeNode, t: Tick, project: Option<&filmcraft_project::Proj
         || n.float_at("grain.strength", t) > 0.0
         || n.float_at("hl.rolloff", t) > 0.0
         || n.hdr_at(t).is_some()
-        || n.warper.as_ref().is_some_and(|w| !w.is_identity())
+        || n.warper_at(t).is_some_and(|w| !w.is_identity())
         || despill_op(n, t).is_some()
         || (!n.lut.is_empty() && n.float_at("lut.mix", t) > 0.0 && crate::luts::resolve(project, &n.lut).is_some())
 }
@@ -458,7 +458,7 @@ fn parts<'a>(nodes: Vec<&'a GradeNode>, t: Tick, gs: &GradeSpace, ctx: GradeCtx)
             let show_mask = if show == 1 { 1 } else { 3 };
             body.push(ColorOp::HslCorrect { hue_shift: 0.0, sat: 1.0, temp: 0.0, tint: 0.0, show_mask, hdr });
         }
-        let key = key_op(n, &q, hdr);
+        let key = key_op(n, &q, hdr, t);
         // (Lumetri's HSL Secondary blur: σ up to 20 full-resolution pixels)
         let sigma = q.blur * QUAL_MAX_BLUR * px_scale;
         if sigma >= 0.3 {
@@ -491,9 +491,9 @@ const QUAL_MAX_BLUR: f32 = 20.0;
 /// The key of node `n`'s qualifier `q`: its 3D qualifier's when that is the node's key (fork
 /// G4.3), else the HSL ranges. Ranges reaching an end of 0…1 have no soft edge there (a full range
 /// selects everything, black and white included).
-fn key_op(n: &GradeNode, q: &Qualifier, hdr: bool) -> ColorOp {
-    if let Some(k) = n.qual3d_active() {
-        return key3d_op(k, hdr);
+fn key_op(n: &GradeNode, q: &Qualifier, hdr: bool, t: Tick) -> ColorOp {
+    if let Some(k) = n.qual3d_active_at(t) {
+        return key3d_op(&k, hdr);
     }
     let soft = q.soft.max(1e-3);
     ColorOp::HslKey {
@@ -519,7 +519,7 @@ fn key3d_op(q: &filmcraft_project::qual3d::Qual3d, hdr: bool) -> ColorOp {
 /// node's matte and the node's other corrections grade the despilled colour).
 fn despill_op(n: &GradeNode, t: Tick) -> Option<ColorOp> {
     n.qualifier_at(t)?;
-    let q = n.qual3d_active()?;
+    let q = n.qual3d_active_at(t)?;
     let amount = q.effective_despill();
     if amount <= 0.0 {
         return None;
@@ -583,7 +583,7 @@ fn node_ops(n: &GradeNode, t: Tick, gs: &GradeSpace, ctx: &GradeCtx) -> Vec<Colo
     }
     ops.extend(hdr_zone_ops(n, t, gs));
     // colour warper (G4.1): after the primaries, before the curves
-    ops.extend(warp_ops(n));
+    ops.extend(warp_ops(n, t));
     let hdr = gs.is_hdr();
     for (key, channels) in CURVES {
         if let Some(points) = n.curve(key) {
@@ -669,11 +669,11 @@ fn hdr_zone_weights(gs: &GradeSpace) -> [f32; 3] {
 
 /// A node's colour warper (fork G4.1) as ops on the grading signal: the hue-sat mesh, then the
 /// chroma-luma mesh, each only when it moves something (an untouched warper is no op at all, so
-/// it is bit exact). Not keyframed: the meshes are static.
-fn warp_ops(n: &GradeNode) -> Vec<ColorOp> {
+/// it is bit exact). The meshes are static; strength and range keyframe (fork LO.3).
+fn warp_ops(n: &GradeNode, t: Tick) -> Vec<ColorOp> {
     use filmcraft_color::warp::{MeshSpec, WarpSpace, compile};
     use filmcraft_project::warper::WarpMode;
-    let Some(w) = n.warper.as_ref().filter(|w| !w.is_identity()) else {
+    let Some(w) = n.warper_at(t).filter(|w| !w.is_identity()) else {
         return Vec::new();
     };
     [(WarpMode::HueSat, WarpSpace::HueSat), (WarpMode::ChromaLuma, WarpSpace::ChromaLuma)]
@@ -1494,10 +1494,19 @@ mod tests {
         let n = warped(|w| {
             w.hue_sat.set_point(WarpMode::HueSat, 8, [0.1, 0.5], None);
         });
-        let ops = warp_ops(&n);
+        let ops = warp_ops(&n, Tick::ZERO);
         let red = filmcraft_color::warp::hsv_to_rgb(0.0, 0.5, 0.6);
         let o = filmcraft_color::ops::apply_chain(&ops, red);
         assert!(o[1] > red[1] + 0.05 && (o[0] - red[0]).abs() < 1e-4, "{red:?} → {o:?}");
+        // fork LO.3: a keyframed strength renders at the frame's time (0 at 0 s: no warp; 1 at 1 s)
+        let mut n = n;
+        let mut p = filmcraft_project::Param::new(ParamValue::Float(0.0));
+        p.toggle_animation(Tick::ZERO);
+        p.set_at(Tick(254_016_000_000), ParamValue::Float(1.0));
+        n.params.insert("warp.strength".into(), p);
+        assert!(warp_ops(&n, Tick::ZERO).is_empty() && !node_changes(&n, Tick::ZERO, None));
+        let o1 = filmcraft_color::ops::apply_chain(&warp_ops(&n, Tick(254_016_000_000)), red);
+        assert!(close3(o1, o), "{o1:?} vs {o:?}");
     }
 
     /// Fork G4.3: a node lifting the gain, keyed by a 3D qualifier picked on `picked`.

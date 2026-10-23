@@ -146,8 +146,24 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(serde_json::from_value::<Warper>(v.clone()).map_err(|e| bad(CMD, format!("`warper` is not a colour warper: {e}")))?),
     };
     let mode = mode_of(p, CMD, "mode")?;
-    let (strength, range) = (num(p, "strength", CMD)?, num(p, "range", CMD)?);
+    let (mut strength, mut range) = (num(p, "strength", CMD)?, num(p, "range", CMD)?);
     let preserve = optional_bool(p, "preserveLuma", CMD)?;
+    // (strength / range made keyframable, a node parameter, are set there: fork LO.3)
+    if whole.is_none() && (strength.is_some() || range.is_some()) {
+        let mut vals = [("warp.strength", strength), ("warp.range", range)];
+        if crate::grade::set_keyed(s, p, CMD, &mut vals)? {
+            [strength, range] = vals.map(|(_, v)| v);
+            let rest = [range.is_some(), strength.is_some(), preserve.is_some(), p.get("mode").is_some_and(|m| !m.is_null())]
+                .into_iter()
+                .chain(["hueColumns", "satRings", "chromaColumns", "lumaRows"].map(|k| p.get(k).is_some_and(|m| !m.is_null())))
+                .any(|b| b);
+            if !rest {
+                let (c, current) = current_for(s, p, CMD)?;
+                let (id, w) = peek(s, c, node_arg(p, CMD)?, current, CMD)?;
+                return Ok(result(c.0, id, &w));
+            }
+        }
+    }
     let hue_cols = size(p, "hueColumns", HUE_COLUMNS, CMD)?;
     let rings = size(p, "satRings", SAT_RINGS, CMD)?;
     let cl_cols = size(p, "chromaColumns", CL_SIDE, CMD)?;
