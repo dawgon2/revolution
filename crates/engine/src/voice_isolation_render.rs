@@ -42,7 +42,7 @@ use crate::commands::{CommandSpec, bad, bool_p, has_seq, str_p};
 use crate::{EngineError, Result, Session};
 
 const CMD: &str = "audio.voiceIsolate.render";
-const LABEL: &str = "Render Voice Isolation";
+pub(crate) const LABEL: &str = "Render Voice Isolation";
 const RATE: u32 = 48_000;
 /// Longest stretch of source rendered per clip (2 h).
 const MAX_SECONDS: i64 = 2 * 3600;

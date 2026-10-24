@@ -3074,6 +3074,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::voice_isolation::commands());
     v.extend(crate::voice_isolation_render::commands());
     v.extend(crate::voice_cleanup::commands());
+    v.extend(crate::ai_tools::commands());
     v.extend(crate::narration::commands());
     v.extend(crate::keyboard::commands());
     v.extend(crate::project_panel::commands());

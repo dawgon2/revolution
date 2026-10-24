@@ -1130,6 +1130,30 @@ fn loaded(path: &std::path::Path) -> Option<Arc<dyn Segmenter>> {
     }
 }
 
+/// Release the loaded models (MobileSAM and SAM 2; `ai.stop`): running tracks keep their copies
+/// until they end, the next track loads them again.
+pub(crate) fn release_models() {
+    #[cfg(feature = "magic-mask")]
+    {
+        *LOADED.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+    #[cfg(feature = "magic-mask")]
+    crate::magic_mask_sam2::release();
+}
+
+/// Whether a Magic Mask model is in memory.
+pub(crate) fn models_loaded() -> bool {
+    #[cfg(feature = "magic-mask")]
+    let mobile = LOADED.lock().unwrap_or_else(PoisonError::into_inner).is_some();
+    #[cfg(not(feature = "magic-mask"))]
+    let mobile = false;
+    #[cfg(feature = "magic-mask")]
+    let sam2 = crate::magic_mask_sam2::loaded();
+    #[cfg(not(feature = "magic-mask"))]
+    let sam2 = false;
+    mobile || sam2
+}
+
 /// Held while a model loads, so two first loads don't load it (and open a GPU encoder) twice.
 #[cfg(feature = "magic-mask")]
 static LOADING: Mutex<()> = Mutex::new(());
@@ -1311,7 +1335,7 @@ impl MagicMasks {
     }
 
     /// Jobs still queued or running (for one node, or all).
-    fn live_jobs(&self, node: Option<(ClipId, u64)>) -> Vec<JobId> {
+    pub(crate) fn live_jobs(&self, node: Option<(ClipId, u64)>) -> Vec<JobId> {
         self.statuses(None)
             .into_iter()
             .filter(|s| matches!(s.state, TrackState::Queued | TrackState::Running) && node.is_none_or(|(c, n)| s.clip == c.0 && s.node == n))
@@ -2237,7 +2261,7 @@ fn track(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"clip": c.0, "node": id, "job": job_id, "frames": frames}))
 }
 
-fn cancel(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn cancel(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "grade.magicMask.cancel";
     let jobs = match p.get("job") {
         None | Some(Value::Null) => s.magic_mask.live_jobs(None),

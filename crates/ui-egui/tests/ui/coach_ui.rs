@@ -869,6 +869,9 @@ fn walked() -> (Driver, BTreeSet<String>) {
     d.exec("timeline.select", json!({"clips": []}));
     d.ok("ui.menu.invoke", json!({"id": "window.panel.Compositor"}));
     snap(&mut d, &mut seen);
+    // the AI Tools panel (owner request 2026-10-24)
+    d.ok("ui.menu.invoke", json!({"id": "window.panel.AiTools"}));
+    snap(&mut d, &mut seen);
     // the Project Manager home screen (fork RS2) and its New Project dialog
     try_exec(&mut d, "projects.show", json!({}));
     snap(&mut d, &mut seen);

@@ -4506,3 +4506,24 @@ hdr	Specular	镜面高光
 	Exclude stroke	排除笔触
 	Track the mask as a plane (a sign, a screen, a wall), both ways from the playhead	将蒙版作为平面跟踪（标牌、屏幕、墙面），从播放头向前后两个方向
 	Clear the planar track (the mask stays where it is seen)	清除平面跟踪（蒙版保持在当前看到的位置）
+# AI Tools panel, Assistant Free memory, Inspector hint (owner request 2026-10-24)
+	AI Tools	AI 工具
+	Stop All AI and Free Memory	停止所有 AI 并释放内存
+	Assistant and AI explanations	助手和 AI 说明
+	Assistant picture model	助手图像模型
+	Voice clean-up and rendered Voice Isolation	人声清理和渲染的人声隔离
+	Text to Speech voices	文本转语音声音
+	Loaded: {model}	已加载：{model}
+	Model loaded	模型已加载
+	Not loaded	未加载
+	{n} running	{n} 个正在运行
+	AI tools keep their models in memory after use. Stop one to end its work and free its memory; it loads again the next time you use it.	AI 工具在使用后会将模型保留在内存中。停止某个工具即可结束其工作并释放内存；下次使用时会重新加载。
+	Stop its work and free its memory	停止其工作并释放其内存
+	Stop All and Free Memory	全部停止并释放内存
+	Voice Isolation's live effect model (8 MB) stays loaded: effects on clips use it while you play.	人声隔离实时效果模型（8 MB）保持加载：播放时剪辑上的效果会使用它。
+	AI stopped and its memory freed	AI 已停止，内存已释放
+	No video effects applied (audio effects: Audio tab)	未应用视频效果（音频效果：音频选项卡）
+	Free memory	释放内存
+	Stop the answer being written and free the assistant's models; the chat stays and they load again on the next question.	停止正在生成的回答并释放助手的模型；聊天记录保留，下次提问时会重新加载。
+	1080p	1080p
+	540p	540p

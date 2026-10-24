@@ -410,7 +410,7 @@ Agents:
 
 **[Fork] On battery.** Preferences ▸ Playback ▸ **Lower playback resolution on battery**
 {ui:settings.playback.batteryPreview} (off by default): while the computer runs on battery,
-playback renders one Playback Resolution step lower (Full becomes 1/2); when stopped, and in
+playback renders one Playback Resolution step lower (Full becomes 1/2, 1080p becomes 540p); when stopped, and in
 every export, full resolution is kept. Plugged in again, it returns to your setting within about
 ten seconds (agents: `perf.stats` `playback.effectiveResolution`). Trade-off: less detail while
 playing, for less heat and a longer battery. Also

@@ -137,6 +137,42 @@ recognises speech directly: it sets a gain for 32 frequency bands every 10 ms an
 rebuilds the voice's fine detail from the last few moments of sound ("deep filtering"). Revolution's
 port gives the same output as the original to within 16-bit precision.
 
+### Noise under music or an instrument (fan, hiss)
+
+**[Fork]**
+
+Use **DeNoise**, not Voice Isolation: Voice Isolation keeps only speech, so it would remove the
+guitar together with the fan. A fan is steady noise, and steady noise is what DeNoise is for.
+
+1. Effects panel (Window ▸ Effects) ▸ **Audio Effects ▸ Noise Reduction/Restoration ▸ DeNoise**:
+   drag it onto the middle of the clip's **audio** (its waveform), well away from the clip's edges.
+   Check the **fx** badge appears on that clip (see [effects.md](effects.md), "When an effect seems
+   missing").
+2. Select the audio part of the clip and open **Effect Controls** (**Keyframes** in the Resolve
+   workflow; Window menu, Shift+5) or the Inspector's **Audio** tab. Set while it plays:
+   - **Reduction** (0–40 dB, default 12): how far the fan goes down. Start at 15–20 dB and go up a
+     few dB at a time; stop when the instrument sounds thin or "watery".
+   - **Threshold** (0–20 dB, default 6): how far a sound must rise above the noise to be kept.
+     Lower it when soft notes or the ends of notes get cut; raise it when fan still comes through
+     between notes.
+   - **Smoothing** (default 50 %): raise it to 70–80 % when you hear burbling or chirping, common
+     on long held notes.
+3. DeNoise learns the noise by itself while it plays (no "learn" step): give it a second at the
+   start before you judge.
+
+Optional: a **High Pass** at 60–70 Hz takes fan rumble away (keep it under 82 Hz, a guitar's low E);
+**DeHummer** at the fan's pitch when it whines. Order: High Pass → DeHummer → DeNoise.
+
+What to expect: when the noise is louder than the instrument, the quietest parts of the playing
+(soft picking, the tails of notes) are under the noise, and any noise reducer either leaves some
+noise or eats those details. Aim for "noise clearly lower, instrument still natural"
+(12–20 dB of Reduction) rather than "noise gone". A microphone closer to the instrument, or the fan
+switched off, helps more than any amount of clean-up.
+
+- **Beginner:** DeNoise at 15 dB Reduction, defaults otherwise, listen, adjust Reduction only.
+- **Pro:** High Pass first, then DeNoise; compare with the effect switched off (the switch next to
+  its name) at the same loudness, since a quieter result tends to sound "cleaner" when it isn't.
+
 ## Cleaning up a voice by hand
 
 > id: audio.manual-voice-cleanup | does: the order to fix a voice by hand: rumble, noise, hum, esses, level, tone, loudness | ui: essentialSound.* | cmd: essentialSound.* | resolve: Fairlight EQ, Dynamics, Voice Isolation, Dialogue Leveler | premiere: Essential Sound ▸ Dialogue | when: a voice you care about; checking what one click did | see: audio.cleanup-voice

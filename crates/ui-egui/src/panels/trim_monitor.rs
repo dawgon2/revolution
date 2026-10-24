@@ -146,7 +146,7 @@ fn picture(app: &mut FilmcraftApp, ui: &mut egui::Ui, area: Rect, side: &Value, 
     let want = (img_rect.width() * ppp / size.0 as f32).clamp(1.0 / 32.0, 1.0);
     let buckets = [1.0 / 32.0, 1.0 / 16.0, 1.0 / 8.0, 0.1875, 0.25, 0.375, 0.5, 0.75, 1.0];
     let scale = *buckets.iter().find(|b| **b >= want - 1e-4).unwrap_or(&1.0);
-    let scale = scale.min(app.ui.program.res.scale());
+    let scale = scale.min(app.ui.program.res.scale_for(size.0, size.1));
     let size_key = (scale * 1000.0) as u32;
     let rev = app.item_revision(item);
     let key = FrameKey { target: Target::Item(item), frame, size: size_key, revision: rev, draft: false, temporal: false };

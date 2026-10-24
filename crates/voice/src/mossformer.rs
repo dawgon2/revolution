@@ -733,6 +733,14 @@ pub fn unload() {
     *slot().write().unwrap_or_else(std::sync::PoisonError::into_inner) = Slot::default();
 }
 
+/// Free the loaded model but keep its path: the next render loads it again (`ai.stop`).
+/// Running jobs keep their copy until they end.
+pub fn release() {
+    let mut s = slot().write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    s.model = None;
+    s.error = None;
+}
+
 /// (checkpoint path, loaded, load error).
 pub fn status() -> (Option<std::path::PathBuf>, bool, Option<String>) {
     let s = slot().read().unwrap_or_else(std::sync::PoisonError::into_inner);

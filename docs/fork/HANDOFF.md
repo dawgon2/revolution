@@ -5,17 +5,42 @@ newest entries **§1a.97–102**; §5 phases; only the last ~80 lines of §7), t
 [`OWNER-QUESTIONS.md`](OWNER-QUESTIONS.md) (newest: **Q61** FYI, AI2 explainer choice), this file. Rewritten at its top
 2026-10-16 19:20 after S1's acceptance (scheduled run); older notes below are kept for reference.
 
-## Status (2026-10-23 03:34 EDT, scheduled run): Phase LO in progress: **LO.1, LO.2, LO.3 floors, LO.6a model pref, LO.6c nested matte hash, LO.7a Source End on VFR, LO.4a C4-TESTS, LO.5a confidence, LO.5b Corner Pin points, LO.7, LO.4b static groups, LO.5c linked roto keys, LO.3 (lane merged), LO.4 groups-analyse + expressions (lane merged; tracker-data expressions refused by design), LO.4 i18n done**; LO.5 GPU roto done; next lane: SAM 2 decoder on GPU + person prompt; open in LO.6: person prompt, SAM 2 decoder on GPU
+## Status (2026-10-23 ~11:30 EDT, scheduled run): **Phase LO done** (`leftovers-1`, build `leftovers-1`, `latest` → it); Revolution 0.3.1 published (see below); **timed pause** until 2026-10-27 04:05
 
-LO.1: release workflow carries every format again (public-repo guard kept); `update::newer_with` offers the newest
-release carrying this install's file; Q68 answered. LO.2: the "load-flaky" UI tests were **not load-flaky**: they
-failed deterministically in the optimized `ci` profile (and passed in debug). The drags measured or started before
-the Program picture / panels finished arriving from the frame workers, so the layout moved mid-gesture; the ask box
-waited a fixed 200 × 10 ms. Fix: `settle()` (frame workers idle for 4 frames) before the drags in `grade_ui` /
-`magic_mask_ui`, and a 60 s clock deadline in `coach_ui::ask_assistant`. **Lesson: reproduce ci-only UI failures
-with the `target/ci/deps/ui-*` binary, not the debug one.** Q69 (v4b asset) still open.
+**Phase LO (§1a.133) is complete.** Full `cargo xtask ci` green on e067be4b (5051 / 5051). Tags `leftovers-1` and
+`revolution-0.3.1` on 0b964d68 (pushed to origin). Build `~/Apps/filmcraft-builds/leftovers-1` (NOTES.md, licences;
+launcher valid). Public snapshot 5de50446 (parent 77b002d9 = 0.3.0, private-pattern scan clean) → `cachyos` branch
+`fork` + tag `revolution-0.3.1`; release run 39977653721 green, 16 files + SHA256SUMS (every format, §1a.133). cleanup.sh freed 89 GB.
+Done in LO: LO.1 release workflow / updater; LO.2 flaky UI tests (real causes: the ci profile's timing, the
+coach tests loading this PC's installed models (12 GB each), and **workspace feature unification turning on
+`fork-resolve-default`**, so grade / Magic Mask tests ran in the Resolve layout: tests now pin Premiere); LO.3
+warper / 3D qualifier keyframes, strokes on the Program, Effect Controls Planar; LO.4 C4-TESTS, static groups,
+Analyse / Track inside groups, expressions on Color / Text settings, de / fr / ja strings; LO.5 tracker confidence,
+Corner Pin points, onScreen roto keys, GPU roto rasteriser; LO.6 model pref, nested matte hash, SAM 2 decoder on
+the GPU, Person mode; LO.7 soft-telecine 23.976, Source End on VFR.
 
-## Exact next step (2026-10-23 ~00:55 EDT, owner live): finish AI2b → **Phase LO (leftovers)** → 0.3.1 → pause (§1a.133)
+## Live change 2026-10-24 (owner, during the pause): AI Tools, posters, noise guide (FORK-PLAN §1a.134)
+
+Done in one commit on hevc-vaapi, released as **Revolution 0.3.2** (owner asked for a patch release): `ai.status` /
+`ai.stop`, Window ▸ AI Tools, Assistant Free memory, clip menu ▸ Effect Controls, poster aspect fit, Timeline Viewer
+1080p default (`PlaybackRes::P1080`), guide + Coach questions. Full `cargo xtask ci` green (5056 / 5056, 2707 s). Local
+build `~/Apps/filmcraft-builds/0.3.2` (`latest` → it). The pause and the AI7 plan below are unchanged. Not checked by eye
+in the running app (the control bridge was down): look at the AI Tools panel, a 3:2 poster and the 1080p menu next run.
+
+## Exact next step (2026-10-23 ~11:30 EDT): pause until 2026-10-27 04:05, then **AI7** (FORK-PLAN §1a.129 / §1a.133)
+
+1. `.fork-paused` holds `resume-after: 2026-10-27T04:05:00-04:00` (§1a.131): runs stop until then and the first run
+   after it deletes the file.
+2. Then **Phase AI7** (AI-PLAN.md "Phase AI7": the Assistant walks you through a whole complex edit; LEAN floor
+   §1a.96; AI7 item 8's model downloads each need the owner's yes) → D → 8.
+3. **LO2** (after AI7): pool coach floor back to 150 (149; needs a real retrieval win, never item tuning); SAM 2
+   f16 / faster matmul; time a full Magic Mask track on real footage to replace the guide's estimated per-frame
+   times; Q69 (v4b explainer asset) still open.
+4. Gotchas from LO: reproduce ci-only UI failures with the ci binary **and workspace features**
+   (`-F filmcraft-engine/fork-resolve-default`); UI tests must not use this PC's data folder
+   (`autosave::set_launch_data_dir` to a temp dir); zsh eats `$VAR:r` in refspecs (use literal ids or `${VAR}`).
+
+## Was: Exact next step (2026-10-23 ~00:55 EDT, owner live): finish AI2b → **Phase LO (leftovers)** → 0.3.1 → pause (§1a.133)
 
 **Owner decisions (FORK-PLAN §1a.133):** Actions works again (Q68 resolved): **Revolution 0.3.0 is fully released**
 (run 39894008609 green, 16 files + SHA256SUMS, 2026-10-23 03:47 UTC); stop retrying the 0.3.0 workflow. Public-repo

@@ -12,6 +12,7 @@
 
 pub mod aaf_omf;
 pub mod ai_explain;
+pub mod ai_tools;
 pub mod autosave;
 pub mod background;
 pub mod captions;
@@ -1331,6 +1332,8 @@ const MAX_SUBCLIP_CHAIN: usize = 16;
 mod aaf_omf_tests;
 #[cfg(test)]
 mod ai_explain_tests;
+#[cfg(test)]
+mod ai_tools_tests;
 #[cfg(test)]
 mod audio_effects_tests;
 #[cfg(test)]

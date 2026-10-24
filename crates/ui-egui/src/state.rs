@@ -131,44 +131,68 @@ impl Tool {
     }
 }
 
-/// Playback resolution (Premiere's Full / 1/2 / 1/4 / 1/8 / 1/16).
+/// Playback resolution (Premiere's Full / 1/2 / 1/4 / 1/8 / 1/16), plus the fork's default
+/// **1080p**: the timeline's own shape fitted in 1920 × 1080 (1620 × 1080 for 3:2, 1080 × 1920
+/// for vertical), never above Full (owner, 2026-10-24).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlaybackRes {
-    Full,
     #[default]
+    P1080,
+    Full,
     Half,
     Quarter,
     Eighth,
     Sixteenth,
+    /// Half of [`PlaybackRes::P1080`]: what 1080p lowers to on battery (not in the menu).
+    P540,
 }
 
 impl PlaybackRes {
-    pub const ALL: [PlaybackRes; 5] = [PlaybackRes::Full, PlaybackRes::Half, PlaybackRes::Quarter, PlaybackRes::Eighth, PlaybackRes::Sixteenth];
-    /// One step lower (1/16 stays 1/16): the battery preview (fork XPS d).
+    /// The menu, best first.
+    pub const ALL: [PlaybackRes; 6] =
+        [PlaybackRes::P1080, PlaybackRes::Full, PlaybackRes::Half, PlaybackRes::Quarter, PlaybackRes::Eighth, PlaybackRes::Sixteenth];
+    /// One step lower (1/16 and 540p stay): the battery preview (fork XPS d).
     pub fn lower(self) -> PlaybackRes {
         match self {
+            PlaybackRes::P1080 | PlaybackRes::P540 => PlaybackRes::P540,
             PlaybackRes::Full => PlaybackRes::Half,
             PlaybackRes::Half => PlaybackRes::Quarter,
             PlaybackRes::Quarter => PlaybackRes::Eighth,
             PlaybackRes::Eighth | PlaybackRes::Sixteenth => PlaybackRes::Sixteenth,
         }
     }
+    /// The fixed fractions' scale; 1080p and 540p depend on the frame: [`PlaybackRes::scale_for`].
     pub fn scale(self) -> f32 {
         match self {
-            PlaybackRes::Full => 1.0,
+            PlaybackRes::Full | PlaybackRes::P1080 | PlaybackRes::P540 => 1.0,
             PlaybackRes::Half => 0.5,
             PlaybackRes::Quarter => 0.25,
             PlaybackRes::Eighth => 0.125,
             PlaybackRes::Sixteenth => 0.0625,
         }
     }
+    /// The render scale for a `w` × `h` frame: 1080p fits the frame's shape in 1920 × 1080 (turned
+    /// for a vertical frame) and never scales up.
+    pub fn scale_for(self, w: u32, h: u32) -> f32 {
+        let p1080 = || {
+            let (long, short) = (w.max(h).max(1) as f32, w.min(h).max(1) as f32);
+            (1920.0 / long).min(1080.0 / short).min(1.0)
+        };
+        match self {
+            PlaybackRes::P1080 => p1080(),
+            PlaybackRes::P540 => p1080() * 0.5,
+            other => other.scale(),
+        }
+    }
     pub fn label(self) -> &'static str {
         match self {
+            PlaybackRes::P1080 => "1080p",
             PlaybackRes::Full => "Full",
             PlaybackRes::Half => "1/2",
             PlaybackRes::Quarter => "1/4",
             PlaybackRes::Eighth => "1/8",
             PlaybackRes::Sixteenth => "1/16",
+            PlaybackRes::P540 => "540p",
         }
     }
 }
@@ -337,8 +361,8 @@ pub struct MonitorView {
 impl Default for MonitorView {
     fn default() -> Self {
         Self {
-            res: PlaybackRes::Half,
-            paused_res: PlaybackRes::Full,
+            res: PlaybackRes::P1080,
+            paused_res: PlaybackRes::P1080,
             high_quality: false,
             zoom: None,
             pan: [0.0, 0.0],
@@ -361,13 +385,15 @@ impl Default for MonitorView {
 impl MonitorView {
     /// The resolution frames are rendered at: Playback Resolution while playing (or the higher
     /// of it and Paused Resolution with High Quality Playback), Paused Resolution when stopped.
-    pub fn effective_res(&self, playing: bool) -> PlaybackRes {
-        if !playing || (self.high_quality && self.paused_res.scale() > self.res.scale()) { self.paused_res } else { self.res }
+    /// `frame` is the picture's size (1080p's scale depends on it).
+    pub fn effective_res(&self, playing: bool, frame: (u32, u32)) -> PlaybackRes {
+        let (w, h) = frame;
+        if !playing || (self.high_quality && self.paused_res.scale_for(w, h) > self.res.scale_for(w, h)) { self.paused_res } else { self.res }
     }
     /// [`MonitorView::effective_res`] with Settings ▸ Playback ▸ Lower playback resolution on
     /// battery (fork XPS d / item 13): one step lower while playing on battery with it ticked.
-    pub fn res_now(&self, playing: bool, battery_preview: bool, on_battery: bool) -> PlaybackRes {
-        let res = self.effective_res(playing);
+    pub fn res_now(&self, playing: bool, frame: (u32, u32), battery_preview: bool, on_battery: bool) -> PlaybackRes {
+        let res = self.effective_res(playing, frame);
         if playing && battery_preview && on_battery { res.lower() } else { res }
     }
     /// The display mode in effect (None = Multi-Camera).

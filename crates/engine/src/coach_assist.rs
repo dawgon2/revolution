@@ -1489,8 +1489,8 @@ impl AssistJobs {
         let shot_looks = self.shot_looks.clone();
         let spawned = std::thread::Builder::new().name("filmcraft-assist".into()).spawn(move || {
             let _turn = lock(&gate);
-            if !lock(&store).contains_key(&id) {
-                return; // forgotten while it waited
+            if !matches!(lock(&store).get(&id), Some(None)) {
+                return; // forgotten or stopped (`ai.stop`) while it waited
             }
             // AI4.2: the vision model looks at the frame with the question first (its failure
             // only means no "seen" line)
@@ -1554,8 +1554,8 @@ impl AssistJobs {
             a.seen = seen;
             a.reference = ctx.reference.clone();
             a.reference_seen = ctx.reference_seen.clone();
-            // (a forgotten question stays forgotten)
-            if let Some(slot) = lock(&store).get_mut(&id) {
+            // (a forgotten question stays forgotten, a stopped one stopped)
+            if let Some(slot @ None) = lock(&store).get_mut(&id) {
                 *slot = Some(a);
             }
         });
@@ -1572,6 +1572,35 @@ impl AssistJobs {
         let known = lock(&self.entries).remove(&id).is_some();
         lock(&self.partial).remove(&id);
         known
+    }
+
+    /// Stop every question still being answered or waiting (`ai.stop`): each gets a "stopped"
+    /// answer now; a running model stops at its next words. Returns how many.
+    pub fn stop_all(&self) -> usize {
+        let mut entries = lock(&self.entries);
+        let mut n = 0;
+        for slot in entries.values_mut().filter(|a| a.is_none()) {
+            *slot = Some(AssistAnswer {
+                reference: None,
+                reference_seen: None,
+                seen: Vec::new(),
+                sources: Vec::new(),
+                grounded: None,
+                fallback: Some(AssistFallback::Error(crate::ai_explain::STOPPED.into())),
+                dont_know: false,
+                lesson: None,
+                coach: None,
+            });
+            n += 1;
+        }
+        drop(entries);
+        lock(&self.partial).clear();
+        n
+    }
+
+    /// Questions still being answered or waiting.
+    pub fn pending(&self) -> usize {
+        lock(&self.entries).values().filter(|a| a.is_none()).count()
     }
 
     /// The model's unchecked text so far for a question still being answered.

@@ -118,7 +118,9 @@ fn view_menu_resolutions_and_display_modes() {
     let menu = d.ok("ui.menu.list", json!({}));
     let item = |id: &str| menu.as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap_or_else(|| panic!("no menu item {id}"));
     assert_eq!(item("view.playbackRes.sixteenth")["path"], json!(["View", "Playback Resolution"]));
-    assert_eq!(item("view.pausedRes.full")["checked"], true, "Paused Resolution defaults to Full");
+    assert_eq!(item("view.pausedRes.1080p")["checked"], true, "Paused Resolution defaults to 1080p");
+    assert_eq!(item("view.playbackRes.1080p")["checked"], true, "Playback Resolution defaults to 1080p");
+    assert_eq!(item("view.pausedRes.full")["checked"], false);
     assert_eq!(item("view.display.composite")["checked"], true);
     assert_eq!(item("view.magnification.1600")["label"], "1600%");
     assert_eq!(item("view.clearGuides")["enabled"], false, "no guides yet");

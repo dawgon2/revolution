@@ -317,7 +317,7 @@ pub fn grid(app: &mut FilmcraftApp, ui: &mut egui::Ui, area: Rect) {
     let scale = crate::panels::monitor::quantize_scale(filmcraft_render::multicam::grid_cell_scale(
         q.settings.width,
         cell_px,
-        app.ui.program.res.scale(),
+        app.ui.program.res.scale_for(q.settings.width, q.settings.height),
         app.playback.playing,
         view.auto_quality,
         lay.per_page,

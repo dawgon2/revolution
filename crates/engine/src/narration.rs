@@ -376,6 +376,9 @@ fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"item": item.0, "clip": clip, "narration": n}))
 }
 
+/// The narration synthesis job's label (`ai.stop` finds it by this).
+pub(crate) const SYNTH_LABEL: &str = "Synthesizing narration";
+
 pub(crate) fn new_job(s: &mut Session, label: String) -> crate::Job {
     let id = s.jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
     crate::Job { id, label, progress: Default::default(), result: Default::default() }
@@ -427,7 +430,7 @@ fn render_job(s: &mut Session, p: &Value) -> Result<Value> {
     if s.tts_cache.lock().unwrap_or_else(PoisonError::into_inner).iter().any(|(k, _)| *k == key) {
         return Ok(json!({"job": null, "cached": true}));
     }
-    let job = new_job(s, "Synthesizing narration".into());
+    let job = new_job(s, SYNTH_LABEL.into());
     let (prog, res, cache) = (job.progress.clone(), job.result.clone(), s.tts_cache.clone());
     let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
     let id = spawn(s, job, wait, "filmcraft-tts", move || {

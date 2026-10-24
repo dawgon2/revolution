@@ -643,11 +643,12 @@ fn start_listing(app: &mut FilmcraftApp, root: Option<std::path::PathBuf>, key: 
     }
 }
 
-fn poster_texture(rt: &mut Runtime, ctx: &egui::Context, s: &ProjectSummary, budget: &mut usize) -> Option<egui::TextureId> {
+/// The project's poster and its size in pixels (its timeline's aspect ratio).
+fn poster_texture(rt: &mut Runtime, ctx: &egui::Context, s: &ProjectSummary, budget: &mut usize) -> Option<(egui::TextureId, egui::Vec2)> {
     let png = s.poster.as_deref()?;
     let key = format!("{png}@{}", s.modified.unwrap_or(0));
     if let Some(t) = rt.textures.get(&key) {
-        return t.as_ref().map(egui::TextureHandle::id);
+        return t.as_ref().map(|t| (t.id(), t.size_vec2()));
     }
     if *budget == 0 {
         return None;
@@ -661,9 +662,19 @@ fn poster_texture(rt: &mut Runtime, ctx: &egui::Context, s: &ProjectSummary, bud
     if rt.textures.len() > 512 {
         rt.textures.clear();
     }
-    let id = tex.as_ref().map(egui::TextureHandle::id);
+    let id = tex.as_ref().map(|t| (t.id(), t.size_vec2()));
     rt.textures.insert(key, tex);
     id
+}
+
+/// `size` scaled to fit inside `r` keeping its aspect ratio, centred (a 3:2 or 9:16 timeline
+/// shows whole in a 16:9 tile, with bars); all of `r` when `size` is empty or not finite.
+pub(crate) fn fit_rect(r: Rect, size: egui::Vec2) -> Rect {
+    if !(size.x > 0.0 && size.y > 0.0 && size.x.is_finite() && size.y.is_finite()) || r.width() <= 0.0 || r.height() <= 0.0 {
+        return r;
+    }
+    let scale = (r.width() / size.x).min(r.height() / size.y);
+    Rect::from_center_size(r.center(), size * scale)
 }
 
 pub(crate) fn date(app: &FilmcraftApp, secs: Option<u64>) -> String {
@@ -1110,8 +1121,10 @@ fn grid_view(
             match e {
                 Entry::Folder(_) => icons::paint(&p, Rect::from_center_size(thumb.center(), vec2(th * 0.42, th * 0.42)), Icon::Folder, t.icon),
                 Entry::Project(s, _) => {
-                    if let Some(tex) = poster_texture(&mut app.home_rt, &ctx, s, budget) {
-                        p.image(tex, thumb.shrink(1.0), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    if let Some((tex, size)) = poster_texture(&mut app.home_rt, &ctx, s, budget) {
+                        // the timeline's own shape, with black bars (never stretched)
+                        p.rect_filled(thumb.shrink(1.0), 3.0, Color32::BLACK);
+                        p.image(tex, fit_rect(thumb.shrink(1.0), size), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                     } else if s.missing {
                         dim = true;
                         p.text(thumb.center(), Align2::CENTER_CENTER, tl!("Missing"), Tokens::ui(13.0), t.text_dim);
@@ -1411,7 +1424,26 @@ fn package_size(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{package_pick, package_size};
+    use super::{fit_rect, package_pick, package_size};
+
+    /// Posters keep their timeline's aspect ratio inside the 16:9 tile (owner, 2026-10-24: the
+    /// X-M5's 3:2 timeline was stretched).
+    #[test]
+    fn posters_fit_their_tile_without_stretching() {
+        let tile = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(160.0, 90.0));
+        let three_two = fit_rect(tile, egui::vec2(6240.0, 4160.0));
+        assert!((three_two.width() / three_two.height() - 1.5).abs() < 1e-3, "{three_two:?}");
+        assert_eq!((three_two.height(), three_two.center()), (90.0, tile.center()));
+        let wide = fit_rect(tile, egui::vec2(1920.0, 1080.0));
+        assert!((wide.width() - 160.0).abs() < 1e-3 && (wide.height() - 90.0).abs() < 1e-3, "{wide:?}");
+        let tall = fit_rect(tile, egui::vec2(1080.0, 1920.0));
+        assert!((tall.height() - 90.0).abs() < 1e-3 && tall.width() < 60.0, "{tall:?}");
+        let scope = fit_rect(tile, egui::vec2(4096.0, 1716.0));
+        assert!((scope.width() - 160.0).abs() < 1e-3 && scope.height() < 90.0, "{scope:?}");
+        for bad in [egui::vec2(0.0, 10.0), egui::vec2(f32::NAN, 1.0), egui::vec2(1.0, f32::INFINITY), egui::vec2(-4.0, 3.0)] {
+            assert_eq!(fit_rect(tile, bad), tile);
+        }
+    }
 
     #[test]
     fn import_package_takes_a_manifest_as_its_folder() {

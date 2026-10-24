@@ -1,6 +1,7 @@
 //! Panel bodies. `show` dispatches on [`PanelKind`]; drag-and-drop between panels (project items,
 //! effects) is carried in egui temp data so the timeline/monitors can accept drops.
 
+pub mod ai_tools;
 pub mod assistant;
 pub mod audio_fx_editor;
 pub mod clip_dialogs;
@@ -142,6 +143,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, p: PanelKind, rect: Rect)
         PanelKind::ProjectNotes => notes::show(app, ui, rect),
         PanelKind::Compositor => comp::show(app, ui, rect),
         PanelKind::Assistant => assistant::show(app, ui, rect),
+        PanelKind::AiTools => ai_tools::show(app, ui, rect),
         PanelKind::RenderSettings => export_mode::render_settings_panel(app, ui, rect),
         PanelKind::RenderQueue => export_mode::render_queue_panel(app, ui, rect),
         other => crate::dock::placeholder(ui, rect, &app.tokens, &tlf!("{panel} — coming in a later milestone", panel = crate::i18n::t(other.title()))),

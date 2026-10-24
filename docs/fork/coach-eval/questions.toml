@@ -2110,3 +2110,85 @@ heading = "Saving part of a comp as a template [Fork]"
 status = "covered"
 needs_clip = false
 facts = ["comp.template.save / insert"]
+
+# ---------------------------------------------------------------------------------------------
+# Owner, live 2026-10-24: noise under a guitar, Effect Controls in the Resolve workflow, AI Tools
+# ---------------------------------------------------------------------------------------------
+
+[[question]]
+id = "owner-noise-reduction"
+q = "how do I use the background noice reduction tool"
+kind = "how"
+origin = "owner-verbatim"
+context = "Fairlight page, Resolve workflow"
+page = "audio.md"
+heading = "Voice Isolation"
+alt = []
+status = "covered"
+needs_clip = false
+facts = ["Voice Isolation for changing noise under speech", "DeNoise for steady noise", "Essential Sound Repair"]
+
+[[question]]
+id = "owner-guitar-fan"
+q = "I have a clip of playing guitar and the guitar is very audible but the fan noises are louder than the guitar"
+kind = "how"
+origin = "owner-verbatim"
+context = "Fairlight page, Resolve workflow"
+page = "audio.md"
+heading = "Voice Isolation"
+alt = []
+status = "covered"
+needs_clip = false
+facts = ["DeNoise, not Voice Isolation (it removes music)", "Reduction / Threshold / Smoothing", "High Pass under 82 Hz"]
+
+[[question]]
+id = "owner-where-effect-controls"
+q = "where is effect controls then"
+kind = "where"
+origin = "owner-verbatim"
+context = "Fairlight page, Resolve workflow"
+page = "effects.md"
+heading = "When an effect seems missing (wrong clip, video or audio)"
+alt = [{ page = "effects.md", heading = "Applying effects" }]
+status = "covered"
+needs_clip = false
+facts = ["a panel: Window ▸ Effect Controls, Shift+5", "called Keyframes in the Resolve workflow"]
+
+[[question]]
+id = "owner-denoise-wrong-clip"
+q = "I have dragged denoise onto it multiple times"
+kind = "why"
+origin = "owner-verbatim"
+context = "Fairlight page, Resolve workflow"
+page = "effects.md"
+heading = "When an effect seems missing (wrong clip, video or audio)"
+alt = []
+status = "covered"
+needs_clip = false
+facts = ["fx badge shows which clip got it", "drop on the middle of the audio", "remove the extra copies"]
+
+[[question]]
+id = "owner-inspector-no-effects"
+q = "why does effects in inspector say no effects applied"
+kind = "why"
+origin = "owner-verbatim"
+context = "Fairlight page, Resolve workflow"
+page = "effects.md"
+heading = "When an effect seems missing (wrong clip, video or audio)"
+alt = []
+status = "covered"
+needs_clip = false
+facts = ["Effects tab lists video effects only", "audio effects are on the Audio tab"]
+
+[[question]]
+id = "owner-stop-ai"
+q = "stop all the ai tools and clear the memory they use"
+kind = "how"
+origin = "agent"
+context = "Fairlight page, Resolve workflow"
+page = "hardware.md"
+heading = "Stopping AI tools and freeing memory"
+alt = []
+status = "covered"
+needs_clip = false
+facts = ["Window ▸ AI Tools", "Stop per tool, Stop All", "models load again on next use"]

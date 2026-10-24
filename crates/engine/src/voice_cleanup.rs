@@ -372,7 +372,7 @@ pub struct Pending {
 }
 
 const CMD: &str = "audio.cleanupVoice";
-const LABEL: &str = "Clean Up Voice";
+pub(crate) const LABEL: &str = "Clean Up Voice";
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)

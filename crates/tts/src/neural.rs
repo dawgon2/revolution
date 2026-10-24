@@ -31,6 +31,17 @@ fn cache() -> &'static Mutex<Option<Loaded>> {
     C.get_or_init(Default::default)
 }
 
+/// Free the loaded voice package (the next [`load`] reads it again). Voices already handed out
+/// keep their copy until they are dropped.
+pub fn release() {
+    *cache().lock().unwrap_or_else(PoisonError::into_inner) = None;
+}
+
+/// Whether the voice package is in memory.
+pub fn loaded() -> bool {
+    cache().lock().unwrap_or_else(PoisonError::into_inner).is_some()
+}
+
 /// A neural voice ready to speak.
 pub struct NeuralVoice {
     info: VoiceInfo,

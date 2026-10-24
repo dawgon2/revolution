@@ -141,6 +141,11 @@ To change a setting:
 The Program monitor's **Select Playback Resolution** menu {ui:program.resolution} (Full, 1/2,
 1/4 …) is the other lever: lower resolutions decode and composite less. **[Revolution]**
 
+**[Fork]** It starts at **1080p**, playing and paused: the timeline's own shape fitted in
+1920 × 1080 (1620 × 1080 for a 3:2 6.2K timeline, 1080 × 1920 for a vertical one), never above the
+timeline's size. Pick Full or 1/2 to see more detail (focus checks, fine grading), lower to play
+smoother; exports always use the full size.
+
 ### Environment variables (advanced)
 
 **[Fork]**
@@ -159,6 +164,23 @@ are for troubleshooting; normally leave them unset.
 | `FILMCRAFT_NO_ZERO_COPY=1` | export copies frames back to main memory instead of rendering into the encoder |
 | `FILMCRAFT_NO_GPU_IMPORT=1` | playback copies decoded frames instead of handing them to the compositor in graphics memory |
 | `FILMCRAFT_FFMPEG=/path/to/ffmpeg` | which ffmpeg program the fallback paths run (HEVC decode and H.265 export; H.264 never uses ffmpeg) |
+
+## Stopping AI tools and freeing memory
+
+> id: hardware.ai-tools | does: shows which AI tools hold a model in memory or have work running, and stops / frees each or all | ui: aiTools.stopAll, assistant.freeMemory | cmd: ai.status, ai.stop | when: the computer is short of memory, an AI job runs too long, or before a heavy export | see: audio.voice-isolation
+
+**[Fork]**
+
+AI tools keep their model in memory after use, so the next use is quick; the models are large
+(up to several GB). **Window ▸ AI Tools** lists each tool with whether its model is loaded and
+what is running. **Stop** on a row ends that tool's work and frees its memory; **Stop All and Free
+Memory** ({ui:aiTools.stopAll}, also on the Edit menu) does every tool; the Assistant panel's
+**Free memory** ({ui:assistant.freeMemory}) does the Assistant's models. Commands: `ai.status`,
+`ai.stop` (`{"tool": "magicMask"}` for one tool).
+
+Nothing is lost: a stopped job changes nothing, a stopped answer says it was stopped, and each
+model loads again the next time you use its tool. Voice Isolation's live effect model (8 MB)
+stays loaded: effects on clips use it while you play.
 
 ## When something is slow
 

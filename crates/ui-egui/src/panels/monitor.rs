@@ -191,10 +191,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         let playing = if which == Which::Program { app.playback.playing } else { app.source_playback.clock.playing };
         // Settings ▸ Playback ▸ Lower playback resolution on battery (fork XPS d)
         let battery_preview = app.session.prefs.playback.battery_preview;
-        let res = mv.res_now(playing, battery_preview, battery_preview && filmcraft_engine::power::on_battery());
+        let res = mv.res_now(playing, frame_size, battery_preview, battery_preview && filmcraft_engine::power::on_battery());
         // frame pixels per screen pixel along the axis that needs the most of them
         let screen_scale = (pic.width() * ppp / frame_size.0.max(1) as f32).max(pic.height() * ppp / frame_size.1.max(1) as f32).min(1.0);
-        let scale = quantize_scale(res.scale().min(screen_scale.max(1.0 / 32.0)));
+        // (the fixed fractions are buckets, so this equals quantising the smaller of the two)
+        let scale = quantize_scale(screen_scale.max(1.0 / 32.0)).min(res.scale_for(frame_size.0, frame_size.1));
         let rev = match target {
             Target::Item(i) => app.item_revision(i),
             _ => app.seq_revision(),

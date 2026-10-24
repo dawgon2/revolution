@@ -172,6 +172,19 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if r.clicked() {
             click = Some(Click::New);
         }
+        // its models stay loaded for the next question: free them here (Window ▸ AI Tools does
+        // every AI tool)
+        let loaded = filmcraft_engine::ai_tools::status(&app.session).iter().any(|st| matches!(st.id, "assistant" | "vision") && (st.loaded || st.running > 0));
+        let r = ui.add_enabled(loaded || busy, egui::Button::new(RichText::new(tl!("Free memory")).small()));
+        let r = r.on_hover_text(tl!("Stop the answer being written and free the assistant's models; the chat stays and they load again on the next question."));
+        app.auto.add_response("assistant.freeMemory", &r, "Free memory");
+        if r.clicked() {
+            for tool in ["assistant", "vision"] {
+                if let Err(e) = app.session.execute("ai.stop", serde_json::json!({"tool": tool})) {
+                    app.ui.status = e.to_string();
+                }
+            }
+        }
         let note = tl!("Answers come from Revolution's guide and run on this computer.");
         ui.add(egui::Label::new(RichText::new(note).small().color(t.text_faint)).truncate()).on_hover_text(note);
     });

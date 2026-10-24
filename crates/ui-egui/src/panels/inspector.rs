@@ -729,6 +729,6 @@ fn effects_tab(app: &mut FilmcraftApp, ui: &mut egui::Ui, cx: &Cx, acts: &mut Ac
     }
     if !any {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, tl!("No effects applied"), Tokens::ui(12.0), t.text_faint);
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, tl!("No video effects applied (audio effects: Audio tab)"), Tokens::ui(12.0), t.text_faint);
     }
 }

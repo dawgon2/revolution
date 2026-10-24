@@ -64,13 +64,15 @@ pub enum PanelKind {
     /// The assistant's chat (fork AI3, FORK-PLAN §1a.78): opened floating by the Assistant button
     /// in the page bar / header, dockable like any panel.
     Assistant,
+    /// Every AI tool's model and work, with Stop per tool and Stop All (owner request 2026-10-24).
+    AiTools,
     /// Resolve workflow's Inspector (fork RS4.2): the selected clip's settings in Resolve's
     /// layout (tabs, sections); the page toolbar's Inspector toggle opens it (not in `ALL`).
     Inspector,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 35] = [
+    pub const ALL: [PanelKind; 36] = [
         PanelKind::Project,
         PanelKind::MediaBrowser,
         PanelKind::Libraries,
@@ -106,6 +108,7 @@ impl PanelKind {
         PanelKind::ColorCurves,
         PanelKind::Compositor,
         PanelKind::Assistant,
+        PanelKind::AiTools,
     ];
     /// Panels only the Resolve workflow's pages use (fork RS3), kept out of [`PanelKind::ALL`].
     pub const RESOLVE_ONLY: [PanelKind; 4] = [PanelKind::RenderSettings, PanelKind::RenderQueue, PanelKind::CutTimeline, PanelKind::Inspector];
@@ -149,6 +152,7 @@ impl PanelKind {
             PanelKind::RenderQueue => "Render Queue",
             PanelKind::CutTimeline => "Cut Timeline",
             PanelKind::Assistant => "Assistant",
+            PanelKind::AiTools => "AI Tools",
             PanelKind::Inspector => "Inspector",
         }
     }

@@ -195,6 +195,17 @@ pub trait ExplainBackend: Send + Sync {
     }
 }
 
+/// Bumped by `ai.stop`: a generation that started before the bump stops at its next token and
+/// fails with [`STOPPED`] (so a cut-off answer is never shown as a whole one).
+static ABORT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The error a generation stopped by `ai.stop` returns.
+pub const STOPPED: &str = "stopped (AI Tools ▸ Stop)";
+
+/// Stop every running text generation (assistant answers, explanations) at its next token.
+pub fn abort_generations() {
+    ABORT.fetch_add(1, Ordering::SeqCst);
+}
+
 /// The real backend: one cached [`filmcraft_llm::Model`] for the process, loaded lazily on the
 /// first request and reloaded when another model is selected.
 pub struct LlmBackend {
@@ -238,6 +249,20 @@ impl LlmBackend {
     pub fn gpu_adapter(&self) -> Option<String> {
         let g = self.loaded.try_lock().ok()?;
         g.as_ref().and_then(|m| m.gpu_adapter().map(str::to_string))
+    }
+
+    /// The loaded model's name (`Some` while a generation holds it, as "in use"). Never waits.
+    pub fn loaded_name(&self) -> Option<String> {
+        match self.loaded.try_lock() {
+            Ok(g) => g.as_ref().map(|m| m.info().name.to_string()),
+            Err(TryLockError::WouldBlock) => Some("in use".into()),
+            Err(TryLockError::Poisoned(_)) => None,
+        }
+    }
+
+    /// Free the loaded model now, or when the running generation ends (`ai.stop`).
+    pub fn release_now(&self) {
+        <Self as ExplainBackend>::release(self);
     }
 
     /// Drop the loaded model if it is `id` (or any with `None`). Never waits: false while a
@@ -347,8 +372,17 @@ impl ExplainBackend for LlmBackend {
             *g = Some(filmcraft_llm::Model::load(&dir, m).map_err(|e| e.to_string())?);
         }
         let model = g.as_mut().ok_or("the model could not be loaded")?;
+        let epoch = ABORT.load(Ordering::SeqCst);
+        let mut aborted = false;
+        let mut on_text = |t: &str| {
+            if ABORT.load(Ordering::SeqCst) != epoch {
+                aborted = true;
+                return false;
+            }
+            on_text(t)
+        };
         let r = model
-            .generate_streaming(system, user, opts, on_text)
+            .generate_streaming(system, user, opts, &mut on_text)
             .map(|mut g| {
                 let text = std::mem::take(&mut g.text);
                 *self.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(g);
@@ -356,6 +390,9 @@ impl ExplainBackend for LlmBackend {
             })
             .map_err(|e| e.to_string());
         self.finish(&mut g);
+        if aborted {
+            return Err(STOPPED.into());
+        }
         r
     }
 }
@@ -486,6 +523,30 @@ impl crate::coach_assist::PictureLooker for VisionLooker {
         drop(count);
         drop_vision_when_idle(looks);
         r
+    }
+}
+
+/// Whether the picture model is in memory (kept after a look, or looking now).
+pub fn vision_loaded() -> bool {
+    #[cfg(all(feature = "llm", not(target_arch = "wasm32")))]
+    {
+        let looking = LOOKING.try_lock().is_err();
+        looking || KEPT_VISION.lock().unwrap_or_else(PoisonError::into_inner).is_some()
+    }
+    #[cfg(not(all(feature = "llm", not(target_arch = "wasm32"))))]
+    {
+        false
+    }
+}
+
+/// Free the kept picture model now (`ai.stop`); a look running now keeps its copy until it ends.
+pub fn release_vision() {
+    #[cfg(all(feature = "llm", not(target_arch = "wasm32")))]
+    {
+        let kept = KEPT_VISION.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(k) = kept {
+            k.vl.drop_detached();
+        }
     }
 }
 

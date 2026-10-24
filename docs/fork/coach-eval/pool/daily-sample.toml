@@ -3,7 +3,7 @@
 # owner's verbatim questions (questions.toml, keyword-coach format: their `facts` are the
 # facts a right answer contains). Not a batch: no [[question]] tables here.
 
-owner = ["owner-1-order", "owner-2-qualifier", "how-light-blue-natural"]
+owner = ["owner-1-order", "owner-2-qualifier", "how-light-blue-natural", "owner-noise-reduction", "owner-guitar-fan", "owner-where-effect-controls", "owner-denoise-wrong-clip", "owner-inspector-no-effects"]
 
 ids = [
   # audio-1

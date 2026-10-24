@@ -143,20 +143,59 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+/// The loaded model: `None` until first asked, `Some(None)` when it isn't installed or failed.
 #[cfg(feature = "llm")]
-fn meaning() -> Option<&'static Meaning> {
-    use std::sync::OnceLock;
-    static M: OnceLock<Option<Meaning>> = OnceLock::new();
-    M.get_or_init(|| {
+static MEANING: std::sync::Mutex<Option<Option<std::sync::Arc<Meaning>>>> = std::sync::Mutex::new(None);
+
+#[cfg(feature = "llm")]
+fn meaning() -> Option<std::sync::Arc<Meaning>> {
+    // (held while loading: two first questions don't load it twice)
+    let mut g = MEANING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    g.get_or_insert_with(|| {
         let dir = crate::transcript::models_dir()?.join(MODEL_DIR);
         if !dir.join("model.safetensors").is_file() {
             return None;
         }
         // the forward pass returns errors, but a model file is hostile input: never let a
         // surprise in it take the assistant down with it
-        std::panic::catch_unwind(|| load(&dir)).ok().flatten()
+        std::panic::catch_unwind(|| load(&dir)).ok().flatten().map(std::sync::Arc::new)
     })
-    .as_ref()
+    .clone()
+}
+
+/// Whether the model is in memory now (never loads it).
+pub fn loaded() -> bool {
+    #[cfg(feature = "llm")]
+    {
+        MEANING.try_lock().map_or(true, |g| g.as_ref().is_some_and(Option::is_some))
+    }
+    #[cfg(not(feature = "llm"))]
+    {
+        false
+    }
+}
+
+/// Free the model (`ai.stop`); the next question loads it again. Never waits: false while a
+/// search holds the lock.
+pub fn release() -> bool {
+    #[cfg(feature = "llm")]
+    {
+        match MEANING.try_lock() {
+            Ok(mut g) => {
+                *g = None;
+                true
+            }
+            Err(std::sync::TryLockError::Poisoned(p)) => {
+                *p.into_inner() = None;
+                true
+            }
+            Err(std::sync::TryLockError::WouldBlock) => false,
+        }
+    }
+    #[cfg(not(feature = "llm"))]
+    {
+        true
+    }
 }
 
 #[cfg(feature = "llm")]

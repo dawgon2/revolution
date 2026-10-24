@@ -164,6 +164,16 @@ fn start_reaper() {
     }
 }
 
+/// Release the loaded model (`ai.stop`): a running track keeps its copy until it ends.
+pub(crate) fn release() {
+    *LOADED.lock().unwrap_or_else(PoisonError::into_inner) = None;
+}
+
+/// Whether a model is loaded (or held by a running track).
+pub(crate) fn loaded() -> bool {
+    LOADED.lock().unwrap_or_else(PoisonError::into_inner).is_some()
+}
+
 /// Forget the loaded `size` (its GPU failed): the next track loads it again.
 pub(crate) fn forget(size: Sam2Size) {
     let mut g = LOADED.lock().unwrap_or_else(PoisonError::into_inner);

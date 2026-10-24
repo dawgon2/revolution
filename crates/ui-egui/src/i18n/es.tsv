@@ -4523,3 +4523,24 @@ hdr	Specular	Especular
 	Top right	Arriba a la derecha
 	Bottom right	Abajo a la derecha
 	Bottom left	Abajo a la izquierda
+# AI Tools panel, Assistant Free memory, Inspector hint (owner request 2026-10-24)
+	AI Tools	Herramientas de IA
+	Stop All AI and Free Memory	Detener toda la IA y liberar memoria
+	Assistant and AI explanations	Asistente y explicaciones de IA
+	Assistant picture model	Modelo de imagen del asistente
+	Voice clean-up and rendered Voice Isolation	Limpieza de voz y Aislamiento de voz renderizado
+	Text to Speech voices	Voces de texto a voz
+	Loaded: {model}	Cargado: {model}
+	Model loaded	Modelo cargado
+	Not loaded	No cargado
+	{n} running	{n} en curso
+	AI tools keep their models in memory after use. Stop one to end its work and free its memory; it loads again the next time you use it.	Las herramientas de IA mantienen sus modelos en memoria después de usarlas. Detén una para terminar su trabajo y liberar su memoria; se vuelve a cargar la próxima vez que la uses.
+	Stop its work and free its memory	Detener su trabajo y liberar su memoria
+	Stop All and Free Memory	Detener todo y liberar memoria
+	Voice Isolation's live effect model (8 MB) stays loaded: effects on clips use it while you play.	El modelo del efecto en directo de Aislamiento de voz (8 MB) permanece cargado: los efectos de los clips lo usan durante la reproducción.
+	AI stopped and its memory freed	IA detenida y memoria liberada
+	No video effects applied (audio effects: Audio tab)	No hay efectos de vídeo aplicados (efectos de audio: pestaña Audio)
+	Free memory	Liberar memoria
+	Stop the answer being written and free the assistant's models; the chat stays and they load again on the next question.	Detener la respuesta en curso y liberar los modelos del asistente; el chat se conserva y se vuelven a cargar con la próxima pregunta.
+	1080p	1080p
+	540p	540p

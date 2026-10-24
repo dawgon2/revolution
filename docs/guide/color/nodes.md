@@ -506,6 +506,8 @@ a mixer takes at most 16 inputs.
 **[Revolution]**
 
 Every node command is one undo step. Delete a node, undo, and it comes back with its settings.
+To undo a node change, press Ctrl+Z (Edit ▸ Undo) once per step; to put one node back to its
+defaults instead, without undoing anything else, use Reset Node (`grade.resetNode`).
 
 ## If you know Resolve
 

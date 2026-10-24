@@ -38,7 +38,8 @@ const SNAP_COLOR: Color32 = Color32::from_rgb(0xff, 0x4f, 0xd8);
 /// Snap distance (points).
 pub const SNAP_PX: f32 = 6.0;
 
-const RES_NAMES: [(&str, PlaybackRes); 5] = [
+const RES_NAMES: [(&str, PlaybackRes); 6] = [
+    ("1080p", PlaybackRes::P1080),
     ("full", PlaybackRes::Full),
     ("half", PlaybackRes::Half),
     ("quarter", PlaybackRes::Quarter),
@@ -963,27 +964,61 @@ mod tests {
         assert!((r.center().x - 200.0).abs() < 1e-3, "a small picture stays centred");
     }
 
+    const UHD: (u32, u32) = (3840, 2160);
+
     #[test]
     fn battery_preview_lowers_playing_resolution_one_step() {
-        let v = MonitorView::default();
-        // playing at 1/2 (the default): 1/4 on battery with the setting, else as set
-        assert_eq!(v.res_now(true, true, true), PlaybackRes::Quarter);
-        assert_eq!(v.res_now(true, true, false), PlaybackRes::Half, "on mains");
-        assert_eq!(v.res_now(true, false, true), PlaybackRes::Half, "setting off");
-        assert_eq!(v.res_now(false, true, true), PlaybackRes::Full, "paused: full");
+        let mut v = MonitorView::default();
+        // playing at 1080p (the default): 540p on battery with the setting, else as set
+        assert_eq!(v.res_now(true, UHD, true, true), PlaybackRes::P540);
+        assert_eq!(v.res_now(true, UHD, true, false), PlaybackRes::P1080, "on mains");
+        assert_eq!(v.res_now(true, UHD, false, true), PlaybackRes::P1080, "setting off");
+        assert_eq!(v.res_now(false, UHD, true, true), PlaybackRes::P1080, "paused: as set");
+        v.res = PlaybackRes::Half;
+        assert_eq!(v.res_now(true, UHD, true, true), PlaybackRes::Quarter);
     }
 
     #[test]
     fn effective_resolution_follows_paused_and_high_quality() {
-        let mut v = MonitorView::default();
-        assert_eq!(v.effective_res(false), PlaybackRes::Full);
-        assert_eq!(v.effective_res(true), PlaybackRes::Half);
+        let mut v = MonitorView { res: PlaybackRes::Half, paused_res: PlaybackRes::Full, ..MonitorView::default() };
+        assert_eq!(v.effective_res(false, UHD), PlaybackRes::Full);
+        assert_eq!(v.effective_res(true, UHD), PlaybackRes::Half);
         v.high_quality = true;
-        assert_eq!(v.effective_res(true), PlaybackRes::Full);
+        assert_eq!(v.effective_res(true, UHD), PlaybackRes::Full);
         v.paused_res = PlaybackRes::Quarter;
-        assert_eq!(v.effective_res(true), PlaybackRes::Half);
-        assert_eq!(v.effective_res(false), PlaybackRes::Quarter);
+        assert_eq!(v.effective_res(true, UHD), PlaybackRes::Half);
+        assert_eq!(v.effective_res(false, UHD), PlaybackRes::Quarter);
+        // 1080p against 1/2 depends on the frame: higher for 1080p footage, lower for 6.2K
+        v.paused_res = PlaybackRes::P1080;
+        assert_eq!(v.effective_res(true, (1920, 1080)), PlaybackRes::P1080);
+        assert_eq!(v.effective_res(true, (6240, 4160)), PlaybackRes::Half);
         let steps: Vec<_> = PlaybackRes::ALL.iter().map(|r| r.lower()).collect();
-        assert_eq!(steps, [PlaybackRes::Half, PlaybackRes::Quarter, PlaybackRes::Eighth, PlaybackRes::Sixteenth, PlaybackRes::Sixteenth]);
+        assert_eq!(steps, [PlaybackRes::P540, PlaybackRes::Half, PlaybackRes::Quarter, PlaybackRes::Eighth, PlaybackRes::Sixteenth, PlaybackRes::Sixteenth]);
+    }
+
+    /// The default Timeline Viewer resolution is the frame's shape fitted in 1920 x 1080, never
+    /// above the frame (owner, 2026-10-24).
+    #[test]
+    fn the_default_is_1080p_in_the_frames_own_shape() {
+        let v = MonitorView::default();
+        assert_eq!((v.res, v.paused_res), (PlaybackRes::P1080, PlaybackRes::P1080));
+        let px = |w: u32, h: u32| {
+            let s = PlaybackRes::P1080.scale_for(w, h);
+            ((w as f32 * s).round(), (h as f32 * s).round())
+        };
+        assert_eq!(px(6240, 4160), (1620.0, 1080.0), "X-M5 3:2");
+        assert_eq!(px(3840, 2160), (1920.0, 1080.0));
+        assert_eq!(px(7680, 4320), (1920.0, 1080.0));
+        assert_eq!(px(2160, 3840), (1080.0, 1920.0), "vertical");
+        assert_eq!(px(4096, 1716), (1920.0, 804.0), "scope");
+        assert_eq!(px(1280, 720), (1280.0, 720.0), "never scaled up");
+        assert_eq!(px(4000, 4000), (1080.0, 1080.0), "square");
+        assert!((PlaybackRes::P540.scale_for(3840, 2160) - 0.25).abs() < 1e-6);
+        for (w, h) in [(0, 0), (0, 1080), (u32::MAX, 1), (1, u32::MAX)] {
+            let s = PlaybackRes::P1080.scale_for(w, h);
+            assert!(s.is_finite() && s > 0.0 && s <= 1.0, "{w}x{h}: {s}");
+        }
+        // the fixed fractions don't depend on the frame
+        assert_eq!(PlaybackRes::Half.scale_for(6240, 4160), 0.5);
     }
 }

@@ -23,6 +23,26 @@ Text and shape layers aren't effects you apply: make them with Graphics ▸ New 
 ([graphics.md](graphics.md)). Grading has its own tools: the node grader and Lumetri
 ([color/README.md](color/README.md)).
 
+## When an effect seems missing (wrong clip, video or audio)
+
+> id: effects.wrong-clip | does: finds an effect you dragged that doesn't show, and the panel that shows it | cmd: effects.list, effects.remove | resolve: Inspector, Keyframes | premiere: Effect Controls | when: you dragged an effect and nothing changed, or Inspector says "No effects applied" | see: effects.apply, audio.voice-isolation
+
+**[Fork]**
+
+- **Where it went:** a clip with effects shows an **fx** badge on the Timeline. If the badge is on
+  the clip next to the one you meant, the drop landed there: drop on the middle of the clip, not
+  near its edge. Dragging again adds another copy each time; remove the extras on the wrong clip
+  (select it, then select the effect in Effect Controls and press Delete, or `effects.remove`).
+- **Video or audio:** an audio effect (DeNoise, EQ…) goes on the clip's **audio** part, a video
+  effect on its picture. With linked video and audio selected, Effect Controls (**Keyframes** in
+  the Resolve workflow) shows the video settings first and the audio ones **below** them: scroll
+  down, or click the audio part alone.
+- **Inspector:** its **Effects** tab lists the selected clip's *video* effects only; audio effects
+  are on its **Audio** tab. "No video effects applied" with an audio effect on the clip is expected.
+- **Effect Controls isn't on the right-click menu as a setting:** it is a panel. Window ▸ Effect
+  Controls (Shift+5; called **Keyframes** in the Resolve workflow), or right-click a clip ▸
+  **Effect Controls** to open it for that clip.
+
 ## Changing values and keyframes
 
 > id: effects.keyframes | does: sets effect parameters and animates them over time with keyframes and their interpolation | cmd: effects.setParam, effects.resetParam, effects.toggleAnimation, effects.addKeyframe, effects.setKeyframe, effects.moveKeyframe, effects.deleteKeyframe, effects.setInterpolation | resolve: Inspector keyframes, Keyframe editor | premiere: Effect Controls keyframes | when: a move, a fade, a blur that grows; anything that changes slowly over a few seconds (a colour draining, a push-in, a sound fading) | see: effects.apply

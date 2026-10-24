@@ -2068,6 +2068,7 @@ pub(crate) const CLIP_MENU: &[&[(&str, &str)]] = &[
         ("Fill frame", "clip.fillFrame"),
     ],
     &[("Reveal in Project", "clip.revealInProject"), ("Join Through Edits", "sequence.joinThroughEdits")],
+    &[("Effect Controls", "window.panel.EffectControls")],
 ];
 
 /// The cut right-clicked on a track (#219): the clip ending there and the clip starting there,
@@ -2800,7 +2801,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                     "clip.link" if linked => tl!("Unlink"),
                     _ => crate::i18n::t(label),
                 };
-                let r = ui.add_enabled(!sel.is_empty() && app.session.is_enabled(cmd), egui::Button::new(label));
+                // (a panel opens from the UI, not the engine)
+                let on = cmd.starts_with("window.panel.") || app.session.is_enabled(cmd);
+                let r = ui.add_enabled(!sel.is_empty() && on, egui::Button::new(label));
                 app.auto.add(&format!("timeline.clipMenu.{cmd}"), r.rect, label);
                 if r.clicked() {
                     match crate::menus::invoke(app, &ctx, cmd, json!({})) {
